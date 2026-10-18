@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block content %}
+<h1>DM</h1>
+<div class="split">
+<div class="threads">
+{% for t in threads %}
+  <a class="thread {{ 'active' if t.thread_id==thread }}" href="/dms?thread={{ t.thread_id }}">
+    {{ t.title or t.thread_id }}</a>
+{% endfor %}
+</div>
+<div class="msgs">
+{% for m in msgs %}
+  <div class="msg"><b>{{ m.sender_username or m.sender_id }}</b>
+  <span class="t">{{ m.timestamp[:19] if m.timestamp else "" }}</span>
+  <p>{{ m.text or "["+m.item_type+"]" }}</p></div>
+{% endfor %}
+</div>
+</div>
+{% endblock %}
