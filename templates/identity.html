@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block content %}
+<h1>裏垢特定</h1>
+<form method="post" action="/identity/run">
+  <label>対象裏垢 <input name="target" placeholder="secret_handle" required></label>
+  <label>本体候補（改行/カンマ区切り）<textarea name="candidates">{{ cands|join('\n') }}</textarea></label>
+  <button>スコア算出</button>
+</form>
+<h2>結果</h2>
+<table><tr><th>対象</th><th>候補</th><th>スコア</th><th>算出</th></tr>
+{% for s in scores %}<tr><td>{{ s.uraaka_user_id }}</td><td>{{ s.candidate_username }}</td>
+<td>{{ s.score }}</td><td>{{ s.computed_at[:19] }}</td></tr>{% endfor %}</table>
+{% endblock %}
