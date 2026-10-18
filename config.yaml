@@ -1,0 +1,51 @@
+instagram:
+  username: "your_account"
+  password: "your_password"
+  session_file: "session.json"
+
+# Web UI のBasic認証
+web:
+  user: "admin"
+  password: "change_me"
+  host: "0.0.0.0"
+  port: 8000
+
+# 初回起動時に監視する裏垢
+targets:
+  - "the_secret_handle"
+
+# 「誰の裏垢か」判定する本体候補
+candidates:
+  - "candidate_main_1"
+  - "candidate_main_2"
+
+identity:
+  weights:
+    username:          1.0
+    following_overlap: 2.5
+    follower_overlap:  2.0
+    bio:               1.5
+    fullname:          1.5
+    avatar_phash:      2.0
+    tagged_overlap:    2.0
+    posting_time:      1.0
+    shared_hashtags:   0.8
+    shared_locations:  1.2
+
+monitor:
+  relations_interval_sec: 600
+  posts_interval_sec:     600
+  stories_interval_sec:   300
+  dms_interval_sec:       180
+  profile_interval_sec:   900
+  download_media: true
+  max_media_mb: 3000        # これ超えたらDL止める
+
+archive:
+  max_posts: 500
+  max_follow: 10000
+  max_threads: 300
+
+storage:
+  db_path: "data/uraaka.db"
+  media_dir: "data/media"
