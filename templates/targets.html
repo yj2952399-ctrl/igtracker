@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<h1>ターゲット管理</h1>
+<form method="post" action="/targets/add">
+  <input name="handle" placeholder="@handle" required><button>追加</button></form>
+<h2>監視中</h2>
+<table><tr><th>ハンドル</th><th>UID</th><th>監視</th><th></th></tr>
+{% for t in targets %}<tr><td>@{{ t.username }}</td><td>{{ t.user_id }}</td>
+<td>{{ "ON" if t.monitor else "OFF" }}</td>
+<td><form method="post" action="/target/{{ t.user_id }}/monitor"><button>切替</button></form></td>
+</tr>{% endfor %}</table>
+<h2>本体候補</h2>
+<form method="post" action="/candidates/add"><input name="handle"><button>候補追加</button></form>
+<ul>{% for c in candidates %}<li>@{{ c }}</li>{% endfor %}</ul>
+{% endblock %}
