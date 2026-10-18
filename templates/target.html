@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block content %}
+<h1>@{{ p.username if p else uid }}</h1>
+<form method="post" action="/target/{{ uid }}/archive"><button>過去を全アーカイブ</button></form>
+<form method="post" action="/target/{{ uid }}/monitor"><button>監視 ON/OFF</button></form>
+
+<h2>プロフィール推移</h2>
+<canvas id="chart"></canvas>
+<script>
+new Chart(document.getElementById("chart"),{type:"line",
+ data:{labels:{{ snap|map(attribute='taken_at')|list|tojson }},
+ datasets:[
+  {label:"followers",data:{{ snap|map(attribute='follower_count')|list|tojson }},borderColor:"#4fc3f7"},
+  {label:"following",data:{{ snap|map(attribute='following_count')|list|tojson }},borderColor:"#ffb74d"},
+  {label:"posts",data:{{ snap|map(attribute='media_count')|list|tojson }},borderColor:"#81c784"}]}});
+</script>
+
+<h2>フォロー変動</h2>
+<table><tr><th>時刻</th><th>種別</th><th>相手</th></tr>
+{% for r in rel %}<tr><td>{{ r.observed_at[:19] }}</td><td>{{ r.event_type }}</td><td>{{ r.to_username or r.to_user_id }}</td></tr>{% endfor %}</table>
+
+<h2>投稿</h2>
+<table><tr><th>日時</th><th>キャプション</th><th>いいね</th><th>場所</th></tr>
+{% for m in posts %}<tr><td>{{ m.taken_at[:19] if m.taken_at else "" }}</td>
+<td>{{ (m.caption or "")[:80] }}</td><td>{{ m.like_count }}</td><td>{{ m.location_name or "" }}</td></tr>{% endfor %}</table>
+{% endblock %}
