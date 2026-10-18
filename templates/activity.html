@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block content %}
+<h1>活動ログ</h1>
+<form method="get"><input name="kind" value="{{ kind }}" placeholder="種別フィルタ">
+<button>絞込</button></form>
+<table><tr><th>時刻</th><th>対象</th><th>種別</th><th>詳細</th></tr>
+{% for e in events %}<tr><td>{{ e.ts[:19] }}</td><td>{{ e.user_id }}</td>
+<td>{{ e.kind }}</td><td>{{ e.payload }}</td></tr>{% endfor %}</table>
+{% endblock %}
