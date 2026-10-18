@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block content %}
+<h1>ダッシュボード</h1>
+<div class="cards">
+{% for x in targets %}
+  <div class="card">
+    <h3>@{{ x.t.username }}</h3>
+    {% if x.p %}
+      <p>フォロワー {{ x.p.follower_count }} / フォロー {{ x.p.following_count }} / 投稿 {{ x.p.media_count }}</p>
+      <p class="bio">{{ x.p.bio or "" }}</p>
+    {% endif %}
+    {% if x.best %}<p class="best">推定本体: @{{ x.best.candidate_username }} ({{ x.best.score }})</p>{% endif %}
+    <canvas id="c{{ x.t.user_id }}" height="60"></canvas>
+    <a class="btn" href="/target/{{ x.t.user_id }}">詳細</a>
+  </div>
+  <script>
+    new Chart(document.getElementById("c{{ x.t.user_id }}"), {
+      type:"line", data:{ labels: {{ x.snap|map(attribute='taken_at')|list|tojson }},
+      datasets:[{label:"followers", data: {{ x.snap|map(attribute='follower_count')|list|tojson }},
+      borderColor:"#4fc3f7", tension:.3}]},
+      options:{plugins:{legend:{display:false}},scales:{x:{display:false}}}
+    });
+  </script>
+{% endfor %}
+</div>
+<h2>最近のイベント</h2>
+<table><tr><th>時刻</th><th>対象</th><th>種別</th><th>詳細</th></tr>
+{% for e in events %}
+<tr><td>{{ e.ts[:19] }}</td><td>{{ e.user_id }}</td><td>{{ e.kind }}</td><td>{{ e.payload }}</td></tr>
+{% endfor %}</table>
+{% endblock %}
