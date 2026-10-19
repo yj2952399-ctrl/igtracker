@@ -1,6 +1,35 @@
 {% extends "base.html" %}{% block content %}
 <h1>設定</h1>
-<p>保存先: <code>{{ settings_file }}</code>（GitHubの config.yaml は汚しません）</p>
+
+{% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+{% if err %}<p class="err">{{ err }}</p>{% endif %}
+
+<div class="card">
+  <h2>Instagram 接続</h2>
+  <p class="dim">ここで設定した内容が <code>{{ settings_file }}</code> に保存されます。
+  環境変数は「空欄のときだけ」補完されます。</p>
+  {% if env_user %}<p class="dim">環境変数のフォールバック: <code>{{ env_user }}</code></p>{% endif %}
+
+  <form method="post" action="/settings">
+    <label>IG ユーザー名 <input name="ig_user" value="{{ ig.username or '' }}"></label>
+    <label>IG パスワード <input name="ig_pass" type="password"
+      value="{{ ig.password or '' }}" placeholder="変更しないなら空でも可"></label>
+    <label>セッション (session.json の base64)
+      <textarea name="ig_session_b64" rows="4"
+        placeholder="空でもOK。貼ると次回起動時に復元します">{{ ig.session_b64 or '' }}</textarea></label>
+    <button>設定を保存</button>
+  </form>
+
+  <form method="post" action="/ig/test" style="display:inline">
+    <button>接続テスト</button></form>
+  <form method="post" action="/ig/login" style="display:inline">
+    <button>ログインしてセッション保存</button></form>
+  <form method="post" action="/ig/logout" style="display:inline">
+    <button>ログアウト</button></form>
+
+  <p class="dim">チャレンジを求められた場合は、ローカルで <code>session.json</code> を作って
+  上の欄にbase64で貼るのが確実です。</p>
+</div>
 
 <form method="post" action="/settings">
 {% for sec, val in sections.items() %}
@@ -18,7 +47,8 @@
       {% endfor %}
     {% else %}
       <input name="{{ sec }}.{{ k }}" value="{{ v }}"
-      {% if v is boolean %}type="checkbox" {% if v %}checked{% endif %}
+      {% if k == 'password' %}type="password"
+      {% elif v is boolean %}type="checkbox" {% if v %}checked{% endif %}
       {% elif v is number %}type="number" step="any"
       {% else %}type="text"{% endif %}>
     {% endif %}
@@ -34,5 +64,7 @@
 
 <button>保存</button>
 </form>
-<p>※ 監視間隔（monitor）の変更はプロセス再起動後（RenderでManual Deploy）に反映されます。</p>
+
+<p class="dim">※ 監視間隔（monitor）の変更はプロセス再起動後（Renderで Manual Deploy）に反映されます。<br>
+※ <code>web.port</code> は Render の PORT が優先されます。</p>
 {% endblock %}
