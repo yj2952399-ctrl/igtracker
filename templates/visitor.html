@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block content %}
+<h1>訪問者 {{ v.vid[:24] }}…</h1>
+<div class="card">
+<table>
+<tr><th>ラベル</th><td>{{ v.label or "(未設定)" }}</td></tr>
+<tr><th>回数 / 初回 / 最終</th><td>{{ v.hits }} / {{ (v.first_seen or "")[:19] }} / {{ (v.last_seen or "")[:19] }}</td></tr>
+<tr><th>IP / 地域</th><td class="mono">{{ v.ip }} — {{ v.country }} {{ v.region }} {{ v.city }}</td></tr>
+<tr><th>回線</th><td>{{ v.isp }} {{ v.asn }}</td></tr>
+<tr><th>端末</th><td>{{ v.device }} / {{ v.os }} / {{ v.browser }} {{ v.inapp }}</td></tr>
+<tr><th>フィンガープリント</th><td class="mono"><small>{{ v.fingerprint }}</small></td></tr>
+<tr><th>公開鍵</th><td class="mono"><small>{{ v.pubkey }}</small></td></tr>
+</table>
+<form method="post" action="/visitor/{{ v.vid }}/label">
+  <label>ラベル <input name="label" value="{{ v.label or '' }}"></label>
+  <label>メモ <input name="note" value="{{ v.note or '' }}"></label>
+  <button>保存</button>
+</form>
+</div>
+
+<h2>踏んだリンク</h2>
+<table><tr><th>時刻</th><th>コード</th><th>IP</th><th>端末</th><th>署名</th></tr>
+{% for h in hits %}
+<tr><td>{{ (h.ts or "")[:19] }}</td><td class="mono">{{ h.code }}</td>
+<td class="mono">{{ h.ip }}</td><td>{{ h.device }}</td>
+<td>{% if h.sig_ok %}OK{% elif h.sig %}NG{% endif %}</td></tr>
+{% endfor %}</table>
+{% endblock %}
