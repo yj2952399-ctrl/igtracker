@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% block content %}
+<h1>横断結果: {{ sc.username }}</h1>
+<p class="dim">状態: {{ sc.status }} ／ ヒット {{ sc.found }} / {{ sc.total }}
+ ／ {{ (sc.started_at or "")[:19] }}</p>
+
+<p>
+  <form method="post" action="/sns/{{ sc.id }}/avatars" style="display:inline">
+    <button>アイコンを取得して照合に回す</button></form>
+  <a href="/sns"><button type="button">一覧へ</button></a>
+  <form method="post" action="/sns/{{ sc.id }}/delete" style="display:inline">
+    <button>削除</button></form>
+</p>
+
+{% if sc.status == 'running' %}<p class="warn">実行中です。リロードしてください。</p>{% endif %}
+
+<h2>見つかった</h2>
+<table><tr><th>サイト</th><th>URL</th><th>タイトル</th><th>pHash</th></tr>
+{% for h in hits %}{% if h.state == 'yes' %}
+<tr>
+  <td>{{ h.site_name }} <small class="dim">{{ h.cat }}</small></td>
+  <td><a class="mono" href="{{ h.url }}" target="_blank" rel="noopener">{{ h.url }}</a></td>
+  <td><small>{{ h.title }}</small></td>
+  <td class="mono"><small>{{ h.phash }}</small></td>
+</tr>
+{% endif %}{% endfor %}</table>
+
+<h2>その他</h2>
+<table><tr><th>サイト</th><th>状態</th><th>コード</th><th>URL</th></tr>
+{% for h in hits %}{% if h.state != 'yes' %}
+<tr>
+  <td>{{ h.site_name }}</td>
+  <td>{{ h.state }}{% if h.note %} <small class="dim">{{ h.note }}</small>{% endif %}</td>
+  <td>{{ h.code }}</td>
+  <td class="mono"><small>{{ h.url }}</small></td>
+</tr>
+{% endif %}{% endfor %}</table>
+{% endblock %}
