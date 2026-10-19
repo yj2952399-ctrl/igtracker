@@ -1,11 +1,19 @@
-import os, json, copy, base64, yaml
+import os, json, copy, base64, threading, yaml
+from . import tenancy, secretbox
 
-_CFG = None
+_CFG = {}
+_LOCK = threading.RLock()
 _PATH = "config.yaml"
 
 
-def _settings_path():
+def _settings_path(user=None):
+    if user:
+        return os.path.join(tenancy.tenant_dir(user), "settings.json")
     return os.getenv("SETTINGS_FILE", "data/settings.json")
+
+
+def _key(user):
+    return tenancy.safe_name(user) if user else "__base__"
 
 
 def _overlay(base, over):
@@ -18,7 +26,6 @@ def _overlay(base, over):
 
 
 def _env_fill(cfg, sec, key, env):
-    """環境変数は「Web設定が空のときだけ」補完する"""
     v = os.getenv(env)
     if not v:
         return
@@ -56,17 +63,17 @@ def raw(path=_PATH):
     return {}
 
 
-def load(path=_PATH):
-    """優先順位: config.yaml < 環境変数(空欄補完) < data/settings.json(Web設定)
+def load(user=None):
+    """優先順位: config.yaml < 環境変数(空欄補完) < <tenant>/settings.json"""
+    key = _key(user)
+    with _LOCK:
+        if key in _CFG:
+            return _CFG[key]
 
-    ただし PORT / HOST だけは Render が渡す値が絶対。"""
-    global _CFG
-    if _CFG is not None:
-        return _CFG
+    cfg = copy.deepcopy(raw(_PATH))
+    tdir = tenancy.tenant_dir(user) if user else None
 
-    cfg = copy.deepcopy(raw(path))
-
-    sf = _settings_path()
+    sf = _settings_path(user)
     if os.path.exists(sf):
         try:
             with open(sf, encoding="utf-8") as f:
@@ -74,33 +81,30 @@ def load(path=_PATH):
         except Exception as e:
             print("[config] settings.json 読込失敗:", e)
 
-    # 環境変数は「Web設定が空のときだけ」補完
     _env_fill(cfg, "instagram", "username", "IG_USER")
     _env_fill(cfg, "instagram", "password", "IG_PASS")
     _env_fill(cfg, "instagram", "session_b64", "IG_SESSION_B64")
     _env_fill(cfg, "instagram", "session_file", "SESSION_FILE")
-    _env_fill(cfg, "web", "user", "WEB_USER")
-    _env_fill(cfg, "web", "password", "WEB_PASS")
-    _env_fill(cfg, "storage", "db_path", "DB_PATH")
-    _env_fill(cfg, "storage", "media_dir", "MEDIA_DIR")
 
     cfg.setdefault("instagram", {})
     cfg["instagram"].setdefault("session_file", "session.json")
     cfg["instagram"].setdefault("session_b64", "")
     cfg["instagram"].setdefault("request_timeout", 30)
     cfg["instagram"].setdefault("max_retries", 3)
-
-    cfg.setdefault("web", {})
-    cfg["web"].setdefault("user", "admin")
-    cfg["web"].setdefault("password", "change_me")
+    cfg["instagram"]["password"] = secretbox.dec(cfg["instagram"].get("password") or "")
 
     cfg.setdefault("storage", {})
     cfg["storage"].setdefault("db_path", "data/uraaka.db")
     cfg["storage"].setdefault("media_dir", "data/media")
 
-    # ロックアウト保険用に環境変数の値も保持（Web設定とどちらでも通す）
-    cfg["web"]["_env_user"] = os.getenv("WEB_USER") or ""
-    cfg["web"]["_env_pass"] = os.getenv("WEB_PASS") or ""
+    cfg.setdefault("web", {})
+    cfg["web"].setdefault("host", "0.0.0.0")
+    cfg["web"].setdefault("port", 8000)
+
+    if tdir:
+        cfg["storage"]["db_path"] = os.path.join(tdir, "uraaka.db")
+        cfg["storage"]["media_dir"] = os.path.join(tdir, "media")
+        cfg["instagram"]["session_file"] = os.path.join(tdir, "session.json")
 
     t = _env_list("IG_TARGETS")
     if t and not cfg.get("targets"):
@@ -111,9 +115,8 @@ def load(path=_PATH):
     cfg.setdefault("targets", [])
     cfg.setdefault("candidates", [])
 
-    # 実行時は環境変数が絶対（Renderがポートを渡すため）
-    cfg["web"]["host"] = os.getenv("HOST", cfg["web"].get("host", "0.0.0.0"))
-    cfg["web"]["port"] = int(os.getenv("PORT", cfg["web"].get("port", 8000)))
+    cfg["web"]["host"] = os.getenv("HOST", cfg["web"]["host"])
+    cfg["web"]["port"] = int(os.getenv("PORT", cfg["web"]["port"]))
 
     for p in (cfg["storage"]["db_path"], cfg["storage"]["media_dir"],
               cfg["instagram"]["session_file"]):
@@ -121,19 +124,18 @@ def load(path=_PATH):
         if d:
             os.makedirs(d, exist_ok=True)
 
-    # session.json が無く、b64 があれば復元（エフェメラル対策）
     if cfg["instagram"]["session_b64"] and not os.path.exists(cfg["instagram"]["session_file"]):
         if write_session_file(cfg["instagram"]["session_b64"], cfg["instagram"]["session_file"]):
-            print("[config] session.json を復元")
+            print(f"[config] {key}: session.json を復元")
 
-    _CFG = cfg
+    with _LOCK:
+        _CFG[key] = cfg
     return cfg
 
 
-def save_sections(data):
-    """Webの設定画面から呼ぶ。data/settings.json に上書き保存。"""
-    global _CFG
-    sf = _settings_path()
+def save_sections(data, user=None):
+    user = user if user is not None else tenancy.get_current()
+    sf = _settings_path(user)
     d = os.path.dirname(sf)
     if d:
         os.makedirs(d, exist_ok=True)
@@ -144,12 +146,17 @@ def save_sections(data):
                 cur = json.load(f) or {}
         except Exception:
             cur = {}
+    data = copy.deepcopy(data)
+    ig = data.get("instagram")
+    if isinstance(ig, dict) and "password" in ig:
+        ig["password"] = secretbox.enc(ig.get("password") or "")
     _overlay(cur, data)
     with open(sf, "w", encoding="utf-8") as f:
         json.dump(cur, f, ensure_ascii=False, indent=2)
-    _CFG = None
+    with _LOCK:
+        _CFG.pop(_key(user), None)
     return cur
 
 
 def get():
-    return load()
+    return load(tenancy.get_current())
