@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block content %}
+<h1>アカウント</h1>
+{% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+{% if err %}<p class="err">{{ err }}</p>{% endif %}
+
+<div class="card">
+  <h2>ログイン情報</h2>
+  <p>ユーザー名: <code>{{ real_user }}</code> / 権限: <b>{{ role }}</b></p>
+  <p class="dim">Basic 認証です。ブラウザのパスワード保存はユーザーごとに別プロファイル推奨。</p>
+  {% if env_admin %}
+  <p class="dim">このアカウントは環境変数 <code>ADMIN_PASS</code> がマスターキーとして常に有効です。</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>パスワード変更</h2>
+  <form method="post" action="/account/password">
+    <label>現在のパスワード
+      <input type="password" name="cur" autocomplete="current-password"></label>
+    <label>新しいパスワード（8文字以上）
+      <input type="password" name="new" autocomplete="new-password"></label>
+    <label>もう一度
+      <input type="password" name="new2" autocomplete="new-password"></label>
+    <button>変更</button>
+  </form>
+</div>
+{% endblock %}
