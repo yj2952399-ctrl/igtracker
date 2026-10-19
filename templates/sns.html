@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block content %}
+<h1>🌐 SNS横断検索</h1>
+<p class="dim">1つのハンドルを約50サイトで並列に確認します。
+ヒットしたサイトは「同じ人が使っている可能性のあるアカウント」です。</p>
+
+<form method="post" action="/sns/scan" class="card">
+  <label>ユーザー名 <input name="username" placeholder="例: yamada_taro" required></label>
+  <label>カテゴリ（未選択で全部）
+    <select name="cats" multiple size="6">
+      {% for c in cats %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select></label>
+  <button>検索する</button>
+</form>
+
+<h2>履歴</h2>
+<table><tr><th>ID</th><th>ユーザー名</th><th>状態</th><th>ヒット</th><th>実行</th><th></th></tr>
+{% for s in scans %}
+<tr>
+  <td><a href="/sns/{{ s.id }}">#{{ s.id }}</a></td>
+  <td class="mono">{{ s.username }}</td>
+  <td>{{ s.status }}</td>
+  <td>{{ s.found }} / {{ s.total }}</td>
+  <td>{{ (s.started_at or "")[:19] }}</td>
+  <td><form method="post" action="/sns/{{ s.id }}/delete"><button>削除</button></form></td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
