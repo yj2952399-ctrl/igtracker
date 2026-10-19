@@ -1,22 +1,36 @@
 {% extends "base.html" %}{% block content %}
-<h1>管理</h1>
+<h1>管理コンソール</h1>
 {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
 {% if err %}<p class="err">{{ err }}</p>{% endif %}
 
 <p class="dim">テナント実体: <code>{{ tenant_root }}</code> ／
-環境変数マスター管理者: <code>{{ env_user or "(未設定)" }}</code></p>
+env 管理者: <code>{{ env_user or "(未設定)" }}</code>
+{% if breakglass %}／ ブレークグラス: <b>有効</b>{% endif %}
+／ <a href="{{ admin_path }}/audit">監査ログ</a></p>
+
+<div class="card">
+  <h2>管理者パスワード変更（自分）</h2>
+  <p class="dim">変更すると他の管理者セッションは無効になります。</p>
+  <form method="post" action="{{ admin_path }}/password">
+    <label>現在 <input type="password" name="cur"></label>
+    <label>新（8文字以上） <input type="password" name="new"></label>
+    <label>確認 <input type="password" name="new2"></label>
+    <button>変更</button>
+  </form>
+  <form method="post" action="{{ admin_path }}/logout" style="display:inline">
+    <button>管理者ログアウト</button></form>
+</div>
 
 <div class="card">
   <h2>ユーザー追加</h2>
-  <form method="post" action="/admin/users/create">
-    <label>ユーザー名（英小文字/数字/._-） <input name="username" required></label>
+  <form method="post" action="{{ admin_path }}/users/create">
+    <label>ユーザー名 <input name="username" required></label>
     <label>初期パスワード（8文字以上） <input name="password" required></label>
     <label>権限
       <select name="role">
         <option value="user">利用者</option>
         <option value="admin">管理者</option>
-      </select>
-    </label>
+      </select></label>
     <label class="inline">
       <input type="checkbox" name="must_change" value="1"> 初回に変更させる</label>
     <label>メモ <input name="note"></label>
@@ -25,41 +39,50 @@
 </div>
 
 <table>
-<tr><th>ユーザー</th><th>権限</th><th>状態</th><th>IG垢</th><th>ターゲット</th>
-    <th>台帳</th><th>リンク</th><th>ヒット</th><th>容量</th><th>最終ログイン</th><th>操作</th></tr>
+<tr><th>ユーザー</th><th>権限</th><th>状態</th><th>IG垢</th><th>対象</th>
+    <th>台帳</th><th>リンク</th><th>ヒット</th><th>端末</th><th>容量</th>
+    <th>最終ログイン</th><th>操作</th></tr>
 {% for r in rows %}
 <tr>
-  <td><b>{{ r.username }}</b>{% if r.note %}<br><span class="dim">{{ r.note }}</span>{% endif %}</td>
+  <td><b>{{ r.username }}</b>{% if r.username == me %} ★{% endif %}
+      {% if r.note %}<br><span class="dim tiny">{{ r.note }}</span>{% endif %}</td>
   <td>{{ r.role }}</td>
   <td>{% if r.disabled %}<span class="err">停止</span>{% else %}有効{% endif %}</td>
   <td>{{ r.ig_user or "-" }}</td>
-  <td>{{ r.targets }}</td>
-  <td>{{ r.known }}</td>
-  <td>{{ r.links }}</td>
-  <td>{{ r.hits }}</td>
-  <td>{{ r.size_mb }} MB</td>
+  <td>{{ r.targets }}</td><td>{{ r.known }}</td><td>{{ r.links }}</td>
+  <td>{{ r.hits }}</td><td>{{ r.sessions }}</td><td>{{ r.size_mb }} MB</td>
   <td class="dim">{{ r.last_login or "-" }}</td>
   <td>
-    <a href="/admin/switch?to={{ r.username }}&back=/">中を見る</a>
-    <form method="post" action="/admin/users/{{ r.username }}/toggle" style="display:inline">
-      <button>{% if r.disabled %}再開{% else %}停止{% endif %}</button></form>
-    <form method="post" action="/admin/users/{{ r.username }}/role" style="display:inline">
+    <a href="{{ admin_path }}/switch?to={{ r.username }}&back=/">中を見る</a>
+    <form method="post" action="{{ admin_path }}/users/{{ r.username }}/toggle" style="display:inline">
+      <button class="mini">{% if r.disabled %}再開{% else %}停止{% endif %}</button></form>
+    <form method="post" action="{{ admin_path }}/users/{{ r.username }}/role" style="display:inline">
       <input type="hidden" name="role" value="{% if r.role == 'admin' %}user{% else %}admin{% endif %}">
-      <button>権限反転</button></form>
-    <form method="post" action="/admin/users/{{ r.username }}/delete" style="display:inline">
-      <button>削除</button></form>
+      <button class="mini">権限反転</button></form>
+    <form method="post" action="{{ admin_path }}/users/{{ r.username }}/delete" style="display:inline">
+      <button class="mini">削除</button></form>
   </td>
 </tr>
-<tr><td colspan="11">
-  <form method="post" action="/admin/users/{{ r.username }}/password" style="display:inline">
+<tr><td colspan="12" class="subrow">
+  <form method="post" action="{{ admin_path }}/users/{{ r.username }}/password" style="display:inline">
     <input type="password" name="password" placeholder="新パスワード" required>
-    <button>再設定</button>
-  </form>
-  <form method="post" action="/admin/users/{{ r.username }}/delete" style="display:inline">
+    <button class="mini">利用者PW再設定</button></form>
+  <form method="post" action="{{ admin_path }}/users/{{ r.username }}/adminpw" style="display:inline">
+    <input type="password" name="password" placeholder="管理者PW" required>
+    <button class="mini">管理者PW設定</button></form>
+  <form method="post" action="{{ admin_path }}/users/{{ r.username }}/delete" style="display:inline">
     <input type="hidden" name="purge" value="1">
-    <button>データごと削除</button>
-  </form>
+    <button class="mini">データごと削除</button></form>
 </td></tr>
+{% endfor %}
+</table>
+
+<h2>直近の監査ログ</h2>
+<table class="small">
+<tr><th>時刻</th><th>実行者</th><th>操作</th><th>詳細</th></tr>
+{% for a in audits %}
+<tr><td class="dim">{{ a.ts }}</td><td>{{ a.actor }}</td>
+    <td><code>{{ a.action }}</code></td><td class="dim">{{ a.detail }}</td></tr>
 {% endfor %}
 </table>
 {% endblock %}
