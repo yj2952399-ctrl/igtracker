@@ -57,6 +57,7 @@ def cfg():
         "per_user": (os.getenv("BACKUP_PER_USER", "1") or "1") != "0",
         "media": (os.getenv("BACKUP_MEDIA", "1") or "1") != "0",
         "maxmb": float(os.getenv("BACKUP_MAX_MB", "20") or 20),
+        "every_hit": int(os.getenv("BACKUP_EVERY_HIT", "180") or 0),
     }
 
 
