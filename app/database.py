@@ -85,13 +85,14 @@ CREATE TABLE IF NOT EXISTS dm_messages (
 CREATE TABLE IF NOT EXISTS identity_scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id INTEGER, uraaka_user_id TEXT, candidate_user_id TEXT,
-    candidate_username TEXT, score REAL, verdict TEXT, evidence TEXT,
-    computed_at TEXT
+    candidate_username TEXT, candidate_display TEXT, score REAL, verdict TEXT,
+    evidence TEXT, flags TEXT, computed_at TEXT
 );
 CREATE TABLE IF NOT EXISTS identity_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     target_uid TEXT, target_username TEXT, status TEXT,
     progress INTEGER DEFAULT 0, total INTEGER DEFAULT 0,
+    candidates_raw TEXT, note TEXT, target_deleted INTEGER DEFAULT 0,
     started_at TEXT, finished_at TEXT, log TEXT
 );
 CREATE TABLE IF NOT EXISTS forensics (
@@ -123,6 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_dm_msg ON dm_messages(thread_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_snap ON profile_snapshots(user_id, taken_at);
 CREATE INDEX IF NOT EXISTS idx_scores_run ON identity_scores(run_id, score);
 CREATE INDEX IF NOT EXISTS idx_forensics_ts ON forensics(ts);
+CREATE INDEX IF NOT EXISTS idx_known_seen ON known_accounts(last_seen);
 """
 
 
@@ -140,6 +142,7 @@ class DB:
         self._migrate()
 
     def _migrate(self):
+        """既存DBに後から増えたカラムを足す。"""
         def cols(t):
             return {r["name"] for r in self.q(f"PRAGMA table_info({t})")}
         add = {
@@ -264,6 +267,29 @@ class DB:
                  int(bool(target_deleted)), now()))
             return cur.lastrowid
 
+    def update_run(self, run_id, progress=None, total=None, status=None, log=None):
+        sets, args = [], []
+        if progress is not None:
+            sets.append("progress=?"); args.append(progress)
+        if total is not None:
+            sets.append("total=?"); args.append(total)
+        if status is not None:
+            sets.append("status=?"); args.append(status)
+        if log is not None:
+            sets.append("log=?"); args.append(log[:20000])
+        if status in ("ok", "error"):
+            sets.append("finished_at=?"); args.append(now())
+        if not sets:
+            return
+        args.append(run_id)
+        with self.tx() as c:
+            c.execute(f"UPDATE identity_runs SET {','.join(sets)} WHERE id=?", args)
+
+    def delete_run(self, rid):
+        with self.tx() as c:
+            c.execute("DELETE FROM identity_scores WHERE run_id=?", (rid,))
+            c.execute("DELETE FROM identity_runs WHERE id=?", (rid,))
+
     # ---- 既知アカウント（削除済みIDの控え） ----
     def add_known(self, user_id, username="", note="", source="manual", deleted=None):
         uid = str(user_id)
@@ -297,6 +323,7 @@ class DB:
         with self.tx() as c:
             c.execute("DELETE FROM known_accounts WHERE user_id=?", (str(uid),))
 
+    # ---- 保存ペア ----
     def save_pair(self, tuid, tname, cuid, cname, note=""):
         with self.tx() as c:
             c.execute("""INSERT INTO saved_pairs(target_uid,target_username,candidate_uid,
@@ -314,8 +341,3 @@ class DB:
     def del_pair(self, pid):
         with self.tx() as c:
             c.execute("DELETE FROM saved_pairs WHERE id=?", (pid,))
-
-    def delete_run(self, rid):
-        with self.tx() as c:
-            c.execute("DELETE FROM identity_scores WHERE run_id=?", (rid,))
-            c.execute("DELETE FROM identity_runs WHERE id=?", (rid,))
