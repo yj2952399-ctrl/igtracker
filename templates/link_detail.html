@@ -8,6 +8,9 @@
   <form method="post" action="/link/{{ link.code }}/toggle" style="display:inline">
     <button>有効/停止 切替</button></form>
   <a href="/link/{{ link.code }}?bots=1"><button type="button">ボットも表示</button></a>
+  {% if link.mode == "quiz" %}
+  <a href="/link/{{ link.code }}/questions"><button type="button">クイズを編集</button></a>
+  {% endif %}
   <form method="post" action="/link/{{ link.code }}/hits/clear" style="display:inline">
     <button>履歴を消す</button></form>
   <form method="post" action="/link/{{ link.code }}/delete" style="display:inline">
@@ -38,6 +41,15 @@
 <p class="warn">IPの座標は回線の出口地点です。VPNなら実際の住所とズレます。
 GPSが取れている行はそちらが正確です。</p>
 </div>
+
+{% if link.mode == "quiz" %}
+<h2>クイズ成績</h2>
+<div class="card">
+{% set done = hits|selectattr('quiz_done')|list %}
+<p>登録質問数: {{ qs|length }} ／ 完走: {{ done|length }} 人
+ ／ 平均スコア: {{ (done|sum(attribute='quiz_score') / done|length)|round(1) if done else "-" }}</p>
+</div>
+{% endif %}
 
 <h2>地図</h2>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -70,7 +82,10 @@ if(bounds.length) m.fitBounds(bounds, {padding:[30,30]});
     {% if h.gps_lat %} <span class="badge">GPS {{ h.gps_lat|round(4) }},{{ h.gps_lon|round(4) }} ±{{ h.gps_acc|round(0) }}m</span>{% endif %}</td>
   <td>{{ net[h.id] }}{% if h.isp %}<br><small>{{ h.isp }}</small>{% endif %}</td>
   <td>{{ h.device }}<br><small>{{ h.os }} / {{ h.browser }}</small>
-    {% if h.inapp %}<br><span class="badge">{{ h.inapp }}内</span>{% endif %}</td>
+    {% if h.inapp %}<br><span class="badge">{{ h.inapp }}内</span>{% endif %}
+    {% if h.vid %}<br><a class="badge" href="/visitor/{{ h.vid }}">{{ vlabels.get(h.vid) or ("訪問者 " + h.vid[:8]) }}</a>{% endif %}
+    {% if h.sig_ok %}<br><span class="badge">鍵署名OK</span>{% endif %}
+    {% if h.quiz_done %}<br><span class="badge">クイズ完走 {{ h.quiz_score }}/{{ h.quiz_total }}</span>{% endif %}</td>
   <td><small class="mono">{{ h.ua }}</small>
     {% if h.screen %}<br><small>画面 {{ h.screen }}</small>{% endif %}
     {% if h.tz %}<br><small>tz {{ h.tz }}</small>{% endif %}</td>
@@ -79,4 +94,15 @@ if(bounds.length) m.fitBounds(bounds, {padding:[30,30]});
       <button>分類切替</button></form></td>
 </tr>
 {% endfor %}</table>
+
+{% if answers_by_hit %}
+<h2>回答</h2>
+<table><tr><th>時刻</th><th>IP</th><th>質問#</th><th>回答</th><th>正誤</th><th>所要</th></tr>
+{% for hid, rows in answers_by_hit.items() %}{% for a in rows %}
+<tr><td>{{ (a.ts or "")[:19] }}</td><td class="mono">{{ a.ip }}</td>
+<td>{{ a.ord + 1 }}</td><td>{{ a.answer }}</td>
+<td>{% if a.is_correct == 1 %}○{% elif a.is_correct == 0 %}×{% endif %}</td>
+<td>{{ a.ms }}ms</td></tr>
+{% endfor %}{% endfor %}</table>
+{% endif %}
 {% endblock %}
