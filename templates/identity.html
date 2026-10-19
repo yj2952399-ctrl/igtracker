@@ -1,12 +1,32 @@
 {% extends "base.html" %}{% block content %}
-<h1>裏垢特定</h1>
+<h1>裏垢特定エンジン v2</h1>
+
 <form method="post" action="/identity/run">
   <label>対象裏垢 <input name="target" placeholder="secret_handle" required></label>
-  <label>本体候補（改行/カンマ区切り）<textarea name="candidates">{{ cands|join('\n') }}</textarea></label>
-  <button>スコア算出</button>
+  <label>本体候補（改行/カンマ区切り・空でも可）<textarea name="candidates">{{ cands|join('\n') }}</textarea></label>
+  <label><input type="checkbox" name="auto" value="1" checked> 候補を自動収集して総当たり</label>
+  <button>スキャン開始</button>
 </form>
-<h2>結果</h2>
-<table><tr><th>対象</th><th>候補</th><th>スコア</th><th>算出</th></tr>
-{% for s in scores %}<tr><td>{{ s.uraaka_user_id }}</td><td>{{ s.candidate_username }}</td>
-<td>{{ s.score }}</td><td>{{ s.computed_at[:19] }}</td></tr>{% endfor %}</table>
+
+<h2>実行状況</h2>
+<table><tr><th>ID</th><th>対象</th><th>状態</th><th>進捗</th><th>開始</th><th>ログ</th></tr>
+{% for r in runs %}
+<tr><td>{{ r.id }}</td><td>{{ r.target_username }}</td><td>{{ r.status }}</td>
+<td>{{ r.progress }}/{{ r.total }}</td><td>{{ r.started_at[:19] if r.started_at else "" }}</td>
+<td>{{ (r.log or "")[:120] }}</td></tr>
+{% endfor %}</table>
+
+<h2>結果（スコア降順）</h2>
+{% for s in scores %}
+<div class="card">
+  <h3>{{ s.verdict }} — @{{ s.candidate_username }}
+    <span class="score">{{ s.score }}</span></h3>
+  <table>
+  {% for e in s.evidence|fromjson if e.score > 0.2 %}
+    <tr><td>{{ e.name }}</td><td>{{ e.score }}</td><td>{{ e.weight }}</td>
+    <td>{{ e.detail }}</td></tr>
+  {% endfor %}
+  </table>
+</div>
+{% endfor %}
 {% endblock %}
