@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block content %}
+<div class="authwrap">
+  <h1>管理者ログイン</h1>
+  <p class="dim">利用者用ログインとは別のパスワードです。</p>
+  {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="err">{{ err }}</p>{% endif %}
+  <form method="post" action="{{ admin_path }}/login" class="authcard">
+    <input type="hidden" name="next" value="{{ next or admin_path + '/' }}">
+    <label>管理者ユーザー名
+      <input name="username" autocomplete="username" required autofocus></label>
+    <label>管理者パスワード
+      <input type="password" name="password" autocomplete="current-password" required></label>
+    <button>管理者として入る</button>
+  </form>
+  <p class="dim tiny">通常のログインは <a href="/login">こちら</a></p>
+</div>
+{% endblock %}
