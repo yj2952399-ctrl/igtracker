@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block content %}
 <h1>リンク追跡</h1>
-<p class="dim">作ったURLを踏ませると、IP・推定地域・端末・回線が記録されます。
+<p class="dim">作ったURLを踏ませると、IP・推定地域・端末・回線・端末キーが記録されます。
 InstagramのDMで送って踏ませる用途を想定しています。</p>
 
 <form method="post" action="/links/add" class="card">
@@ -11,6 +11,8 @@ InstagramのDMで送って踏ませる用途を想定しています。</p>
     <select name="mode">
       <option value="page">ページを挟む（端末情報を多めに取得）</option>
       <option value="geo">位置情報を要求する（GPS。許可されれば高精度）</option>
+      <option value="quiz">クイズ／質問形式（回答別に情報を取得）</option>
+      <option value="identify">訪問者識別カードを出す</option>
       <option value="redirect">即リダイレクト（気づかれにくい）</option>
     </select></label>
   <button>リンクを作成</button>
