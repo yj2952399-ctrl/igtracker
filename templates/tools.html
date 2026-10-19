@@ -1,0 +1,35 @@
+{% extends "base.html" %}{% block content %}
+<h1>🔥 一斉操作</h1>
+<p class="dim">すべてバックグラウンドで動きます。終わったかどうかは
+<a href="/activity">活動ログ</a> で確認してください。</p>
+
+<form method="post" action="/tools/follow" class="card">
+  <h3>一斉フォロー / アンフォロー</h3>
+  <label>アカウント（1行1つ）<textarea name="handles" rows="5"></textarea></label>
+  <label>間隔(秒) <input name="delay" value="6" size="4"></label>
+  <label><input type="checkbox" name="unfollow" value="1"> アンフォロー</label>
+  <button>実行</button>
+</form>
+
+<form method="post" action="/tools/like" class="card">
+  <h3>一斉いいね</h3>
+  <label>対象アカウント <input name="username" required></label>
+  <label>件数 <input name="amount" value="12" size="4"></label>
+  <label>間隔(秒) <input name="delay" value="5" size="4"></label>
+  <button>実行</button>
+</form>
+
+<form method="post" action="/tools/comment" class="card">
+  <h3>コメント</h3>
+  <label>投稿URL or コード <input name="target" required></label>
+  <label>本文 <input name="text" required></label>
+  <label>間隔(秒) <input name="delay" value="6" size="4"></label>
+  <button>実行</button>
+</form>
+
+<form method="post" action="/tools/archive" class="card">
+  <h3>一括アーカイブ（プロフィール・投稿・関係を丸ごと保存）</h3>
+  <label>アカウント（1行1つ）<textarea name="handles" rows="5"></textarea></label>
+  <button>実行</button>
+</form>
+{% endblock %}
