@@ -1,31 +1,40 @@
+:root{
+  --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#e6e9ef;
+  --dim:#9aa3b2; --acc:#4c8dff; --ok:#2ecc71; --warn:#f1c40f; --bad:#e74c3c;
+}
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3}
-nav{display:flex;gap:16px;padding:12px 20px;background:#161b22;border-bottom:1px solid #30363d;
-    position:sticky;top:0;z-index:10}
-nav a{color:#e6edf3;text-decoration:none;font-size:14px}
-nav a:hover{color:#4fc3f7}
-main{padding:20px;max-width:1200px;margin:0 auto}
-h1{font-size:22px}h2{font-size:17px;color:#4fc3f7;margin-top:28px}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
-.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px}
-.card h3{margin:0 0 8px}
-.bio{color:#8b949e;font-size:13px}
-.best{color:#81c784;font-weight:bold}
-table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}
-th,td{border-bottom:1px solid #21262d;padding:6px 8px;text-align:left;vertical-align:top}
-th{color:#8b949e;font-weight:normal}
-input,textarea,button{background:#0d1117;border:1px solid #30363d;color:#e6edf3;
-    border-radius:6px;padding:8px;font-size:14px}
-button{background:#238636;border:none;cursor:pointer;margin-top:8px}
-button:hover{background:#2ea043}
-form{display:flex;flex-direction:column;gap:8px;max-width:520px;margin-bottom:16px}
-.split{display:grid;grid-template-columns:280px 1fr;gap:16px}
-.threads{display:flex;flex-direction:column;gap:4px;max-height:70vh;overflow:auto}
-.thread{padding:8px;border-radius:6px;color:#e6edf3;text-decoration:none;font-size:13px}
-.thread:hover,.thread.active{background:#161b22}
-.msgs{max-height:70vh;overflow:auto}
-.msg{border-bottom:1px solid #21262d;padding:8px 0;font-size:14px}
-.msg .t{color:#8b949e;font-size:11px;margin-left:8px}
-.msg p{margin:4px 0}
-.btn{display:inline-block;background:#21262d;padding:6px 12px;border-radius:6px;
-    color:#e6edf3;text-decoration:none;font-size:13px;margin-top:8px}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;
+  font-size:14px;line-height:1.6}
+nav{display:flex;flex-wrap:wrap;gap:2px;padding:8px 12px;
+  background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:9}
+nav a{color:var(--dim);text-decoration:none;padding:6px 10px;border-radius:6px}
+nav a:hover{color:var(--fg);background:#20242e}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:12px 0}
+h2{font-size:16px;margin:22px 0 8px;border-left:3px solid var(--acc);padding-left:8px}
+h3{font-size:14px;margin:0 0 6px}
+a{color:var(--acc)}
+table{width:100%;border-collapse:collapse;margin:8px 0;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;
+  word-break:break-word}
+th{color:var(--dim);font-weight:600;background:#1c2029;width:1%;white-space:nowrap}
+tr:last-child th,tr:last-child td{border-bottom:none}
+form{margin:8px 0}
+label{display:block;margin:6px 0;color:var(--dim)}
+label.inline{display:inline-block;margin-right:12px}
+input,textarea,select{width:100%;padding:6px 8px;margin-top:2px;background:#11141a;
+  color:var(--fg);border:1px solid var(--line);border-radius:6px;font:inherit}
+input[type=checkbox]{width:auto;margin-right:6px}
+button{padding:6px 12px;margin:2px 0;background:var(--acc);color:#fff;border:0;
+  border-radius:6px;cursor:pointer;font:inherit}
+button:hover{filter:brightness(1.1)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:12px;margin:10px 0}
+.score{font-weight:700;color:var(--ok);margin-left:6px}
+.badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;
+  background:#3a2a2a;color:var(--warn);border:1px solid #5a3f3f;margin-left:6px}
+small{color:var(--dim)}
+code{background:#11141a;padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+ul{padding-left:18px}
