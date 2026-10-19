@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }}</title>
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;
+ display:flex;min-height:100vh;align-items:center;justify-content:center}
+.wrap{padding:24px;max-width:440px;width:100%}
+.bar{height:4px;background:#1c2029;border-radius:9px;overflow:hidden;margin-bottom:22px}
+.bar i{display:block;height:100%;width:0;background:#4c8dff;transition:width .3s}
+h1{font-size:18px;margin:0 0 6px}
+.sub{color:#9aa3b2;font-size:13px;margin:0 0 20px}
+.q{font-size:16px;line-height:1.6;margin:0 0 16px}
+.opts{display:flex;flex-direction:column;gap:10px}
+.opt{padding:14px 16px;border:1px solid #2a303c;border-radius:12px;background:#151922;
+ color:#e6e9ef;font-size:15px;text-align:left}
+.opt.on{border-color:#4c8dff;background:#1a2333}
+.txt{width:100%;box-sizing:border-box;padding:13px 14px;border-radius:12px;border:1px solid #2a303c;
+ background:#151922;color:#e6e9ef;font-size:15px;margin-bottom:12px}
+button.next,#nb{margin-top:12px;padding:12px 28px;border:0;border-radius:999px;background:#4c8dff;color:#fff;font-size:15px}
+.reveal{margin-top:14px;padding:12px 14px;border-radius:12px;background:#12241a;color:#8ff0b5;
+ font-size:14px;opacity:0;transform:translateY(6px);transition:.25s}
+.reveal.in{opacity:1;transform:none}
+.done h2{font-size:17px} .done p{color:#9aa3b2;font-size:13px}
+.go{margin-top:16px;padding:12px 32px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
+.foot{margin-top:18px;font-size:11px;color:#5f6875}
+</style></head><body>
+<div class="wrap">
+  <div class="bar"><i id="bar"></i></div>
+  <h1>{{ link.name }}</h1>
+  <p class="sub" id="sub">{{ link.note or "かんたんな質問に答えてください" }}</p>
+  <div id="qbox"></div>
+  <div class="foot" id="prog"></div>
+</div>
+<script>
+window.LT_CODE = {{ code|tojson }};
+window.LT_HIT  = {{ hit_id }};
+window.LT_NONCE = {{ nonce|tojson }};
+window.LT_GEO  = {{ 1 if link.mode == "geo" else 0 }};
+const QS = {{ questions_json|safe }};
+const DEST = {{ dest|tojson }};
+</script>
+<script src="/static/collect.js"></script>
+<script>
+(function () {
+  const qbox = document.getElementById("qbox"), sub = document.getElementById("sub"),
+        bar = document.getElementById("bar"), prog = document.getElementById("prog");
+  let i = 0, score = 0, t0 = Date.now(), tq = Date.now();
+  const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function show() {
+    if (i >= QS.length) return finish();
+    const q = QS[i]; tq = Date.now();
+    prog.textContent = (i + 1) + " / " + QS.length;
+    bar.style.width = (i / QS.length * 100) + "%";
+    let h = '<div class="q">' + esc(q.prompt) + '</div>';
+    if (q.qtype === "text") {
+      h += '<input id="ta" class="txt" autocomplete="off"><button id="nb">次へ</button>';
+    } else {
+      h += '<div class="opts">';
+      (q.options || []).forEach((o, k) => {
+        h += '<button class="opt" data-k="' + k + '">' + esc(o.label) + '</button>';
+      });
+      h += '</div>';
+      if (q.qtype === "multi") h += '<button id="nb" class="next">決定</button>';
+    }
+    qbox.innerHTML = h;
+    if (q.qtype === "text") {
+      const ta = document.getElementById("ta"); ta.focus();
+      document.getElementById("nb").onclick = () => answer(ta.value);
+      ta.addEventListener("keydown", e => { if (e.key === "Enter") answer(ta.value); });
+    } else if (q.qtype === "multi") {
+      const sel = new Set();
+      qbox.querySelectorAll(".opt").forEach(b => b.onclick = () => {
+        b.classList.toggle("on");
+        const k = b.dataset.k; sel.has(k) ? sel.delete(k) : sel.add(k);
+      });
+      document.getElementById("nb").onclick = () => answer([...sel].sort().join(","));
+    } else {
+      qbox.querySelectorAll(".opt").forEach(b => b.onclick = () => answer(b.dataset.k));
+    }
+  }
+
+  async function answer(val) {
+    const q = QS[i], ms = Date.now() - tq;
+    let r = {};
+    try {
+      r = await (await fetch("/l/" + window.LT_CODE + "/a", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hit_id: window.LT_HIT, qid: q.id, answer: val, ms: ms })
+      })).json();
+    } catch (e) {}
+    if (r.correct === 1) score++;
+    if (r.reveal) { reveal(r.reveal); } else { i++; show(); }
+  }
+
+  function reveal(txt) {
+    const d = document.createElement("div");
+    d.className = "reveal"; d.textContent = txt;
+    qbox.appendChild(d);
+    setTimeout(() => d.classList.add("in"), 10);
+    setTimeout(() => { i++; show(); }, 1800);
+  }
+
+  async function finish() {
+    bar.style.width = "100%"; sub.textContent = "";
+    const total = Date.now() - t0;
+    try {
+      await fetch("/l/" + window.LT_CODE + "/done", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hit_id: window.LT_HIT, score: score, total: QS.length, ms: total })
+      });
+    } catch (e) {}
+    qbox.innerHTML = '<div class="done"><h2>ありがとうございました</h2><p>' +
+      score + ' / ' + QS.length + ' 問正解</p></div>';
+    prog.textContent = "";
+    if (DEST) {
+      const b = document.createElement("button");
+      b.className = "go"; b.textContent = "続ける";
+      b.onclick = async () => { try { await LT.send(await LT.geo()); } catch (e) {} location.href = DEST; };
+      qbox.appendChild(b);
+      setTimeout(() => { if (!document.hidden) b.click(); }, 6000);
+    }
+  }
+
+  show();
+})();
+</script>
+</body></html>
