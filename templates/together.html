@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
-<h1>一緒にいる人を解析</h1>
-<p class="dim">踏ませたリンクのIPを突き合わせて、「同じ回線・同じ場所にいた人」を割り出します。
-同じ端末キーやフィンガープリントが一致すれば同一人物の可能性が高いと判定します。</p>
+<h1>一緒にいる人・端末を解析</h1>
+<p class="dim">踏ませたリンクのIPと端末情報を突き合わせて、
+「同じ回線にいた人」「同じ端末を使っている人」を割り出します。</p>
 
 <form method="get" class="card">
   <label>リンクで絞る
@@ -20,14 +20,42 @@
 <table>
 <tr><th>解析対象の訪問者</th><td>{{ res.summary.visitors }}</td></tr>
 <tr><th>ヒット数</th><td>{{ res.summary.hits }}</td></tr>
+<tr><th>同一端末の再訪</th><td>{{ res.summary.revisits }}</td></tr>
+<tr><th>同一端末でIDが別</th><td>{{ res.summary.multi_vid_devices }}</td></tr>
 <tr><th>検出した関係</th><td>{{ res.summary.pairs }}</td></tr>
 <tr><th>グループ数</th><td>{{ res.summary.groups }}</td></tr>
-<tr><th>うち同一端末</th><td>{{ res.summary.same_device }}</td></tr>
-<tr><th>うち同じIP</th><td>{{ res.summary.same_ip }}</td></tr>
 </table>
 <p class="dim">モバイル回線はCGNATで他人とIPを共有するため、同じIPで時刻が近いことを条件にしています。
 「同じ/24サブネット」だけの一致は弱い根拠です。</p>
 </div>
+
+{% if res.summary.visitors < 2 %}
+<div class="card">
+  <p class="warn">解析対象の訪問者が {{ res.summary.visitors }} 人しかいません。
+  ペアは「別の訪問者」同士でしか成立しないので、<b>別の端末</b>から
+  <b>同じWi-Fi</b>で開いてください。スマホがモバイル回線だとIPが別になるので反応しません。</p>
+</div>
+{% endif %}
+
+<h2>端末</h2>
+<p class="dim">同じ端末から複数回踏まれている場合、または同じ端末なのに訪問者IDが
+変わっている場合を検出します。フィンガープリント単位です。</p>
+{% for d in res.devices %}
+<div class="card">
+  <h3>{{ d.verdict }}（{{ d.hits }}回{% if d.multi_vid %}・訪問者{{ d.vids|length }}人{% endif %}）</h3>
+  <table>
+    <tr><th>端末</th><td>{{ d.device }} / {{ d.os }} / {{ d.browser }}
+      {% if d.inapp %} <span class="badge">{{ d.inapp }}内</span>{% endif %}</td></tr>
+    <tr><th>初回 / 最終</th><td>{{ (d.first or "")[:19] }} / {{ (d.last or "")[:19] }}</td></tr>
+    <tr><th>IP</th><td class="mono"><small>{% for ip in d.ips[:5] %}{{ ip }} {% endfor %}</small></td></tr>
+    <tr><th>踏んだリンク</th><td class="mono"><small>{{ d.codes|join(", ") }}</small></td></tr>
+    <tr><th>訪問者</th><td>{% for v in d.vids %}<a class="mono" href="/visitor/{{ v }}">{{ v[:10] }}…</a> {% endfor %}</td></tr>
+    <tr><th>FP</th><td class="mono"><small>{{ d.short }}…</small></td></tr>
+  </table>
+</div>
+{% else %}
+<p>まだ端末の再訪は検出されていません。</p>
+{% endfor %}
 
 <h2>グループ</h2>
 {% for g in res.groups %}
@@ -60,7 +88,7 @@
   </table>
 </div>
 {% else %}
-<p>まだ関係は検出されていません。リンクを踏ませてから再解析してください。</p>
+<p>まだ関係は検出されていません。</p>
 {% endfor %}
 
 <h2>ペア一覧</h2>
