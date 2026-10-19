@@ -45,3 +45,6 @@ small{color:var(--dim)}
 code{background:#11141a;padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
 ul{padding-left:18px}
 #map{height:340px;border-radius:8px;border:1px solid var(--line);margin:8px 0}
+.imp{background:#3a2f00;color:#ffe9a8;padding:8px 12px;font-size:14px}
+.imp a{color:#ffe9a8}
+.card{border:1px solid #444;padding:12px;margin:12px 0;border-radius:6px}
