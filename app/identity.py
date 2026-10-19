@@ -1,6 +1,7 @@
 """
 裏垢特定エンジン v2。
 31シグナル総動員 + 候補の自動収集で総当たりスコアリング。
+さらに「削除済みアカウント」対応（数値ID指定 + DBキャッシュ復元）。
 
 シグナルの種類:
   [名前系]  username / username_root / fullname
@@ -20,7 +21,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
-from .instagram import client, raw_profile
+from .config import get as get_cfg
+from .instagram import client, raw_profile, archive_account
 from .database import now
 
 # ---------- 正規化 ----------
@@ -213,10 +215,11 @@ class Acct:
     related_ids: set = field(default_factory=set)
     liker_ids: set = field(default_factory=set)
     commenter_ids: set = field(default_factory=set)
-    # --- 追加 ---
-    deleted: bool = False      # user_info が取れない＝削除/凍結の疑い
-    cached: bool = False       # DBキャッシュから復元した
-    partial: bool = False      # 一部のシグナルが欠けている
+    # --- 削除済み対応 ---
+    display: str = ""
+    deleted: bool = False
+    cached: bool = False
+    partial: bool = False
 
     @property
     def captions(self):
@@ -227,12 +230,185 @@ class Acct:
         return [p["taken_at"] for p in self.posts if p.get("taken_at")]
 
 
-liker_ids: set = field(default_factory=set)
-    commenter_ids: set = field(default_factory=set)
-    # --- 追加 ---
-    deleted: bool = False      # user_info が取れない＝削除/凍結の疑い
-    cached: bool = False       # DBキャッシュから復元した
-    partial: bool = False      # 一部のシグナルが欠けている
+def _apply_profile(a: Acct, p):
+    a.username = p.get("username") or ""
+    a.full_name = p.get("full_name") or ""
+    a.bio = p.get("bio") or ""
+    a.external_url = p.get("external_url") or ""
+    a.business_email = (p.get("business_email") or "").lower()
+    a.business_phone = (p.get("business_phone") or "").lower()
+    a.public_email = (p.get("public_email") or "").lower()
+    a.contact_phone = (p.get("contact_phone") or "").lower()
+    a.city = (p.get("city") or "").lower()
+    a.address = (p.get("address") or "").lower()
+    a.follower_count = p.get("follower_count") or 0
+    a.following_count = p.get("following_count") or 0
+    a.media_count = p.get("media_count") or 0
+    a.is_private = bool(p.get("is_private"))
+    a.is_business = bool(p.get("is_business"))
+    a.avatar_phash = p.get("profile_pic_phash") or ""
+    a.avatar_hist = p.get("_avatar_hist") or []
+
+
+def _cached_dir(db, uid, direction):
+    return {r["to_user_id"]: r["to_username"] or "" for r in db.q(
+        "SELECT to_user_id,to_username FROM relationships "
+        "WHERE from_user_id=? AND direction=?", (str(uid), direction))}
+
+
+def name_of(db, uid, fallback=""):
+    """表示名を決める。台帳 > プロフィール > 与えられた文字列 > id:xxx"""
+    k = db.known_get(uid)
+    if k and k["username"]:
+        return k["username"]
+    p = db.q1("SELECT username FROM profiles WHERE user_id=?", (str(uid),))
+    if p and p["username"]:
+        return p["username"]
+    if fallback:
+        return str(fallback)
+    return f"id:{uid}"
+
+
+def is_deleted(db, uid):
+    k = db.known_get(uid)
+    return bool(k and k["deleted"])
+
+
+def resolve_uid(cl, db, token):
+    """@ユーザー名 でも 数値ID でも受け付ける。削除済みはID直指定でOK。"""
+    t = (token or "").strip().lstrip("@")
+    if not t:
+        raise ValueError("empty token")
+    if t.isdigit():
+        return str(t)
+    row = db.q1("SELECT user_id FROM known_accounts WHERE lower(username)=lower(?)", (t,))
+    if row:
+        return row["user_id"]
+    try:
+        return str(cl.user_id_from_username(t))
+    except Exception:
+        row = db.q1("SELECT user_id FROM profiles WHERE lower(username)=lower(?)", (t,))
+        if row:
+            return row["user_id"]
+        raise
+
+
+def gather(cl, uid, g, db=None):
+    """プロフィール・関係・投稿などを収集。
+    取得に失敗した部分はDBキャッシュで補完する（削除済みアカウント対応）。"""
+    a = Acct(uid=str(uid))
+
+    try:
+        p = raw_profile(cl, uid)
+    except Exception:
+        p = None
+        a.deleted = True
+        a.partial = True
+    if p:
+        _apply_profile(a, p)
+    elif db is not None:
+        cp = db.q1("SELECT * FROM profiles WHERE user_id=?", (str(uid),))
+        if cp:
+            _apply_profile(a, {k: cp[k] for k in cp.keys()})
+            a.cached = True
+
+    if not a.username and db is not None:
+        k = db.known_get(uid)
+        if k and k["username"]:
+            a.username = k["username"]
+
+    # --- フォロー関係 ---
+    try:
+        a.followers = {str(k): v.username for k, v in
+                       cl.user_followers(uid, amount=g["followers"]).items()}
+    except Exception:
+        a.partial = True
+        if db is not None:
+            a.followers = _cached_dir(db, uid, "follower")
+    try:
+        a.following = {str(k): v.username for k, v in
+                       cl.user_following(uid, amount=g["following"]).items()}
+    except Exception:
+        a.partial = True
+        if db is not None:
+            a.following = _cached_dir(db, uid, "following")
+
+    # --- 投稿 ---
+    try:
+        for m in cl.user_medias(uid, amount=g["posts"]):
+            a.posts.append({
+                "taken_at": m.taken_at.isoformat() if m.taken_at else None,
+                "caption": m.caption_text or "",
+                "hashtags": [w for w in (m.caption_text or "").split() if w.startswith("#")],
+                "mentions": [w[1:].lower() for w in (m.caption_text or "").split()
+                             if w.startswith("@")],
+                "location_id": str(getattr(m.location, "pk", "")) if m.location else None,
+            })
+    except Exception:
+        a.partial = True
+        if db is not None:
+            for r in db.q("SELECT taken_at,caption,location_id FROM posts "
+                          "WHERE user_id=? ORDER BY taken_at DESC LIMIT ?",
+                          (str(uid), g["posts"])):
+                a.posts.append({"taken_at": r["taken_at"], "caption": r["caption"] or "",
+                                "hashtags": [], "mentions": [],
+                                "location_id": r["location_id"]})
+
+    # --- いいねした相手 ---
+    try:
+        for m in cl.user_medias(uid, amount=g["liker_posts"]):
+            try:
+                for u in cl.media_likers(str(m.pk))[:g["likers_per_post"]]:
+                    a.liker_ids.add(str(u.pk))
+            except Exception:
+                continue
+    except Exception:
+        a.partial = True
+    if db is not None and not a.liker_ids:
+        a.liker_ids = {r["user_id"] for r in db.q(
+            "SELECT DISTINCT user_id FROM media_likers WHERE media_id IN "
+            "(SELECT media_id FROM posts WHERE user_id=?)", (str(uid),))}
+
+    # --- コメントした相手 ---
+    try:
+        rows = cl.user_medias(uid, amount=g["commenter_posts"])
+        for m in rows:
+            try:
+                for cm in cl.media_comments(str(m.pk), amount=50):
+                    a.commenter_ids.add(str(cm.user_id))
+            except Exception:
+                continue
+    except Exception:
+        a.partial = True
+    if db is not None and not a.commenter_ids:
+        a.commenter_ids = {r["user_id"] for r in db.q(
+            "SELECT DISTINCT user_id FROM media_commenters WHERE media_id IN "
+            "(SELECT media_id FROM posts WHERE user_id=?)", (str(uid),))}
+
+    # --- 関連垢 ---
+    try:
+        if hasattr(cl, "user_related_profiles"):
+            for u in cl.user_related_profiles(uid):
+                a.related_ids.add(str(u.pk))
+    except Exception:
+        pass
+    if db is not None and not a.related_ids:
+        a.related_ids = {r["related_id"] for r in db.q(
+            "SELECT related_id FROM related_profiles WHERE user_id=?", (str(uid),))}
+
+    # --- タグされた投稿の投稿主 ---
+    try:
+        for m in cl.user_tagged_medias(uid, amount=100):
+            if getattr(m, "user", None):
+                a.tagged_ids.add(str(m.user.pk))
+    except Exception:
+        pass
+    if db is not None and not a.tagged_ids:
+        a.tagged_ids = {r["owner_id"] for r in db.q(
+            "SELECT DISTINCT owner_id FROM tagged_media "
+            "WHERE user_id=? AND owner_id<>''", (str(uid),))}
+
+    return a
 
 
 # ---------- 比較 ----------
@@ -361,15 +537,20 @@ def auto_candidates(a: Acct, limit):
     return items[:limit]
 
 
-def run_identify(db, target_uid, candidate_uids=None, auto_scan=True, run_id=None):
-    cfg = __import__("app.config", fromlist=["get"]).get()
+def run_identify(db, target_token, candidate_tokens=None, auto_scan=False,
+                 run_id=None, archive_candidates=False):
+    """target_token / candidate_tokens は @ユーザー名 でも 数値ID でもよい。"""
+    cfg = get_cfg()
     icfg = cfg["identity"]
-    w = icfg["weights"]
-    g = icfg["gather"]
-    th = icfg["thresholds"]
+    w, g, th = icfg["weights"], icfg["gather"], icfg["thresholds"]
     cl = client()
 
-    target = gather(cl, target_uid, g)
+    # --- 対象 ---
+    t_uid = resolve_uid(cl, db, target_token)
+    target = gather(cl, t_uid, g, db)
+    if not target.username:
+        target.username = name_of(db, t_uid, str(target_token).lstrip("@"))
+    db.add_known(t_uid, target.username, source="target", deleted=target.deleted)
     db.upsert_profile({
         "user_id": target.uid, "username": target.username,
         "full_name": target.full_name, "bio": target.bio,
@@ -381,55 +562,82 @@ def run_identify(db, target_uid, candidate_uids=None, auto_scan=True, run_id=Non
         "profile_pic_phash": target.avatar_phash,
     })
 
-    pool = []
-    if candidate_uids:
-        for u in candidate_uids:
-            pool.append((str(u), ""))
+    # --- 候補プール ---
+    pool, explicit = [], set()
+    for tok in (candidate_tokens or []):
+        try:
+            uid = resolve_uid(cl, db, tok)
+        except Exception:
+            continue
+        explicit.add(uid)
+        pool.append(uid)
     if auto_scan:
-        pool += auto_candidates(target, icfg["auto_scan_max"])
-    # 重複除去
+        pool += [u for u, _ in auto_candidates(target, icfg["auto_scan_max"])]
+
     seen, uniq = set(), []
-    for uid, un in pool:
+    for uid in pool:
         if uid in seen or uid == target.uid:
             continue
         seen.add(uid)
-        uniq.append((uid, un))
+        uniq.append(uid)
 
     if run_id:
         db.update_run(run_id, total=len(uniq), progress=0, status="running")
 
+    # --- 収集 ---
     accounts = []
     freq = Counter()
-    for i, (uid, un) in enumerate(uniq, 1):
-        ac = gather(cl, uid, g)
+    for i, uid in enumerate(uniq, 1):
+        ac = gather(cl, uid, g, db)
+        if archive_candidates and not ac.cached:
+            try:
+                archive_account(db, uid)
+            except Exception:
+                pass
+        ac.display = name_of(db, uid, ac.username or f"id:{uid}")
         if not ac.username:
-            ac.username = un
-        if ac.username:
-            accounts.append(ac)
-            for n in set(ac.followers) | set(ac.following):
-                freq[n] += 1
+            ac.username = ac.display
+        db.add_known(uid, "" if str(ac.display).startswith("id:") else ac.display,
+                     source="candidate", deleted=ac.deleted)
+        accounts.append(ac)
+        for n in set(ac.followers) | set(ac.following):
+            freq[n] += 1
         if run_id and i % 5 == 0:
             db.update_run(run_id, progress=i)
 
+    # --- 採点 ---
     total_docs = max(len(accounts), 1)
     results = []
     for ac in accounts:
         score, ev = compare(target, ac, w, freq, total_docs)
-        if score < icfg["min_score_report"]:
+        if score < icfg["min_score_report"] and ac.uid not in explicit:
             continue
-        results.append({"uid": ac.uid, "username": ac.username,
-                        "score": score, "verdict": verdict(score, th),
-                        "evidence": ev})
+        results.append({
+            "uid": ac.uid, "username": ac.username, "display": ac.display,
+            "score": score, "verdict": verdict(score, th), "evidence": ev,
+            "flags": {"deleted": ac.deleted, "cached": ac.cached, "partial": ac.partial},
+        })
     results.sort(key=lambda r: r["score"], reverse=True)
 
+    # --- 記録 ---
     with db.tx() as c:
         for r in results:
-            c.execute("""INSERT INTO identity_scores(run_id,uraaka_user_id,
-                candidate_user_id,candidate_username,score,verdict,evidence,computed_at)
-                VALUES(?,?,?,?,?,?,?,?)""",
-                (run_id, target.uid, r["uid"], r["username"], r["score"],
-                 r["verdict"], json.dumps(r["evidence"], ensure_ascii=False), now()))
+            c.execute("""INSERT INTO identity_scores(run_id,uraaka_user_id,candidate_user_id,
+                candidate_username,candidate_display,score,verdict,evidence,flags,computed_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (run_id, target.uid, r["uid"], r["username"], r["display"], r["score"],
+                 r["verdict"], json.dumps(r["evidence"], ensure_ascii=False),
+                 json.dumps(r["flags"], ensure_ascii=False), now()))
+        if run_id:
+            for r in results:
+                c.execute("""INSERT INTO saved_pairs(target_uid,target_username,
+                    candidate_uid,candidate_username,note,added_at) VALUES(?,?,?,?,?,?)
+                    ON CONFLICT(target_uid,candidate_uid) DO UPDATE SET
+                        target_username=excluded.target_username,
+                        candidate_username=excluded.candidate_username""",
+                    (target.uid, target.username, r["uid"], r["display"], "", now()))
 
     db.log(target.uid, "identify_done",
-           {"candidates": len(accounts), "top": results[0]["username"] if results else None})
+           {"candidates": len(accounts), "deleted_target": target.deleted,
+            "top": results[0]["display"] if results else None})
     return results
