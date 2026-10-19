@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block content %}
+<h1>監査ログ</h1>
+<p class="dim"><a href="{{ admin_path }}/">← 管理コンソール</a></p>
+<table class="small">
+<tr><th>時刻</th><th>実行者</th><th>操作</th><th>詳細</th></tr>
+{% for a in rows %}
+<tr><td class="dim">{{ a.ts }}</td><td>{{ a.actor }}</td>
+    <td><code>{{ a.action }}</code></td><td class="dim">{{ a.detail }}</td></tr>
+{% endfor %}
+</table>
+{% endblock %}
