@@ -106,6 +106,18 @@ CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT, status TEXT, started_at TEXT, finished_at TEXT, log TEXT
 );
+CREATE TABLE IF NOT EXISTS known_accounts (
+    user_id TEXT PRIMARY KEY, username TEXT, full_name TEXT,
+    note TEXT, source TEXT, deleted INTEGER DEFAULT 0,
+    added_at TEXT, last_seen TEXT
+);
+CREATE TABLE IF NOT EXISTS saved_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_uid TEXT, target_username TEXT,
+    candidate_uid TEXT, candidate_username TEXT,
+    note TEXT, added_at TEXT,
+    UNIQUE(target_uid, candidate_uid)
+);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_dm_msg ON dm_messages(thread_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_snap ON profile_snapshots(user_id, taken_at);
@@ -125,6 +137,22 @@ class DB:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self):
+        def cols(t):
+            return {r["name"] for r in self.q(f"PRAGMA table_info({t})")}
+        add = {
+            "identity_runs": [("candidates_raw", "TEXT"), ("note", "TEXT"),
+                              ("target_deleted", "INTEGER DEFAULT 0")],
+            "identity_scores": [("candidate_display", "TEXT"), ("flags", "TEXT")],
+        }
+        for table, defs in add.items():
+            have = cols(table)
+            for name, ddl in defs:
+                if name not in have:
+                    with self.tx() as c:
+                        c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     @contextmanager
     def tx(self):
