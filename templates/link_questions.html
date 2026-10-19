@@ -1,0 +1,35 @@
+{% extends "base.html" %}{% block content %}
+<h1>クイズ編集 — {{ link.name }}</h1>
+<p class="mono">{{ base }}/l/{{ link.code }}</p>
+<p class="dim">選択肢は1行1つ。「ラベル|キー|回答後に出す文」の形式で書きます。
+キーは正解判定に使う文字列で、空なら連番になります。</p>
+
+<form method="post" action="/link/{{ link.code }}/questions/add" class="card">
+  <label>質問文 <input name="prompt" required></label>
+  <label>種類
+    <select name="qtype">
+      <option value="choice">単一選択</option>
+      <option value="multi">複数選択</option>
+      <option value="text">自由記述</option>
+    </select></label>
+  <label>選択肢（1行1つ）<br>
+    <textarea name="options" rows="5"
+      placeholder="はい|1|ありがとう&#10;いいえ|0|なるほど"></textarea></label>
+  <label>正解キー（空なら採点なし／複数はカンマ区切り）<input name="answer_key"></label>
+  <label>自由記述のときに出す文 <input name="reveal"></label>
+  <button>質問を追加</button>
+</form>
+
+<h2>登録済み {{ qs|length }} 問</h2>
+<table><tr><th>#</th><th>種類</th><th>質問</th><th>選択肢</th><th></th></tr>
+{% for q in qs %}
+<tr>
+  <td>{{ q.ord + 1 }}</td><td>{{ q.qtype }}</td><td>{{ q.prompt }}</td>
+  <td><small>{% for o in q.options|fromjson %}{{ o.label }} → {{ o.reveal }}<br>{% endfor %}</small></td>
+  <td><form method="post" action="/link/{{ link.code }}/questions/{{ q.id }}/delete">
+    <button>削除</button></form></td>
+</tr>
+{% endfor %}</table>
+
+<p><a href="/link/{{ link.code }}">← リンク詳細</a></p>
+{% endblock %}
