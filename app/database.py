@@ -1,4 +1,4 @@
-"""SQLite スキーマとアクセス層。特定エンジン + リンク追跡。スレッド安全版。"""
+"""SQLite スキーマとアクセス層。特定エンジン + リンク追跡 + 横断検索。スレッド安全版。"""
 import sqlite3, json, datetime as dt, os, threading
 from contextlib import contextmanager
 
@@ -155,6 +155,39 @@ CREATE TABLE IF NOT EXISTS visitors (
     device TEXT, os TEXT, browser TEXT, inapp TEXT,
     fingerprint TEXT, pubkey TEXT, label TEXT, note TEXT
 );
+CREATE TABLE IF NOT EXISTS sns_scans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT, total INTEGER DEFAULT 0, found INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'running', started_at TEXT, finished_at TEXT, log TEXT
+);
+CREATE TABLE IF NOT EXISTS sns_hits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id INTEGER, username TEXT, site TEXT, site_name TEXT, cat TEXT,
+    url TEXT, state TEXT, code INTEGER, title TEXT, og_image TEXT,
+    phash TEXT, seen_at TEXT
+);
+CREATE TABLE IF NOT EXISTS sns_avatars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT, ref TEXT, site TEXT, url TEXT, phash TEXT, seen_at TEXT,
+    UNIQUE(source, ref, site)
+);
+CREATE TABLE IF NOT EXISTS gravatar (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT, md5 TEXT, display_name TEXT, profile_url TEXT,
+    has_avatar INTEGER, accounts TEXT, urls TEXT, raw TEXT, seen_at TEXT,
+    UNIQUE(email)
+);
+CREATE TABLE IF NOT EXISTS campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT, note TEXT, mode TEXT DEFAULT 'page', message TEXT,
+    created_at TEXT, status TEXT DEFAULT 'draft',
+    total INTEGER DEFAULT 0, sent INTEGER DEFAULT 0, failed INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS campaign_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER, username TEXT, user_id TEXT, code TEXT,
+    state TEXT DEFAULT 'pending', sent_at TEXT, error TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_dm_msg ON dm_messages(thread_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_snap ON profile_snapshots(user_id, taken_at);
@@ -166,6 +199,9 @@ CREATE INDEX IF NOT EXISTS idx_q_code ON link_questions(code, ord);
 CREATE INDEX IF NOT EXISTS idx_ans_hit ON link_answers(hit_id);
 CREATE INDEX IF NOT EXISTS idx_ans_code ON link_answers(code, ts);
 CREATE INDEX IF NOT EXISTS idx_visitors_seen ON visitors(last_seen);
+CREATE INDEX IF NOT EXISTS idx_sns_scan ON sns_hits(scan_id, state);
+CREATE INDEX IF NOT EXISTS idx_sns_u ON sns_hits(username, state);
+CREATE INDEX IF NOT EXISTS idx_ct_camp ON campaign_targets(campaign_id, state);
 """
 
 
@@ -511,3 +547,93 @@ class DB:
     def hits_by_vid(self, vid, limit=200):
         return self.q("SELECT * FROM link_hits WHERE vid=? ORDER BY ts DESC LIMIT ?",
                       (vid, limit))
+
+    # ---- SNS横断検索 ----
+    def start_scan(self, username):
+        with self.tx() as c:
+            cur = c.execute("""INSERT INTO sns_scans(username,status,started_at)
+                VALUES(?,?,?)""", (username, "running", now()))
+            return cur.lastrowid
+
+    def finish_scan(self, sid, total=0, found=0, status="ok", log=""):
+        with self.tx() as c:
+            c.execute("""UPDATE sns_scans SET total=?,found=?,status=?,finished_at=?,log=?
+                WHERE id=?""", (total, found, status, now(), log[:20000], sid))
+
+    def scans(self, limit=200):
+        return self.q("SELECT * FROM sns_scans ORDER BY id DESC LIMIT ?", (limit,))
+
+    def scan(self, sid):
+        return self.q1("SELECT * FROM sns_scans WHERE id=?", (sid,))
+
+    def del_scan(self, sid):
+        with self.tx() as c:
+            c.execute("DELETE FROM sns_hits WHERE scan_id=?", (sid,))
+            c.execute("DELETE FROM sns_scans WHERE id=?", (sid,))
+
+    def add_sns_hit(self, d):
+        cols = list(d.keys())
+        with self.tx() as c:
+            c.execute(f"INSERT INTO sns_hits({','.join(cols)}) "
+                      f"VALUES({','.join(['?'] * len(cols))})", [d[k] for k in cols])
+
+    def sns_hits(self, sid):
+        return self.q("SELECT * FROM sns_hits WHERE scan_id=? ORDER BY "
+                      "(state<>'yes'), id", (sid,))
+
+    def sns_by_username(self, username):
+        return self.q("SELECT * FROM sns_hits WHERE username=? ORDER BY id DESC",
+                      (username,))
+
+    def upsert_avatar(self, source, ref, site, url, phash):
+        with self.tx() as c:
+            c.execute("""INSERT INTO sns_avatars(source,ref,site,url,phash,seen_at)
+                VALUES(?,?,?,?,?,?)
+                ON CONFLICT(source,ref,site) DO UPDATE SET
+                    url=excluded.url, phash=excluded.phash, seen_at=excluded.seen_at""",
+                (source, ref, site, url, phash, now()))
+
+    def avatars(self, limit=2000):
+        return self.q("SELECT * FROM sns_avatars ORDER BY id DESC LIMIT ?", (limit,))
+
+    def add_gravatar(self, d):
+        with self.tx() as c:
+            c.execute("""INSERT INTO gravatar(email,md5,display_name,profile_url,
+                has_avatar,accounts,urls,raw,seen_at) VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(email) DO UPDATE SET display_name=excluded.display_name,
+                    accounts=excluded.accounts, urls=excluded.urls, raw=excluded.raw,
+                    seen_at=excluded.seen_at""",
+                (d["email"], d["md5"], d.get("display_name"), d.get("profile"),
+                 int(bool(d.get("has_avatar"))),
+                 json.dumps(d.get("accounts"), ensure_ascii=False),
+                 json.dumps(d.get("urls"), ensure_ascii=False),
+                 json.dumps(d.get("raw"), ensure_ascii=False, default=str), now()))
+
+    def gravatars(self, limit=200):
+        return self.q("SELECT * FROM gravatar ORDER BY seen_at DESC LIMIT ?", (limit,))
+
+    def del_gravatar(self, gid):
+        with self.tx() as c:
+            c.execute("DELETE FROM gravatar WHERE id=?", (gid,))
+
+    # ---- キャンペーン ----
+    def add_campaign(self, name, note="", mode="page", message=""):
+        with self.tx() as c:
+            cur = c.execute("""INSERT INTO campaigns(name,note,mode,message,created_at,status)
+                VALUES(?,?,?,?,?,?)""", (name, note, mode, message, now(), "draft"))
+            return cur.lastrowid
+
+    def campaigns(self, limit=200):
+        return self.q("SELECT * FROM campaigns ORDER BY id DESC LIMIT ?", (limit,))
+
+    def campaign(self, cid):
+        return self.q1("SELECT * FROM campaigns WHERE id=?", (cid,))
+
+    def del_campaign(self, cid):
+        with self.tx() as c:
+            c.execute("DELETE FROM campaign_targets WHERE campaign_id=?", (cid,))
+            c.execute("DELETE FROM campaigns WHERE id=?", (cid,))
+
+    def set_campaign_status(self, cid, status):
+        with self.tx() as c:
+            c.execute("UPDATE campaigns SET status=? WHERE id=?", (status, cid))
