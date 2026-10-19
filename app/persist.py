@@ -1,16 +1,22 @@
-"""SQLite と設定を GitHub リポジトリへ退避し、起動時に復元する。
+"""個人単位でデータを GitHub リポジトリへ退避し、ログイン時に自動復元する。
 
 Render の無料枠はファイルシステムが揮発で、スリープ復帰や再デプロイのたびに
 data/ 配下が消える。GitHub を外部ストレージ代わりにして回避する。
 
+テナントごとに backup/users/<ユーザー>/ 配下へ分けて保存するので、
+他のユーザーのデータと混ざらない。共有ファイル（root.db 等）は
+backup/ 直下に別途退避する。
+
 必須の環境変数:
-  BACKUP_REPO   "owner/repo"           （バックアップ先。private推奨）
+  BACKUP_REPO   "owner/repo"           （private推奨）
   BACKUP_TOKEN  contents:write の Personal Access Token
 任意:
-  BACKUP_BRANCH  既定 main（専用ブランチ名でも可）
-  BACKUP_DIR     既定 backup
-  BACKUP_EVERY   既定 300（秒）。0 で定期実行なし
-  BACKUP_RESTORE 0 で起動時復元を無効化
+  BACKUP_BRANCH   既定 main
+  BACKUP_DIR      既定 backup
+  BACKUP_EVERY    既定 300（秒）。自動バックアップの間隔
+  BACKUP_RESTORE  0 で自動復元を無効化
+  BACKUP_PER_USER 0 で個人単位バックアップを無効化
+  BACKUP_MEDIA    0 で media 配下を除外
 """
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -27,9 +34,13 @@ import requests
 API = "https://api.github.com"
 _BOOT = time.time()
 _LOCK = threading.RLock()
-_STATE = {"enabled": False, "last_push": 0.0, "last_pull": 0.0,
-          "ok": None, "err": "", "files": 0, "restored": 0}
+_TLOCK = threading.RLock()
 _STARTED = False
+_PULLED = set()
+_LAST = {}
+
+_STATE = {"enabled": False, "last_push": 0.0, "last_pull": 0.0,
+          "ok": None, "err": "", "files": 0, "restored": 0, "users": {}}
 
 
 def cfg():
@@ -40,6 +51,8 @@ def cfg():
         "dir": (os.getenv("BACKUP_DIR") or "backup").strip().strip("/") or "backup",
         "every": int(os.getenv("BACKUP_EVERY", "300") or 0),
         "restore": (os.getenv("BACKUP_RESTORE", "1") or "1") != "0",
+        "per_user": (os.getenv("BACKUP_PER_USER", "1") or "1") != "0",
+        "media": (os.getenv("BACKUP_MEDIA", "1") or "1") != "0",
     }
 
 
@@ -49,7 +62,21 @@ def enabled():
 
 
 def state():
-    return dict(_STATE)
+    with _LOCK:
+        d = dict(_STATE)
+        d["users"] = {k: dict(v) for k, v in _STATE["users"].items()}
+    return d
+
+
+def user_state(user):
+    with _LOCK:
+        return dict(_STATE["users"].get(_safe(user), {}))
+
+
+def _us(user):
+    with _LOCK:
+        return _STATE["users"].setdefault(
+            _safe(user), {"last_push": 0.0, "last_pull": 0.0, "restored": 0, "err": ""})
 
 
 def _h(raw=False):
@@ -59,13 +86,53 @@ def _h(raw=False):
             "X-GitHub-Api-Version": "2022-11-28"}
 
 
-def _paths():
-    """退避対象のローカルファイル。tenancy を import しないので起動順に依存しない。"""
+def _safe(u):
+    return re.sub(r"[^a-z0-9._-]", "_", (u or "").lower()) or "user"
+
+
+def _tenant_root():
+    return os.getenv("TENANT_ROOT") or "data/tenants"
+
+
+def user_dir(user):
+    try:
+        from . import tenancy
+        d = tenancy.tenant_dir(user)
+        if d:
+            return d
+    except Exception:
+        pass
+    return os.path.join(_tenant_root(), _safe(user))
+
+
+def user_files(user):
+    """そのユーザーに属するファイル。"""
+    out, seen = [], set()
+    base = user_dir(user)
+    if not os.path.isdir(base):
+        return out
+    want_media = cfg()["media"]
+    for root, _dirs, files in os.walk(base):
+        for f in files:
+            p = os.path.join(root, f)
+            ap = os.path.abspath(p)
+            if ap in seen:
+                continue
+            if f.endswith(".db") or f.endswith(".json"):
+                seen.add(ap)
+                out.append(ap)
+            elif want_media:
+                seen.add(ap)
+                out.append(ap)
+    return out
+
+
+def _shared_paths():
     out, seen = [], set()
 
     def add(p):
         ap = os.path.abspath(p)
-        if ap not in seen:
+        if ap not in seen and os.path.exists(ap):
             seen.add(ap)
             out.append(ap)
 
@@ -73,21 +140,25 @@ def _paths():
         v = os.getenv(env)
         if v:
             add(v)
-    for base in ("data", os.getenv("TENANT_ROOT") or "", os.getenv("DATA_DIR") or ""):
-        if not base or not os.path.isdir(base):
-            continue
-        for root, _dirs, files in os.walk(base):
-            for f in files:
-                if f.endswith(".db") or f == "settings.json":
-                    add(os.path.join(root, f))
-    for p in ("data/root.db", "data/settings.json"):
-        if os.path.exists(p):
-            add(p)
+    for p in ("data/root.db", "data/settings.json", "data/session.json"):
+        add(p)
     return out
 
 
-def _remote(ap):
-    return cfg()["dir"] + "/" + ap.lstrip("/").replace("/", "__") + ".b64"
+def _paths():
+    """共有ファイル + 全テナント（起動時の一括復元用）。"""
+    out = list(_shared_paths())
+    root = _tenant_root()
+    if os.path.isdir(root):
+        for t in sorted(os.listdir(root)):
+            out += user_files(t)
+    return out
+
+
+def _remote(ap, prefix=None):
+    c = cfg()
+    name = ap.lstrip("/").replace("/", "__") + ".b64"
+    return f"{c['dir']}/{prefix}/{name}" if prefix else f"{c['dir']}/{name}"
 
 
 def _sha(b):
@@ -99,6 +170,16 @@ def _checkpoint(path):
         c = sqlite3.connect(path, timeout=10)
         c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         c.close()
+    except Exception:
+        pass
+
+
+def _drop_tenant(user):
+    """キャッシュされたDB接続を捨てて、次のアクセスで開き直させる。"""
+    try:
+        from . import tenancy
+        with tenancy._lock:
+            tenancy._dbs.pop(tenancy.safe_name(user), None)
     except Exception:
         pass
 
@@ -160,12 +241,201 @@ def ensure_branch():
         return False
 
 
-def pull(force=False):
-    """リモートにあればローカルへ復元する。
+# ---------- リンク索引の持ち出し ----------
 
-    起動直後に「このプロセスが作ったファイル」は中身が空なので必ず上書きする。
-    ローカルの方が明確に新しい場合は触らない。
-    """
+def _user_links(user):
+    try:
+        from . import users as U
+        with U._lock:
+            rows = U._c().execute(
+                "SELECT code, created_at FROM link_index WHERE owner=?",
+                (U.norm(user),)).fetchall()
+        return [{"code": r["code"], "created_at": r["created_at"]} for r in rows]
+    except Exception:
+        return []
+
+
+def _restore_links(user, links):
+    if not links:
+        return 0
+    try:
+        from . import users as U
+    except Exception:
+        return 0
+    n = 0
+    for l in links:
+        try:
+            U.register_link(l["code"], user)
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
+# ---------- 個人単位 ----------
+
+def push_user(user, force=True):
+    """そのユーザーのデータだけを退避する。"""
+    if not enabled() or not cfg()["per_user"] or not user:
+        return {"ok": False, "why": "disabled"}
+    st = _us(user)
+    with _TLOCK:
+        now = time.time()
+        if not force and now - st["last_push"] < 20:
+            return {"ok": False, "why": "間隔が短い"}
+        st["last_push"] = now
+
+    ensure_branch()
+    prefix = f"users/{_safe(user)}"
+    meta_obj, old = None, {}
+    try:
+        meta_obj = _head(f"{cfg()['dir']}/{prefix}/meta.json")
+        if meta_obj:
+            old = json.loads(_raw(f"{cfg()['dir']}/{prefix}/meta.json").decode("utf-8"))
+    except Exception:
+        meta_obj, old = None, {}
+    old_files = (old.get("files") or {})
+
+    files, sent, skipped = {}, 0, 0
+    for p in user_files(user):
+        if p.endswith(".db"):
+            _checkpoint(p)
+        try:
+            with open(p, "rb") as f:
+                data = f.read()
+        except Exception:
+            continue
+        h = _sha(data)
+        rpath = _remote(p, prefix)
+        files[rpath] = {"path": p, "sha": h}
+        if not force and old_files.get(rpath, {}).get("sha") == h:
+            skipped += 1
+            continue
+        prev = _head(rpath)
+        try:
+            _put(rpath, data, (prev or {}).get("sha"), f"backup {_safe(user)}/{os.path.basename(p)}")
+            sent += 1
+        except Exception as e:
+            st["err"] = repr(e)
+
+    links = _user_links(user)
+    meta = json.dumps({"ts": time.time(), "user": user, "files": files, "links": links},
+                      ensure_ascii=False).encode()
+    try:
+        _put(f"{cfg()['dir']}/{prefix}/meta.json", meta,
+             (meta_obj or {}).get("sha"), f"backup meta {_safe(user)}")
+    except Exception as e:
+        st["err"] = repr(e)
+
+    st["files"] = len(files)
+    st["ok"] = True
+    return {"ok": True, "user": user, "sent": sent, "skipped": skipped, "total": len(files)}
+
+
+def pull_user(user, force=False):
+    """そのユーザーのデータを復元する。ローカルの方が新しければ触らない。"""
+    if not enabled() or not user:
+        return {"ok": False, "why": "disabled"}
+    if not force and not cfg()["restore"]:
+        return {"ok": False, "why": "restore無効"}
+    st = _us(user)
+    prefix = f"users/{_safe(user)}"
+    try:
+        if not _head(f"{cfg()['dir']}/{prefix}/meta.json"):
+            return {"ok": False, "why": "未作成"}
+        doc = json.loads(_raw(f"{cfg()['dir']}/{prefix}/meta.json").decode("utf-8"))
+    except Exception as e:
+        st["err"] = repr(e)
+        return {"ok": False, "why": repr(e)}
+
+    remote_ts = float(doc.get("ts") or 0)
+    restored, skipped = [], 0
+    for rpath, info in (doc.get("files") or {}).items():
+        lpath = info.get("path")
+        if not lpath:
+            continue
+        if not force and os.path.exists(lpath):
+            mt = os.path.getmtime(lpath)
+            fresh = mt >= _BOOT - 1.0
+            if not fresh and mt >= remote_ts + 5:
+                skipped += 1
+                continue
+        try:
+            data = _raw(rpath)
+            if data is None:
+                continue
+            os.makedirs(os.path.dirname(lpath) or ".", exist_ok=True)
+            for suf in ("-wal", "-shm"):
+                try:
+                    if os.path.exists(lpath + suf):
+                        os.remove(lpath + suf)
+                except Exception:
+                    pass
+            with open(lpath, "wb") as f:
+                f.write(data)
+            restored.append(lpath)
+        except Exception as e:
+            st["err"] = repr(e)
+
+    n = _restore_links(user, doc.get("links"))
+    if restored:
+        _drop_tenant(user)
+    st["last_pull"] = time.time()
+    st["restored"] = len(restored)
+    if restored or n:
+        print(f"[backup] 復元 {user}: {len(restored)}ファイル / {n}リンク")
+    return {"ok": True, "user": user, "restored": restored, "links": n, "skipped": skipped}
+
+
+def touch(user, force=False, sync_first=True):
+    """ログイン中やリンク所有者アクセスのたびに呼ぶ。初回は復元、以降は間隔を空けて退避。"""
+    if not enabled() or not user:
+        return
+    key = _safe(user)
+    first = False
+    with _TLOCK:
+        if key not in _PULLED:
+            _PULLED.add(key)
+            first = True
+
+    if first:
+        if sync_first:
+            try:
+                pull_user(user)
+            except Exception as e:
+                _us(user)["err"] = repr(e)
+        else:
+            threading.Thread(target=pull_user, args=(user,), daemon=True).start()
+        threading.Thread(target=push_user, kwargs={"force": True}, daemon=True).start()
+        return
+
+    now = time.time()
+    every = max(30, cfg()["every"] or 300)
+    with _TLOCK:
+        if not force and now - _LAST.get(key, 0) < every:
+            return
+        _LAST[key] = now
+    threading.Thread(target=push_user, args=(user,), daemon=True).start()
+
+
+def push_all(force=True):
+    out = {}
+    try:
+        from . import users as U
+        names = U.list_usernames(include_disabled=True)
+    except Exception:
+        names = []
+    for n in names:
+        try:
+            out[n] = push_user(n, force=force)
+        except Exception as e:
+            out[n] = {"ok": False, "why": repr(e)}
+    return out
+
+
+# ---------- 共有ファイル（起動時の一括復元用） ----------
+
+def pull(force=False):
     if not enabled():
         _STATE["enabled"] = False
         return {"ok": False, "why": "disabled"}
@@ -217,7 +487,7 @@ def pull(force=False):
 
 
 def push(force=False):
-    """ローカルの DB と設定をリモートへ送る。内容が同じファイルは飛ばす。"""
+    """共有ファイル（root.db など）だけを退避する。"""
     if not enabled():
         _STATE["enabled"] = False
         return {"ok": False, "why": "disabled"}
@@ -229,7 +499,6 @@ def push(force=False):
 
     c = cfg()
     ensure_branch()
-
     meta_obj, old = None, {}
     try:
         meta_obj = _head(c["dir"] + "/meta.json")
@@ -240,9 +509,7 @@ def push(force=False):
     old_files = (old.get("files") or {})
 
     files, sent, skipped = {}, 0, 0
-    for p in _paths():
-        if not os.path.exists(p):
-            continue
+    for p in _shared_paths():
         if p.endswith(".db"):
             _checkpoint(p)
         try:
@@ -280,8 +547,8 @@ def _loop():
         time.sleep(every)
         try:
             push()
-        except Exception as e:
-            _STATE["err"] = repr(e)
+        except Exception:
+            pass
 
 
 def start():
@@ -292,4 +559,4 @@ def start():
     ensure_branch()
     if cfg()["every"] > 0:
         threading.Thread(target=_loop, daemon=True).start()
-        print(f"[backup] 定期バックアップ開始（{cfg()['every']}秒間隔）")
+        print(f"[backup] 定期バックアップ開始（{cfg()['every']}秒間隔 / 個人単位）")
