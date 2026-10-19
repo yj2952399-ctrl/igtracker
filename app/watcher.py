@@ -3,9 +3,11 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from . import instagram as ig
+from . import forensics
 from .config import get as get_cfg
 
 _sched = None
+
 
 def _job(name, fn, uid, db):
     try:
@@ -13,9 +15,11 @@ def _job(name, fn, uid, db):
     except Exception as e:
         db.log(uid, "job_error", {"job": name, "error": str(e)})
 
+
 def start(db):
     global _sched
-    if _sched: return _sched
+    if _sched:
+        return _sched
     cfg = get_cfg()
     m = cfg["monitor"]
     sched = BackgroundScheduler(timezone="UTC")
@@ -39,8 +43,17 @@ def start(db):
         except Exception as e:
             db.log("me", "job_error", {"job": "dms", "error": str(e)})
 
+    def forensic_job():
+        try:
+            forensics.snapshot_all(db, ig.client())
+        except Exception as e:
+            db.log("me", "job_error", {"job": "forensics", "error": str(e)})
+
     if m.get("watch_dms", True):
-        sched.add_job(dms_job, "interval", seconds=m["dms_interval_sec"], id="dms", max_instances=1)
+        sched.add_job(dms_job, "interval", seconds=m["dms_interval_sec"],
+                      id="dms", max_instances=1)
+    sched.add_job(forensic_job, "interval", seconds=m["forensics_interval_sec"],
+                  id="forensics", max_instances=1)
 
     sched.start()
     _sched = sched
