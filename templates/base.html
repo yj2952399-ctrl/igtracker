@@ -10,6 +10,7 @@
 <div class="topbar">
   <span class="who">👤 {{ me }}{% if is_admin %} <b>（管理者）</b>{% endif %}</span>
   <span class="spacer"></span>
+  <a href="/backup">💾 バックアップ</a>
   <a href="/account">アカウント</a>
   {% if is_admin and not admin_realm %}<a href="{{ admin_path }}/">管理</a>{% endif %}
   {% if admin_realm %}<a href="{{ admin_path }}/">管理コンソール</a>{% endif %}
