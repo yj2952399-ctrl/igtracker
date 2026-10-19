@@ -19,6 +19,7 @@ from . import identity, watcher, forensics, linktrack, together, snscheck, campa
 
 config.load()
 users.init()
+persist.pull_accounts()      # ← これだけ追加
 db = tenancy.db
 persist.start()
 
