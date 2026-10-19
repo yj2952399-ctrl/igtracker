@@ -186,7 +186,12 @@ def _drop_tenant(user):
     try:
         from . import tenancy
         with tenancy._lock:
-            tenancy._dbs.pop(tenancy.safe_name(user), None)
+            inst = tenancy._dbs.pop(tenancy.safe_name(user), None)
+        if inst is not None:
+            try:
+                inst.conn.close()
+            except Exception:
+                pass
     except Exception:
         pass
 
