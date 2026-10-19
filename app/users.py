@@ -396,6 +396,11 @@ def delete_session(token):
         c.execute("DELETE FROM sessions WHERE sid=?", (_sid(token),))
         c.commit()
 
+def delete_session_by_sid(sid):
+    with _lock:
+        c = _c()
+        c.execute("DELETE FROM sessions WHERE sid=?", (sid,))
+        c.commit()
 
 def delete_sessions(username, realm=None):
     with _lock:
