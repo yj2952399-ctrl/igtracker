@@ -5,6 +5,28 @@
 <title>{% block title %}裏垢トラッカー{% endblock %}</title>
 <link rel="stylesheet" href="/static/style.css">
 </head><body>
+
+{% if me %}
+<div class="topbar">
+  <span class="who">👤 {{ me }}{% if is_admin %} <b>（管理者）</b>{% endif %}</span>
+  <span class="spacer"></span>
+  <a href="/account">アカウント</a>
+  {% if is_admin and not admin_realm %}<a href="{{ admin_path }}/">管理</a>{% endif %}
+  {% if admin_realm %}<a href="{{ admin_path }}/">管理コンソール</a>{% endif %}
+  <form method="post" action="/logout" style="display:inline">
+    <button class="mini">ログアウト</button></form>
+</div>
+{% endif %}
+
+{% if impersonating %}
+<div class="imp">管理者 <b>{{ real_user }}</b> が <b>{{ me }}</b> として表示中 —
+  <a href="{{ admin_path }}/switch?to=&back={{ request.url.path }}">解除</a></div>
+{% endif %}
+{% if must_change %}
+<div class="imp">初期パスワードのままです。<a href="/account">変更してください</a></div>
+{% endif %}
+
+{% if me %}
 <nav>
   <a href="/">📊 ダッシュボード</a>
   <a href="/identity">🔍 特定</a>
@@ -15,16 +37,7 @@
   <a href="/activity">📜 活動ログ</a>
   <a href="/dms">💬 DM</a>
   <a href="/settings">⚙️ 設定</a>
-  <a href="/account">🔑 アカウント</a>
-  {% if is_admin %}<a href="/admin">🛡 管理</a>{% endif %}
 </nav>
-
-{% if impersonating %}
-<div class="imp">管理者 <b>{{ real_user }}</b> が <b>{{ me }}</b> として表示中 —
-  <a href="/admin/switch?to=&back={{ request.url.path }}">解除</a></div>
-{% endif %}
-{% if must_change %}
-<div class="imp">初期パスワードのままです。<a href="/account">変更してください</a></div>
 {% endif %}
 
 <main>{% block content %}{% endblock %}</main>
