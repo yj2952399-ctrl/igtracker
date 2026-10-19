@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from . import config, tenancy, users
 from .config import get as get_cfg
 from . import instagram as ig
-from . import identity, watcher, forensics, linktrack
+from . import identity, watcher, forensics, linktrack, together
 
 config.load()
 users.init()
@@ -1135,7 +1135,7 @@ def link_hit_bot(code: str, hid: int, u=Depends(auth)):
     return RedirectResponse(f"/link/{code}?bots=1", 303)
 
 
-# ---------- クイズ編集 / 訪問者 ----------
+# ---------- クイズ編集 / 訪問者 / 一緒解析 ----------
 
 @app.get("/link/{code}/questions", response_class=HTMLResponse)
 def link_questions(code: str, request: Request, u=Depends(auth)):
@@ -1180,13 +1180,24 @@ def visitor_detail(vid: str, request: Request, u=Depends(auth)):
     v = db.visitor(vid)
     if not v:
         raise HTTPException(404)
-    return render("visitor.html", request, v=v, hits=db.hits_by_vid(vid))
+    return render("visitor.html", request, v=v, hits=db.hits_by_vid(vid),
+                  near=together.for_visitor(db, vid))
 
 
 @app.post("/visitor/{vid}/label")
 def visitor_label(vid: str, label: str = Form(""), note: str = Form(""), u=Depends(auth)):
     db.set_visitor_label(vid, label, note)
     return RedirectResponse(f"/visitor/{vid}", 303)
+
+
+@app.get("/together", response_class=HTMLResponse)
+def together_page(request: Request, code: str = "", window: int = 6,
+                  minscore: float = 0.35, u=Depends(auth)):
+    res = together.analyze(db, code=code or None,
+                           window_h=max(1, min(int(window), 72)),
+                           min_score=max(0.0, min(float(minscore), 1.0)))
+    return render("together.html", request, res=res, code=code,
+                  window=window, minscore=minscore, links=db.links(500))
 
 
 # ---------- API / エクスポート ----------
@@ -1207,6 +1218,13 @@ def api_summary(u=Depends(auth)):
 @app.get("/api/events")
 def api_events(limit: int = 500, u=Depends(auth)):
     return [dict(r) for r in db.q("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,))]
+
+
+@app.get("/api/together")
+def api_together(code: str = "", window: int = 6, minscore: float = 0.35, u=Depends(auth)):
+    return together.analyze(db, code=code or None,
+                            window_h=max(1, min(int(window), 72)),
+                            min_score=max(0.0, min(float(minscore), 1.0)))
 
 
 @app.get("/export.json")
