@@ -2,44 +2,87 @@ instagram:
   username: "your_account"
   password: "your_password"
   session_file: "session.json"
+  request_timeout: 30
+  max_retries: 3
 
-# Web UI のBasic認証
 web:
   user: "admin"
   password: "change_me"
   host: "0.0.0.0"
   port: 8000
 
-# 初回起動時に監視する裏垢
 targets:
   - "the_secret_handle"
 
-# 「誰の裏垢か」判定する本体候補
 candidates:
   - "candidate_main_1"
-  - "candidate_main_2"
 
 identity:
+  # 候補を自動収集して総当たり（フォロワー/フォロー/タグ/いいね/コメント/関連垢）
+  auto_scan: true
+  auto_scan_max: 400
+  min_score_report: 0.12
+
+  # 取得量。多いほど精度↑・時間↑
+  gather:
+    followers: 5000
+    following: 5000
+    posts: 80
+    liker_posts: 12
+    likers_per_post: 200
+    commenter_posts: 20
+
+  # シグナル重み（v2 全部入り）
   weights:
-    username:          1.0
-    following_overlap: 2.5
-    follower_overlap:  2.0
-    bio:               1.5
-    fullname:          1.5
-    avatar_phash:      2.0
-    tagged_overlap:    2.0
-    posting_time:      1.0
-    shared_hashtags:   0.8
-    shared_locations:  1.2
+    username: 1.2
+    username_root: 1.8
+    fullname: 1.5
+    bio: 1.2
+    bio_token: 1.6
+    external_url_exact: 3.0
+    external_url_domain: 1.4
+    avatar_phash: 2.6
+    avatar_color: 1.0
+    follower_overlap: 2.0
+    following_overlap: 2.6
+    follower_overlap_idf: 3.2
+    following_overlap_idf: 3.6
+    follower_order: 1.6
+    user_id_proximity: 0.8
+    business_email: 4.0
+    business_phone: 4.0
+    public_email: 3.6
+    contact_phone: 3.6
+    city: 1.8
+    address: 2.2
+    posting_hour: 1.4
+    posting_weekday: 0.9
+    caption_style: 1.0
+    shared_hashtags: 1.2
+    shared_locations: 1.8
+    shared_mentions: 1.6
+    tagged_overlap: 2.2
+    related_overlap: 2.4
+    liker_overlap: 2.0
+    commenter_overlap: 1.8
+    co_activity: 1.0
+
+  thresholds:
+    certain: 0.75
+    strong: 0.55
+    possible: 0.35
+    weak: 0.18
 
 monitor:
   relations_interval_sec: 600
-  posts_interval_sec:     600
-  stories_interval_sec:   300
-  dms_interval_sec:       180
-  profile_interval_sec:   900
+  posts_interval_sec: 600
+  stories_interval_sec: 300
+  dms_interval_sec: 180
+  profile_interval_sec: 900
+  forensics_interval_sec: 3600
+  watch_dms: true
   download_media: true
-  max_media_mb: 3000        # これ超えたらDL止める
+  max_media_mb: 3000
 
 archive:
   max_posts: 500
