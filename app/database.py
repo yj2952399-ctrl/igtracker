@@ -134,7 +134,26 @@ CREATE TABLE IF NOT EXISTS link_hits (
     device TEXT, os TEXT, browser TEXT, inapp TEXT,
     is_bot INTEGER DEFAULT 0, is_mobile INTEGER, is_proxy INTEGER, is_hosting INTEGER,
     screen TEXT, platform TEXT, cores INTEGER, mem REAL, touch INTEGER,
-    extra TEXT, note TEXT
+    extra TEXT, note TEXT,
+    vid TEXT, fingerprint TEXT, pubkey TEXT, sig TEXT, sig_ok INTEGER,
+    nonce TEXT, fp_json TEXT,
+    quiz_done INTEGER DEFAULT 0, quiz_score REAL, quiz_total INTEGER, quiz_ms INTEGER
+);
+CREATE TABLE IF NOT EXISTS link_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, ord INTEGER DEFAULT 0, qtype TEXT DEFAULT 'choice',
+    prompt TEXT, options TEXT, answer_key TEXT, reveal TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS link_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, hit_id INTEGER, qid INTEGER, ord INTEGER, qtype TEXT,
+    answer TEXT, is_correct INTEGER, ms INTEGER, ip TEXT, ts TEXT
+);
+CREATE TABLE IF NOT EXISTS visitors (
+    vid TEXT PRIMARY KEY, first_seen TEXT, last_seen TEXT, hits INTEGER DEFAULT 0,
+    ip TEXT, country TEXT, region TEXT, city TEXT, isp TEXT, asn TEXT,
+    device TEXT, os TEXT, browser TEXT, inapp TEXT,
+    fingerprint TEXT, pubkey TEXT, label TEXT, note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_dm_msg ON dm_messages(thread_id, timestamp);
@@ -143,6 +162,10 @@ CREATE INDEX IF NOT EXISTS idx_scores_run ON identity_scores(run_id, score);
 CREATE INDEX IF NOT EXISTS idx_forensics_ts ON forensics(ts);
 CREATE INDEX IF NOT EXISTS idx_known_seen ON known_accounts(last_seen);
 CREATE INDEX IF NOT EXISTS idx_hits_code ON link_hits(code, ts);
+CREATE INDEX IF NOT EXISTS idx_q_code ON link_questions(code, ord);
+CREATE INDEX IF NOT EXISTS idx_ans_hit ON link_answers(hit_id);
+CREATE INDEX IF NOT EXISTS idx_ans_code ON link_answers(code, ts);
+CREATE INDEX IF NOT EXISTS idx_visitors_seen ON visitors(last_seen);
 """
 
 
@@ -172,7 +195,12 @@ class DB:
                               ("target_deleted", "INTEGER DEFAULT 0")],
             "identity_scores": [("candidate_display", "TEXT"), ("flags", "TEXT")],
             "link_hits": [("inapp", "TEXT"), ("platform", "TEXT"), ("cores", "INTEGER"),
-                          ("mem", "REAL"), ("touch", "INTEGER"), ("note", "TEXT")],
+                          ("mem", "REAL"), ("touch", "INTEGER"), ("note", "TEXT"),
+                          ("vid", "TEXT"), ("fingerprint", "TEXT"), ("pubkey", "TEXT"),
+                          ("sig", "TEXT"), ("sig_ok", "INTEGER"), ("nonce", "TEXT"),
+                          ("fp_json", "TEXT"), ("quiz_done", "INTEGER DEFAULT 0"),
+                          ("quiz_score", "REAL"), ("quiz_total", "INTEGER"),
+                          ("quiz_ms", "INTEGER")],
         }
         for table, defs in add.items():
             have = cols(table)
@@ -388,6 +416,8 @@ class DB:
         with self.tx() as c:
             c.execute("DELETE FROM links WHERE code=?", (code,))
             c.execute("DELETE FROM link_hits WHERE code=?", (code,))
+            c.execute("DELETE FROM link_questions WHERE code=?", (code,))
+            c.execute("DELETE FROM link_answers WHERE code=?", (code,))
 
     def set_link_active(self, code, flag):
         with self.tx() as c:
@@ -421,4 +451,63 @@ class DB:
     def del_hits(self, code):
         with self.tx() as c:
             c.execute("DELETE FROM link_hits WHERE code=?", (code,))
+            c.execute("DELETE FROM link_answers WHERE code=?", (code,))
             c.execute("UPDATE links SET hit_count=0 WHERE code=?", (code,))
+
+    # ---- クイズ ----
+    def add_question(self, code, prompt, qtype="choice", options=None,
+                     answer_key="", reveal=""):
+        with self.tx() as c:
+            o = c.execute("SELECT COALESCE(MAX(ord),-1)+1 n FROM link_questions WHERE code=?",
+                          (code,)).fetchone()["n"]
+            c.execute("""INSERT INTO link_questions(code,ord,qtype,prompt,options,
+                answer_key,reveal,created_at) VALUES(?,?,?,?,?,?,?,?)""",
+                (code, o, qtype, prompt, json.dumps(options or [], ensure_ascii=False),
+                 answer_key, reveal, now()))
+
+    def questions(self, code):
+        return self.q("SELECT * FROM link_questions WHERE code=? ORDER BY ord,id", (code,))
+
+    def del_question(self, qid):
+        with self.tx() as c:
+            c.execute("DELETE FROM link_questions WHERE id=?", (qid,))
+
+    def add_answer(self, d):
+        cols = list(d.keys())
+        with self.tx() as c:
+            c.execute(f"INSERT INTO link_answers({','.join(cols)}) "
+                      f"VALUES({','.join(['?'] * len(cols))})", [d[k] for k in cols])
+
+    def answers(self, code, limit=2000):
+        return self.q("SELECT * FROM link_answers WHERE code=? ORDER BY ts DESC LIMIT ?",
+                      (code, limit))
+
+    def answers_for(self, hit_id):
+        return self.q("SELECT * FROM link_answers WHERE hit_id=? ORDER BY ord", (hit_id,))
+
+    # ---- 訪問者台帳 ----
+    def upsert_visitor(self, vid, **f):
+        with self.tx() as c:
+            c.execute("""INSERT INTO visitors(vid,first_seen,last_seen,hits)
+                VALUES(?,?,?,1) ON CONFLICT(vid) DO UPDATE SET
+                last_seen=excluded.last_seen, hits=visitors.hits+1""",
+                (vid, now(), now()))
+            f = {k: v for k, v in f.items() if v not in (None, "")}
+            if f:
+                sets = ",".join(f"{k}=?" for k in f)
+                c.execute(f"UPDATE visitors SET {sets} WHERE vid=?",
+                          list(f.values()) + [vid])
+
+    def visitor(self, vid):
+        return self.q1("SELECT * FROM visitors WHERE vid=?", (vid,))
+
+    def visitors(self, limit=500):
+        return self.q("SELECT * FROM visitors ORDER BY last_seen DESC LIMIT ?", (limit,))
+
+    def set_visitor_label(self, vid, label, note=""):
+        with self.tx() as c:
+            c.execute("UPDATE visitors SET label=?, note=? WHERE vid=?", (label, note, vid))
+
+    def hits_by_vid(self, vid, limit=200):
+        return self.q("SELECT * FROM link_hits WHERE vid=? ORDER BY ts DESC LIMIT ?",
+                      (vid, limit))
