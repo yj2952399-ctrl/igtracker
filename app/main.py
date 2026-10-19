@@ -1,5 +1,5 @@
-"""FastAPI アプリ本体。設定・記録はすべてWebで完結。リンク追跡つき。"""
-import os, secrets, random, string, base64, json as _json, traceback
+"""FastAPI アプリ本体。マルチテナント完全分離版。"""
+import os, secrets, random, string, base64, json as _json, traceback, shutil
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Depends, Form, HTTPException
@@ -8,74 +8,133 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from . import config
-from .config import load, get as get_cfg
-from .database import DB
+from . import config, tenancy, users
+from .config import get as get_cfg
 from . import instagram as ig
 from . import identity, watcher, forensics, linktrack
 
-load()
-db = DB(get_cfg()["storage"]["db_path"])
+config.load()
+users.init()
+db = tenancy.db
 
-app = FastAPI(title="Uraaka Tracker")
+app = FastAPI(title="Uraaka Tracker", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.filters["fromjson"] = _json.loads
 security = HTTPBasic()
+REALM = 'Basic realm="igtracker"'
+EDITABLE = ["identity", "monitor", "archive"]
 
-EDITABLE = ["web", "identity", "monitor", "archive", "storage"]
+
+def render(name, request, **ctx):
+    ctx["request"] = request
+    ctx["me"] = getattr(request.state, "user_name", None)
+    ctx["real_user"] = getattr(request.state, "real_user", None)
+    ctx["is_admin"] = getattr(request.state, "is_admin", False)
+    ctx["must_change"] = getattr(request.state, "must_change", False)
+    ctx["impersonating"] = bool(ctx["me"] and ctx["real_user"] and ctx["me"] != ctx["real_user"])
+    return templates.TemplateResponse(name, ctx)
+
+
+@app.middleware("http")
+async def harden(request: Request, call_next):
+    resp = await call_next(request)
+    if not request.url.path.startswith("/static"):
+        resp.headers["Cache-Control"] = "private, no-store, must-revalidate"
+        resp.headers["Vary"] = "Authorization, Cookie"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+        if not request.url.path.startswith("/l/"):
+            resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
 
 
 @app.exception_handler(Exception)
 async def _debug_handler(request: Request, exc: Exception):
     tb = traceback.format_exc()
     try:
-        db.log("system", "unhandled_error",
-               {"path": str(request.url.path), "error": repr(exc)})
+        if tenancy.get_current():
+            db.log("system", "unhandled_error",
+                   {"path": str(request.url.path), "error": repr(exc)})
     except Exception:
         pass
     return PlainTextResponse(f"PATH: {request.url.path}\n\n{tb}", status_code=500)
 
 
-def auth(cred: HTTPBasicCredentials = Depends(security)):
-    cfg = get_cfg()
-    cands = [(cfg["web"]["user"], cfg["web"]["password"])]
-    if cfg["web"].get("_env_user"):
-        cands.append((cfg["web"]["_env_user"], cfg["web"].get("_env_pass", "")))
-    for u, p in cands:
-        if secrets.compare_digest(cred.username, u) and secrets.compare_digest(cred.password, p):
-            return cred.username
-    raise HTTPException(401, "unauthorized", {"WWW-Authenticate": "Basic"})
+# ---------- 認証 ----------
+
+async def auth(request: Request, cred: HTTPBasicCredentials = Depends(security)) -> str:
+    ip = linktrack.client_ip(request)
+    if users.is_throttled(ip):
+        raise HTTPException(429, "試行回数が多すぎます。少し待ってください")
+    info = users.verify(cred.username, cred.password, ip=ip)
+    if not info:
+        raise HTTPException(401, "unauthorized", {"WWW-Authenticate": REALM})
+
+    real = info["username"]
+    is_admin = info["role"] == "admin"
+
+    effective = real
+    if is_admin:
+        want = request.cookies.get("view_as") or request.query_params.get("as")
+        want = users.norm(want) if want else ""
+        row = users.get(want) if want else None
+        if row and not row["disabled"]:
+            effective = want
+
+    tenancy.set_current(effective)
+    request.state.user_name = effective
+    request.state.real_user = real
+    request.state.is_admin = is_admin
+    request.state.must_change = info["must_change"] and effective == real
+    return effective
+
+
+async def admin_only(user: str = Depends(auth)) -> str:
+    if not users.is_admin(user):
+        raise HTTPException(403, "管理者専用です")
+    return user
 
 
 def _tokens(raw):
     return [t.strip().lstrip("@") for t in (raw or "").replace(",", "\n").split() if t.strip()]
 
 
-def _new_code(n=6):
-    while True:
+def _new_code(n=8):
+    for _ in range(50):
         c = "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
-        if not db.link_get(c):
+        if not users.owner_of_link(c):
             return c
+    return secrets.token_urlsafe(8)
 
 
 @app.on_event("startup")
 def _startup():
-    for h in get_cfg().get("targets", []):
-        try:
-            uid = ig.client().user_id_from_username(h)
-            db.add_target(uid, h)
-            db.add_known(str(uid), h, source="target")
-        except Exception as e:
-            print("[startup] target解決失敗:", h, e)
+    users.bootstrap_env_admin()
+    for t in users.list_usernames():
+        tenancy.set_current(t)
+        cfg = get_cfg()
+        if not cfg["instagram"].get("username"):
+            continue
+        for h in cfg.get("targets", []):
+            try:
+                uid = ig.client().user_id_from_username(h)
+            except Exception as e:
+                print(f"[startup] {t} target解決失敗:", h, e)
+                uid = h
+            try:
+                db.add_target(uid, h)
+                db.add_known(str(uid), h, source="target")
+            except Exception:
+                pass
     if os.getenv("RUN_SCHEDULER", "1") == "1":
-        watcher.start(db)
+        watcher.start()
 
 
 # ---------- ダッシュボード ----------
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, _=Depends(auth)):
+def dashboard(request: Request, u=Depends(auth)):
     targets = []
     for t in db.targets():
         p = db.q1("SELECT * FROM profiles WHERE user_id=?", (t["user_id"],))
@@ -85,27 +144,24 @@ def dashboard(request: Request, _=Depends(auth)):
             ORDER BY computed_at DESC, score DESC LIMIT 1""", (t["user_id"],))
         targets.append({"t": t, "p": p, "snap": [dict(s) for s in snap], "best": best})
     events = db.q("SELECT * FROM events ORDER BY ts DESC LIMIT 40")
-    return templates.TemplateResponse("dashboard.html",
-        {"request": request, "targets": targets, "events": events})
+    return render("dashboard.html", request, targets=targets, events=events)
 
 
 # ---------- 特定 ----------
 
 @app.get("/identity", response_class=HTMLResponse)
-def identity_page(request: Request, _=Depends(auth)):
+def identity_page(request: Request, u=Depends(auth)):
     runs = db.q("SELECT * FROM identity_runs ORDER BY id DESC LIMIT 20")
     pairs = db.pairs(200)
-    return templates.TemplateResponse("identity.html",
-        {"request": request, "runs": runs, "pairs": pairs,
-         "candidates": get_cfg().get("candidates", [])})
+    return render("identity.html", request, runs=runs, pairs=pairs,
+                  candidates=get_cfg().get("candidates", []))
 
 
 @app.post("/identity/run")
 def identity_run(target: str = Form(...), candidates: str = Form(""),
                  auto: str = Form(""), archive: str = Form(""),
-                 note: str = Form(""), _=Depends(auth)):
+                 note: str = Form(""), u=Depends(auth)):
     toks = _tokens(candidates)
-
     try:
         cl = ig.client()
     except Exception as e:
@@ -113,7 +169,6 @@ def identity_run(target: str = Form(...), candidates: str = Form(""),
         db.update_run(rid, status="error",
                       log="Instagramログイン失敗: " + repr(e) + "\n\n" + traceback.format_exc())
         return RedirectResponse(f"/runs/{rid}", 303)
-
     try:
         t_uid = identity.resolve_uid(cl, db, target)
     except Exception as e:
@@ -139,12 +194,13 @@ def identity_run(target: str = Form(...), candidates: str = Form(""),
             db.update_run(rid, status="ok")
         except Exception as e:
             db.update_run(rid, status="error", log=repr(e) + "\n\n" + traceback.format_exc())
+
     watcher.run_bg(job)
     return RedirectResponse(f"/runs/{rid}", 303)
 
 
 @app.post("/pair/run")
-def pair_run(pid: int = Form(...), _=Depends(auth)):
+def pair_run(pid: int = Form(...), u=Depends(auth)):
     p = db.q1("SELECT * FROM saved_pairs WHERE id=?", (pid,))
     if not p:
         raise HTTPException(404)
@@ -157,12 +213,13 @@ def pair_run(pid: int = Form(...), _=Depends(auth)):
             db.update_run(rid, status="ok")
         except Exception as e:
             db.update_run(rid, status="error", log=repr(e) + "\n\n" + traceback.format_exc())
+
     watcher.run_bg(job)
     return RedirectResponse(f"/runs/{rid}", 303)
 
 
 @app.post("/pairs/{pid}/delete")
-def pair_delete(pid: int, _=Depends(auth)):
+def pair_delete(pid: int, u=Depends(auth)):
     db.del_pair(pid)
     return RedirectResponse("/identity", 303)
 
@@ -170,24 +227,23 @@ def pair_delete(pid: int, _=Depends(auth)):
 # ---------- 履歴 ----------
 
 @app.get("/runs", response_class=HTMLResponse)
-def runs_page(request: Request, _=Depends(auth)):
-    runs = db.q("SELECT * FROM identity_runs ORDER BY id DESC LIMIT 300")
-    return templates.TemplateResponse("runs.html", {"request": request, "runs": runs})
+def runs_page(request: Request, u=Depends(auth)):
+    return render("runs.html", request,
+                  runs=db.q("SELECT * FROM identity_runs ORDER BY id DESC LIMIT 300"))
 
 
 @app.get("/runs/{rid}", response_class=HTMLResponse)
-def run_detail(rid: int, request: Request, _=Depends(auth)):
+def run_detail(rid: int, request: Request, u=Depends(auth)):
     run = db.q1("SELECT * FROM identity_runs WHERE id=?", (rid,))
     if not run:
         raise HTTPException(404)
     scores = db.q("SELECT * FROM identity_scores WHERE run_id=? ORDER BY score DESC", (rid,))
     tp = db.q1("SELECT * FROM profiles WHERE user_id=?", (run["target_uid"],))
-    return templates.TemplateResponse("run_detail.html",
-        {"request": request, "run": run, "scores": scores, "tp": tp})
+    return render("run_detail.html", request, run=run, scores=scores, tp=tp)
 
 
 @app.post("/runs/{rid}/delete")
-def run_delete(rid: int, _=Depends(auth)):
+def run_delete(rid: int, u=Depends(auth)):
     db.delete_run(rid)
     return RedirectResponse("/runs", 303)
 
@@ -195,14 +251,13 @@ def run_delete(rid: int, _=Depends(auth)):
 # ---------- アカウント台帳 ----------
 
 @app.get("/accounts", response_class=HTMLResponse)
-def accounts_page(request: Request, _=Depends(auth)):
-    return templates.TemplateResponse("accounts.html",
-        {"request": request, "rows": db.known(1000)})
+def accounts_page(request: Request, u=Depends(auth)):
+    return render("accounts.html", request, rows=db.known(1000))
 
 
 @app.post("/accounts/add")
 def accounts_add(token: str = Form(...), note: str = Form(""),
-                 deleted: str = Form(""), _=Depends(auth)):
+                 deleted: str = Form(""), u=Depends(auth)):
     t = token.strip().lstrip("@")
     try:
         uid = identity.resolve_uid(ig.client(), db, t)
@@ -215,7 +270,7 @@ def accounts_add(token: str = Form(...), note: str = Form(""),
 
 
 @app.post("/accounts/{uid}/archive")
-def accounts_archive(uid: str, _=Depends(auth)):
+def accounts_archive(uid: str, u=Depends(auth)):
     def job():
         try:
             ig.archive_account(db, uid)
@@ -226,14 +281,14 @@ def accounts_archive(uid: str, _=Depends(auth)):
 
 
 @app.post("/accounts/{uid}/deleted")
-def accounts_deleted(uid: str, _=Depends(auth)):
+def accounts_deleted(uid: str, u=Depends(auth)):
     row = db.known_get(uid)
     db.set_known_deleted(uid, not (row and row["deleted"]))
     return RedirectResponse("/accounts", 303)
 
 
 @app.post("/accounts/{uid}/delete")
-def accounts_delete(uid: str, _=Depends(auth)):
+def accounts_delete(uid: str, u=Depends(auth)):
     db.del_known(uid)
     return RedirectResponse("/accounts", 303)
 
@@ -241,55 +296,50 @@ def accounts_delete(uid: str, _=Depends(auth)):
 # ---------- ターゲット ----------
 
 @app.get("/target/{uid}", response_class=HTMLResponse)
-def target_detail(uid: str, request: Request, _=Depends(auth)):
+def target_detail(uid: str, request: Request, u=Depends(auth)):
     p = db.q1("SELECT * FROM profiles WHERE user_id=?", (uid,))
     posts = db.q("SELECT * FROM posts WHERE user_id=? ORDER BY taken_at DESC LIMIT 60", (uid,))
     rel = db.q("""SELECT * FROM relationship_events WHERE from_user_id=?
         ORDER BY observed_at DESC LIMIT 100""", (uid,))
     snap = db.q("""SELECT * FROM profile_snapshots WHERE user_id=?
         ORDER BY taken_at DESC LIMIT 100""", (uid,))
-    return templates.TemplateResponse("target.html",
-        {"request": request, "uid": uid, "p": p, "posts": posts, "rel": rel, "snap": snap})
+    return render("target.html", request, uid=uid, p=p, posts=posts, rel=rel, snap=snap)
 
 
 @app.get("/forensics", response_class=HTMLResponse)
-def forensics_page(request: Request, _=Depends(auth)):
+def forensics_page(request: Request, u=Depends(auth)):
     rows = db.q("SELECT * FROM forensics ORDER BY ts DESC LIMIT 300")
-    return templates.TemplateResponse("activity.html",
-        {"request": request, "events": rows, "kind": "forensics"})
+    return render("activity.html", request, events=rows, kind="forensics")
 
 
 @app.get("/activity", response_class=HTMLResponse)
-def activity(request: Request, kind: str = "", _=Depends(auth)):
+def activity(request: Request, kind: str = "", u=Depends(auth)):
     if kind:
         rows = db.q("SELECT * FROM events WHERE kind LIKE ? ORDER BY ts DESC LIMIT 500",
                     (f"%{kind}%",))
     else:
         rows = db.q("SELECT * FROM events ORDER BY ts DESC LIMIT 500")
-    return templates.TemplateResponse("activity.html",
-        {"request": request, "events": rows, "kind": kind})
+    return render("activity.html", request, events=rows, kind=kind)
 
 
 @app.get("/dms", response_class=HTMLResponse)
-def dms(request: Request, thread: str = "", _=Depends(auth)):
+def dms(request: Request, thread: str = "", u=Depends(auth)):
     threads = db.q("SELECT * FROM dm_threads ORDER BY last_activity_at DESC LIMIT 200")
     msgs = []
     if thread:
         msgs = db.q("""SELECT * FROM dm_messages WHERE thread_id=?
             ORDER BY timestamp ASC LIMIT 500""", (thread,))
-    return templates.TemplateResponse("dms.html",
-        {"request": request, "threads": threads, "msgs": msgs, "thread": thread})
+    return render("dms.html", request, threads=threads, msgs=msgs, thread=thread)
 
 
 @app.get("/targets", response_class=HTMLResponse)
-def targets_page(request: Request, _=Depends(auth)):
-    return templates.TemplateResponse("targets.html",
-        {"request": request, "targets": db.targets(),
-         "candidates": get_cfg().get("candidates", [])})
+def targets_page(request: Request, u=Depends(auth)):
+    return render("targets.html", request, targets=db.targets(),
+                  candidates=get_cfg().get("candidates", []))
 
 
 @app.post("/targets/add")
-def targets_add(handle: str = Form(...), _=Depends(auth)):
+def targets_add(handle: str = Form(...), u=Depends(auth)):
     h = handle.strip().lstrip("@")
     try:
         uid = identity.resolve_uid(ig.client(), db, h)
@@ -301,7 +351,7 @@ def targets_add(handle: str = Form(...), _=Depends(auth)):
 
 
 @app.post("/target/{uid}/archive")
-def target_archive(uid: str, _=Depends(auth)):
+def target_archive(uid: str, u=Depends(auth)):
     def job():
         jid = db.start_job(f"archive:{uid}")
         try:
@@ -314,7 +364,7 @@ def target_archive(uid: str, _=Depends(auth)):
 
 
 @app.post("/target/{uid}/monitor")
-def target_monitor(uid: str, _=Depends(auth)):
+def target_monitor(uid: str, u=Depends(auth)):
     row = db.q1("SELECT monitor FROM targets WHERE user_id=?", (uid,))
     newv = 0 if row and row["monitor"] else 1
     with db.tx() as c:
@@ -323,7 +373,7 @@ def target_monitor(uid: str, _=Depends(auth)):
 
 
 @app.post("/candidates/add")
-def candidates_add(handle: str = Form(...), _=Depends(auth)):
+def candidates_add(handle: str = Form(...), u=Depends(auth)):
     h = handle.strip().lstrip("@")
     cur = get_cfg().get("candidates", [])
     if h and h not in cur:
@@ -350,20 +400,20 @@ def _coerce(old, new):
 
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, msg: str = "", err: str = "", _=Depends(auth)):
+def settings_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
     cfg = get_cfg()
     sections = {s: {k: v for k, v in cfg.get(s, {}).items() if not k.startswith("_")}
                 for s in EDITABLE if isinstance(cfg.get(s), dict)}
-    return templates.TemplateResponse("settings.html",
-        {"request": request, "sections": sections, "ig": cfg["instagram"],
-         "env_user": cfg["web"].get("_env_user", ""),
-         "targets": "\n".join(cfg.get("targets", [])),
-         "candidates": "\n".join(cfg.get("candidates", [])),
-         "settings_file": config._settings_path(), "msg": msg, "err": err})
+    return render("settings.html", request, sections=sections, ig=cfg["instagram"],
+                  tenant_dir=tenancy.tenant_dir(u),
+                  env_user=os.getenv("IG_USER") or "",
+                  targets="\n".join(cfg.get("targets", [])),
+                  candidates="\n".join(cfg.get("candidates", [])),
+                  msg=msg, err=err)
 
 
 @app.post("/settings")
-async def settings_save(request: Request, _=Depends(auth)):
+async def settings_save(request: Request, u=Depends(auth)):
     form = await request.form()
     base = get_cfg()
     over = {}
@@ -395,30 +445,27 @@ async def settings_save(request: Request, _=Depends(auth)):
     return RedirectResponse("/settings?msg=" + quote("設定を保存しました"), 303)
 
 
-# ---------- Instagram 接続 ----------
-
 @app.post("/ig/test")
-def ig_test(_=Depends(auth)):
+def ig_test(u=Depends(auth)):
     try:
-        cl = ig.client()
-        me = cl.account_info()
+        me = ig.client().account_info()
         return RedirectResponse("/settings?msg=" + quote(f"接続OK: @{me.username}"), 303)
     except Exception as e:
         return RedirectResponse("/settings?err=" + quote(repr(e)), 303)
 
 
 @app.post("/ig/login")
-def ig_login(user: str = Form(""), password: str = Form(""), _=Depends(auth)):
+def ig_login(user: str = Form(""), password: str = Form(""), u=Depends(auth)):
     cfg = get_cfg()
-    u = (user or "").strip() or cfg["instagram"].get("username") or ""
-    p = password or cfg["instagram"].get("password") or ""
+    un = (user or "").strip() or cfg["instagram"].get("username") or ""
+    pw = password or cfg["instagram"].get("password") or ""
     sf = cfg["instagram"]["session_file"]
     try:
         ig.reset_client()
-        ig.login_now(u, p, sf)
+        ig.login_now(un, pw, sf)
         with open(sf, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
-        config.save_sections({"instagram": {"username": u, "password": p, "session_b64": b64}})
+        config.save_sections({"instagram": {"username": un, "password": pw, "session_b64": b64}})
         ig.reset_client()
         return RedirectResponse("/settings?msg=" + quote("ログイン成功・セッションを保存しました"), 303)
     except Exception as e:
@@ -426,9 +473,8 @@ def ig_login(user: str = Form(""), password: str = Form(""), _=Depends(auth)):
 
 
 @app.post("/ig/logout")
-def ig_logout(_=Depends(auth)):
-    cfg = get_cfg()
-    sf = cfg["instagram"]["session_file"]
+def ig_logout(u=Depends(auth)):
+    sf = get_cfg()["instagram"]["session_file"]
     try:
         if os.path.exists(sf):
             os.remove(sf)
@@ -436,12 +482,134 @@ def ig_logout(_=Depends(auth)):
         pass
     config.save_sections({"instagram": {"session_b64": ""}})
     ig.reset_client()
-    return RedirectResponse("/settings?msg=" + quote("ログアウトしました（envのB64があると再復元されます）"), 303)
+    return RedirectResponse("/settings?msg=" + quote("ログアウトしました"), 303)
+
+
+# ---------- 自分のアカウント ----------
+
+@app.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
+    return render("account.html", request, msg=msg, err=err,
+                  role=users.role_of(request.state.real_user),
+                  env_admin=bool(users.env_admin()[0] == request.state.real_user))
+
+
+@app.post("/account/password")
+def account_password(request: Request, cur: str = Form(""), new: str = Form(""),
+                     new2: str = Form(""), u=Depends(auth)):
+    real = request.state.real_user
+    if new != new2:
+        return RedirectResponse("/account?err=" + quote("新しいパスワードが一致しません"), 303)
+    if not users.check_password(real, cur):
+        return RedirectResponse("/account?err=" + quote("現在のパスワードが違います"), 303)
+    try:
+        users.set_password(real, new, must_change=0)
+    except ValueError as e:
+        return RedirectResponse("/account?err=" + quote(str(e)), 303)
+    return RedirectResponse("/account?msg=" + quote("パスワードを変更しました"), 303)
+
+
+# ---------- 管理 ----------
+
+def _tenant_size(t):
+    p = os.path.join(tenancy.ROOT, t)
+    tot = 0
+    for root, _, files in os.walk(p):
+        for f in files:
+            try:
+                tot += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return tot
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_only)):
+    rows = []
+    for r in users.list_users():
+        d = dict(r)
+        t = tenancy.safe_name(r["username"])
+        try:
+            tdb = tenancy.db_for(t)
+            d["targets"] = tdb.q1("SELECT COUNT(*) c FROM targets")["c"]
+            d["known"] = tdb.q1("SELECT COUNT(*) c FROM known_accounts")["c"]
+            d["links"] = tdb.q1("SELECT COUNT(*) c FROM links")["c"]
+            d["hits"] = tdb.q1("SELECT COUNT(*) c FROM link_hits")["c"]
+        except Exception:
+            d["targets"] = d["known"] = d["links"] = d["hits"] = "-"
+        d["ig_user"] = config.load(t).get("instagram", {}).get("username") or ""
+        d["size_mb"] = round(_tenant_size(t) / 1048576, 2)
+        rows.append(d)
+    return render("admin.html", request, rows=rows, msg=msg, err=err,
+                  env_user=users.env_admin()[0], tenant_root=tenancy.ROOT)
+
+
+@app.post("/admin/users/create")
+def admin_create(username: str = Form(...), password: str = Form(...),
+                 role: str = Form("user"), note: str = Form(""),
+                 must_change: str = Form(""), u=Depends(admin_only)):
+    try:
+        users.create(username, password, role="admin" if role == "admin" else "user",
+                     note=note, must_change=bool(must_change))
+        users.audit(u, "admin_create", {"username": username, "role": role})
+        return RedirectResponse("/admin?msg=" + quote(f"{username} を作成しました"), 303)
+    except ValueError as e:
+        return RedirectResponse("/admin?err=" + quote(str(e)), 303)
+
+
+@app.post("/admin/users/{target}/password")
+def admin_setpw(target: str, password: str = Form(...), u=Depends(admin_only)):
+    try:
+        users.set_password(target, password, must_change=1)
+        users.audit(u, "admin_setpw", {"username": target})
+        return RedirectResponse("/admin?msg=" + quote(f"{target} のパスワードを再設定しました"), 303)
+    except ValueError as e:
+        return RedirectResponse("/admin?err=" + quote(str(e)), 303)
+
+
+@app.post("/admin/users/{target}/role")
+def admin_role(target: str, role: str = Form(...), u=Depends(admin_only)):
+    users.set_role(target, "admin" if role == "admin" else "user")
+    users.audit(u, "admin_role", {"username": target, "role": role})
+    return RedirectResponse("/admin", 303)
+
+
+@app.post("/admin/users/{target}/toggle")
+def admin_toggle(target: str, u=Depends(admin_only)):
+    row = users.get(target)
+    if row:
+        users.set_disabled(target, not row["disabled"])
+    return RedirectResponse("/admin", 303)
+
+
+@app.post("/admin/users/{target}/delete")
+def admin_delete(target: str, purge: str = Form(""), u=Depends(admin_only)):
+    if users.norm(target) == users.norm(u):
+        return RedirectResponse("/admin?err=" + quote("自分自身は削除できません"), 303)
+    users.delete(target)
+    if purge:
+        shutil.rmtree(os.path.join(tenancy.ROOT, tenancy.safe_name(target)),
+                      ignore_errors=True)
+        with tenancy._lock:
+            tenancy._dbs.pop(tenancy.safe_name(target), None)
+    users.audit(u, "admin_delete", {"username": target, "purge": bool(purge)})
+    return RedirectResponse("/admin?msg=" + quote(f"{target} を削除しました"), 303)
+
+
+@app.get("/admin/switch")
+def admin_switch(request: Request, to: str = "", back: str = "/", u=Depends(admin_only)):
+    r = RedirectResponse(back or "/", 303)
+    if to and users.get(to):
+        r.set_cookie("view_as", users.norm(to), httponly=True, samesite="lax",
+                     secure=True, max_age=8 * 3600)
+    else:
+        r.delete_cookie("view_as")
+    return r
 
 
 # ---------- リンク追跡（公開ルート） ----------
 
-def _record_hit(request: Request, code: str, link):
+def _record_hit(request: Request, code: str):
     ip = linktrack.client_ip(request)
     ua = request.headers.get("user-agent", "")
     p = linktrack.parse_ua(ua)
@@ -475,21 +643,31 @@ def now_iso():
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
 
 
+def _bind_owner(code):
+    owner = users.owner_of_link(code)
+    if owner:
+        tenancy.set_current(owner)
+    return owner
+
+
 @app.get("/l/{code}")
 def link_hit(code: str, request: Request):
+    if not _bind_owner(code):
+        return PlainTextResponse("リンクが無効です", status_code=404)
     link = db.link_get(code)
     if not link or not link["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
-    hid = _record_hit(request, code, link)
+    hid = _record_hit(request, code)
     if link["mode"] == "redirect" and link["dest"]:
         return RedirectResponse(link["dest"], 302)
-    return templates.TemplateResponse("link_land.html",
-        {"request": request, "code": code, "hit_id": hid, "link": link,
-         "dest": link["dest"] or ""})
+    return render("link_land.html", request, code=code, hit_id=hid, link=link,
+                  dest=link["dest"] or "")
 
 
 @app.post("/l/{code}/x")
 async def link_extra(code: str, request: Request):
+    if not _bind_owner(code):
+        return {"ok": False}
     try:
         body = await request.json()
     except Exception:
@@ -512,6 +690,8 @@ async def link_extra(code: str, request: Request):
 
 @app.get("/l/{code}/go")
 def link_go(code: str):
+    if not _bind_owner(code):
+        raise HTTPException(404)
     link = db.link_get(code)
     if not link:
         raise HTTPException(404)
@@ -522,30 +702,30 @@ def link_go(code: str):
 def link_me(request: Request):
     ip = linktrack.client_ip(request)
     ua = request.headers.get("user-agent", "")
-    p = linktrack.parse_ua(ua)
-    g = linktrack.geo(ip)
-    return templates.TemplateResponse("link_me.html",
-        {"request": request, "ip": ip, "ua": ua, "p": p, "g": g})
+    return render("link_me.html", request, ip=ip, ua=ua,
+                  p=linktrack.parse_ua(ua), g=linktrack.geo(ip))
 
 
 # ---------- リンク管理 ----------
 
 @app.get("/links", response_class=HTMLResponse)
-def links_page(request: Request, _=Depends(auth)):
-    return templates.TemplateResponse("links.html",
-        {"request": request, "links": db.links(500), "base": str(request.base_url).rstrip("/")})
+def links_page(request: Request, u=Depends(auth)):
+    return render("links.html", request, links=db.links(500),
+                  base=str(request.base_url).rstrip("/"))
 
 
 @app.post("/links/add")
 def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
-              mode: str = Form("page"), _=Depends(auth)):
+              mode: str = Form("page"), u=Depends(auth)):
     code = _new_code()
-    db.add_link(code, name or code, dest.strip(), note, mode if mode in ("page", "geo", "redirect") else "page")
+    users.register_link(code, u)
+    db.add_link(code, name or code, dest.strip(), note,
+                mode if mode in ("page", "geo", "redirect") else "page")
     return RedirectResponse(f"/link/{code}", 303)
 
 
 @app.get("/link/{code}", response_class=HTMLResponse)
-def link_detail(code: str, request: Request, bots: str = "", _=Depends(auth)):
+def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
     link = db.link_get(code)
     if not link:
         raise HTTPException(404)
@@ -558,15 +738,14 @@ def link_detail(code: str, request: Request, bots: str = "", _=Depends(auth)):
     points += [{"lat": h["gps_lat"], "lon": h["gps_lon"], "city": h["city"],
                 "ts": h["ts"], "ip": h["ip"], "gps": True}
                for h in hits if h.get("gps_lat") is not None]
-    return templates.TemplateResponse("link_detail.html",
-        {"request": request, "link": link, "hits": hits, "stats": stats,
-         "points_json": _json.dumps(points, ensure_ascii=False),
-         "base": str(request.base_url).rstrip("/"), "bots": bots,
-         "net": {h["id"]: linktrack.network_label(h) for h in hits}})
+    return render("link_detail.html", request, link=link, hits=hits, stats=stats,
+                  points_json=_json.dumps(points, ensure_ascii=False),
+                  base=str(request.base_url).rstrip("/"), bots=bots,
+                  net={h["id"]: linktrack.network_label(h) for h in hits})
 
 
 @app.post("/link/{code}/toggle")
-def link_toggle(code: str, _=Depends(auth)):
+def link_toggle(code: str, u=Depends(auth)):
     l = db.link_get(code)
     if l:
         db.set_link_active(code, not l["active"])
@@ -574,19 +753,20 @@ def link_toggle(code: str, _=Depends(auth)):
 
 
 @app.post("/link/{code}/delete")
-def link_delete(code: str, _=Depends(auth)):
+def link_delete(code: str, u=Depends(auth)):
     db.del_link(code)
+    users.unregister_link(code)
     return RedirectResponse("/links", 303)
 
 
 @app.post("/link/{code}/hits/clear")
-def link_clear(code: str, _=Depends(auth)):
+def link_clear(code: str, u=Depends(auth)):
     db.del_hits(code)
     return RedirectResponse(f"/link/{code}", 303)
 
 
 @app.post("/link/{code}/hit/{hid}/bot")
-def link_hit_bot(code: str, hid: int, _=Depends(auth)):
+def link_hit_bot(code: str, hid: int, u=Depends(auth)):
     row = db.q1("SELECT is_bot FROM link_hits WHERE id=?", (hid,))
     if row:
         db.update_hit(hid, is_bot=0 if row["is_bot"] else 1)
@@ -596,8 +776,9 @@ def link_hit_bot(code: str, hid: int, _=Depends(auth)):
 # ---------- API / エクスポート ----------
 
 @app.get("/api/summary")
-def api_summary(_=Depends(auth)):
+def api_summary(u=Depends(auth)):
     return {
+        "tenant": u,
         "targets": len(db.targets()),
         "known": db.q1("SELECT COUNT(*) c FROM known_accounts")["c"],
         "runs": db.q1("SELECT COUNT(*) c FROM identity_runs")["c"],
@@ -607,13 +788,14 @@ def api_summary(_=Depends(auth)):
 
 
 @app.get("/api/events")
-def api_events(limit: int = 500, _=Depends(auth)):
+def api_events(limit: int = 500, u=Depends(auth)):
     return [dict(r) for r in db.q("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,))]
 
 
 @app.get("/export.json")
-def export_json(_=Depends(auth)):
+def export_json(u=Depends(auth)):
     return {
+        "tenant": u,
         "known_accounts": [dict(r) for r in db.q("SELECT * FROM known_accounts")],
         "saved_pairs": [dict(r) for r in db.q("SELECT * FROM saved_pairs")],
         "profiles": [dict(r) for r in db.q("SELECT * FROM profiles")],
@@ -623,7 +805,7 @@ def export_json(_=Depends(auth)):
 
 
 @app.post("/import")
-async def import_json(request: Request, _=Depends(auth)):
+async def import_json(request: Request, u=Depends(auth)):
     form = await request.form()
     try:
         doc = _json.loads(form.get("payload") or "{}")
