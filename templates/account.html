@@ -6,14 +6,18 @@
 <div class="card">
   <h2>ログイン情報</h2>
   <p>ユーザー名: <code>{{ real_user }}</code> / 権限: <b>{{ role }}</b></p>
-  <p class="dim">Basic 認証です。ブラウザのパスワード保存はユーザーごとに別プロファイル推奨。</p>
+  <p class="dim">セッション有効期限: {{ session_days }} 日（操作のたびに延長）</p>
   {% if env_admin %}
-  <p class="dim">このアカウントは環境変数 <code>ADMIN_PASS</code> がマスターキーとして常に有効です。</p>
+  <p class="dim">このアカウントは <code>ADMIN_USER</code> と一致します。</p>
+  {% endif %}
+  {% if breakglass %}
+  <p class="dim"><code>ADMIN_BREAKGLASS</code> が設定されています（管理者ログインの非常口）。</p>
   {% endif %}
 </div>
 
 <div class="card">
   <h2>パスワード変更</h2>
+  <p class="dim">変更すると <b>他の全端末のセッションが即座に無効</b>になります。</p>
   <form method="post" action="/account/password">
     <label>現在のパスワード
       <input type="password" name="cur" autocomplete="current-password"></label>
@@ -24,4 +28,41 @@
     <button>変更</button>
   </form>
 </div>
+
+<div class="card">
+  <h2>ログイン中の端末</h2>
+  <table>
+    <tr><th>ID</th><th>IP</th><th>端末</th><th>最終操作</th><th></th></tr>
+    {% for s in sessions %}
+    <tr>
+      <td><code>{{ s.short }}</code>{% if s.current %} <b>(この端末)</b>{% endif %}</td>
+      <td>{{ s.ip }}</td>
+      <td class="dim small">{{ s.ua }}</td>
+      <td class="dim">{{ s.last_seen }}</td>
+      <td>
+        {% if not s.current %}
+        <form method="post" action="/account/sessions/delete" style="display:inline">
+          <input type="hidden" name="sid" value="{{ s.sid }}">
+          <button class="mini">切る</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <form method="post" action="/account/logout-all">
+    <button>全端末からログアウト（この端末は維持）</button></form>
+</div>
+
+{% if admin_sessions %}
+<div class="card">
+  <h2>管理者セッション</h2>
+  <table>
+    <tr><th>ID</th><th>IP</th><th>端末</th><th>最終操作</th></tr>
+    {% for s in admin_sessions %}
+    <tr><td><code>{{ s.short }}</code></td><td>{{ s.ip }}</td>
+        <td class="dim small">{{ s.ua }}</td><td class="dim">{{ s.last_seen }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
 {% endblock %}
