@@ -255,25 +255,67 @@ class DB:
                       (status, now(), log[:20000], job_id))
 
     # ---- 特定ラン ----
-    def start_run(self, target_uid, target_username):
+    def start_run(self, target_uid, target_username, candidates_raw="", note="",
+                  target_deleted=0):
         with self.tx() as c:
-            cur = c.execute("""INSERT INTO identity_runs(target_uid,target_username,
-                status,started_at) VALUES(?,?,?,?)""",
-                (target_uid, target_username, "running", now()))
+            cur = c.execute("""INSERT INTO identity_runs(target_uid,target_username,status,
+                candidates_raw,note,target_deleted,started_at) VALUES(?,?,?,?,?,?,?)""",
+                (str(target_uid), target_username, "running", candidates_raw, note,
+                 int(bool(target_deleted)), now()))
             return cur.lastrowid
 
-    def update_run(self, run_id, progress=None, total=None, status=None, log=None):
-        sets, args = [], []
-        if progress is not None:
-            sets.append("progress=?"); args.append(progress)
-        if total is not None:
-            sets.append("total=?"); args.append(total)
-        if status is not None:
-            sets.append("status=?"); args.append(status)
-        if log is not None:
-            sets.append("log=?"); args.append(log[:20000])
-        if status in ("ok", "error"):
-            sets.append("finished_at=?"); args.append(now())
-        args.append(run_id)
+    # ---- 既知アカウント（削除済みIDの控え） ----
+    def add_known(self, user_id, username="", note="", source="manual", deleted=None):
+        uid = str(user_id)
         with self.tx() as c:
-            c.execute(f"UPDATE identity_runs SET {','.join(sets)} WHERE id=?", args)
+            row = c.execute("SELECT deleted FROM known_accounts WHERE user_id=?",
+                            (uid,)).fetchone()
+            d = int(deleted) if deleted is not None else (row["deleted"] if row else 0)
+            c.execute("""INSERT INTO known_accounts(user_id,username,note,source,deleted,
+                added_at,last_seen) VALUES(?,?,?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username=CASE WHEN excluded.username<>'' THEN excluded.username
+                                  ELSE known_accounts.username END,
+                    note=CASE WHEN excluded.note<>'' THEN excluded.note
+                              ELSE known_accounts.note END,
+                    source=excluded.source, deleted=excluded.deleted,
+                    last_seen=excluded.last_seen""",
+                (uid, username, note, source, d, now(), now()))
+
+    def known(self, limit=1000):
+        return self.q("SELECT * FROM known_accounts ORDER BY last_seen DESC LIMIT ?", (limit,))
+
+    def known_get(self, uid):
+        return self.q1("SELECT * FROM known_accounts WHERE user_id=?", (str(uid),))
+
+    def set_known_deleted(self, uid, flag):
+        with self.tx() as c:
+            c.execute("UPDATE known_accounts SET deleted=? WHERE user_id=?",
+                      (int(bool(flag)), str(uid)))
+
+    def del_known(self, uid):
+        with self.tx() as c:
+            c.execute("DELETE FROM known_accounts WHERE user_id=?", (str(uid),))
+
+    def save_pair(self, tuid, tname, cuid, cname, note=""):
+        with self.tx() as c:
+            c.execute("""INSERT INTO saved_pairs(target_uid,target_username,candidate_uid,
+                candidate_username,note,added_at) VALUES(?,?,?,?,?,?)
+                ON CONFLICT(target_uid,candidate_uid) DO UPDATE SET
+                    target_username=excluded.target_username,
+                    candidate_username=excluded.candidate_username,
+                    note=CASE WHEN excluded.note<>'' THEN excluded.note
+                              ELSE saved_pairs.note END""",
+                (str(tuid), tname, str(cuid), cname, note, now()))
+
+    def pairs(self, limit=500):
+        return self.q("SELECT * FROM saved_pairs ORDER BY added_at DESC LIMIT ?", (limit,))
+
+    def del_pair(self, pid):
+        with self.tx() as c:
+            c.execute("DELETE FROM saved_pairs WHERE id=?", (pid,))
+
+    def delete_run(self, rid):
+        with self.tx() as c:
+            c.execute("DELETE FROM identity_scores WHERE run_id=?", (rid,))
+            c.execute("DELETE FROM identity_runs WHERE id=?", (rid,))
