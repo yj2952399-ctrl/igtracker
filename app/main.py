@@ -1,7 +1,7 @@
 """FastAPI アプリ本体。"""
-import base64, secrets, json
+import secrets
 from fastapi import FastAPI, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -9,7 +9,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from .config import load, get as get_cfg
 from .database import DB
 from . import instagram as ig
-from . import identity, watcher
+from . import identity, watcher, forensics
 
 load()
 cfg = get_cfg()
@@ -31,7 +31,6 @@ def auth(cred: HTTPBasicCredentials = Depends(security)):
 
 @app.on_event("startup")
 def _startup():
-    # config.yaml の初期ターゲットを登録
     for h in cfg.get("targets", []):
         try:
             uid = ig.client().user_id_from_username(h)
@@ -72,22 +71,46 @@ def target_detail(uid: str, request: Request, _=Depends(auth)):
 
 @app.get("/identity", response_class=HTMLResponse)
 def identity_page(request: Request, _=Depends(auth)):
-    scores = db.q("""SELECT * FROM identity_scores ORDER BY computed_at DESC, score DESC LIMIT 50""")
-    cands = cfg.get("candidates", [])
+    runs = db.q("SELECT * FROM identity_runs ORDER BY id DESC LIMIT 10")
+    latest = db.q1("SELECT MAX(id) m FROM identity_runs")
+    scores = []
+    if latest and latest["m"]:
+        scores = db.q("""SELECT * FROM identity_scores WHERE run_id=?
+            ORDER BY score DESC LIMIT 50""", (latest["m"],))
+    else:
+        scores = db.q("""SELECT * FROM identity_scores ORDER BY computed_at DESC, score DESC LIMIT 50""")
     return templates.TemplateResponse("identity.html",
-        {"request": request, "scores": scores, "cands": cands,
-         "targets": db.targets()})
+        {"request": request, "scores": scores, "runs": runs,
+         "cands": cfg.get("candidates", []), "targets": db.targets()})
 
 
 @app.post("/identity/run")
-def identity_run(target: str = Form(...), candidates: str = Form(...), _=Depends(auth)):
+def identity_run(target: str = Form(...), candidates: str = Form(""),
+                 auto: str = Form(""), _=Depends(auth)):
     cl = ig.client()
-    tuid = cl.user_id_from_username(target) if not target.isdigit() else target
-    cands = [c.strip() for c in candidates.replace(",", "\n").split() if c.strip()]
-    cids = [cl.user_id_from_username(c) if not c.isdigit() else c for c in cands]
-    watcher.run_bg(identity.run_identify, db, str(tuid), [str(x) for x in cids],
-                   cfg["identity"]["weights"])
+    t = target.strip().lstrip("@")
+    tuid = str(cl.user_id_from_username(t) if not t.isdigit() else t)
+    cands = [c.strip().lstrip("@") for c in candidates.replace(",", "\n").split() if c.strip()]
+    cids = [str(cl.user_id_from_username(c) if not c.isdigit() else c) for c in cands]
+    auto_scan = bool(auto) or cfg["identity"].get("auto_scan", True)
+
+    def job():
+        rid = db.start_run(tuid, t)
+        try:
+            identity.run_identify(db, tuid, cids, auto_scan=auto_scan, run_id=rid)
+            db.update_run(rid, status="ok")
+        except Exception as e:
+            db.update_run(rid, status="error", log=str(e))
+
+    watcher.run_bg(job)
     return RedirectResponse("/identity", 303)
+
+
+@app.get("/forensics", response_class=HTMLResponse)
+def forensics_page(request: Request, _=Depends(auth)):
+    rows = db.q("SELECT * FROM forensics ORDER BY ts DESC LIMIT 300")
+    return templates.TemplateResponse("activity.html",
+        {"request": request, "events": rows, "kind": "forensics"})
 
 
 @app.get("/activity", response_class=HTMLResponse)
@@ -149,8 +172,9 @@ def target_monitor(uid: str, _=Depends(auth)):
 
 @app.post("/candidates/add")
 def candidates_add(handle: str = Form(...), _=Depends(auth)):
-    if handle.lstrip("@") not in cfg.get("candidates", []):
-        cfg.setdefault("candidates", []).append(handle.lstrip("@"))
+    h = handle.lstrip("@")
+    if h and h not in cfg.get("candidates", []):
+        cfg.setdefault("candidates", []).append(h)
     return RedirectResponse("/targets", 303)
 
 
@@ -161,9 +185,9 @@ def api_summary(_=Depends(auth)):
     return {
         "targets": len(db.targets()),
         "posts": db.q1("SELECT COUNT(*) c FROM posts")["c"],
-        "stories": db.q1("SELECT COUNT(*) c FROM stories")["c"],
         "events": db.q1("SELECT COUNT(*) c FROM events")["c"],
         "dm_messages": db.q1("SELECT COUNT(*) c FROM dm_messages")["c"],
+        "forensics": db.q1("SELECT COUNT(*) c FROM forensics")["c"],
     }
 
 
@@ -172,7 +196,6 @@ def api_events(limit: int = 500, _=Depends(auth)):
     return [dict(r) for r in db.q("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,))]
 
 
-@app.get("/api/target/{uid}/snapshots")
-def api_snap(uid: str, _=Depends(auth)):
-    return [dict(r) for r in db.q("""SELECT taken_at,follower_count,following_count,
-        media_count FROM profile_snapshots WHERE user_id=? ORDER BY taken_at""", (uid,))]
+@app.get("/api/forensics")
+def api_forensics(limit: int = 500, _=Depends(auth)):
+    return [dict(r) for r in db.q("SELECT * FROM forensics ORDER BY ts DESC LIMIT ?", (limit,))]
