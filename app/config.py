@@ -18,6 +18,7 @@ def _overlay(base, over):
 
 
 def _bootstrap_session(path):
+    """IG_SESSION_B64 から session.json を復元（エフェメラル対策）"""
     b64 = os.getenv("IG_SESSION_B64")
     if b64 and not os.path.exists(path):
         try:
@@ -46,6 +47,7 @@ def _env_list(name):
 
 
 def load(path=_PATH):
+    """config.yaml -> data/settings.json -> 環境変数 の順で上書きして返す。"""
     global _CFG
     if _CFG is not None:
         return _CFG
@@ -94,7 +96,7 @@ def load(path=_PATH):
 
 
 def save_sections(data):
-    """Webの設定画面から呼ぶ。data/settings.json に上書き保存。"""
+    """Webの設定画面から呼ぶ。data/settings.json に上書き保存（リポジトリは汚さない）。"""
     global _CFG
     sf = _settings_path()
     d = os.path.dirname(sf)
