@@ -1,0 +1,82 @@
+{% extends "base.html" %}{% block content %}
+<h1>{{ link.name }}</h1>
+<p class="mono">{{ base }}/l/{{ link.code }}</p>
+<p class="dim">飛び先: {{ link.dest or "(なし)" }} ／ モード: {{ link.mode }}
+ ／ 状態: {{ "有効" if link.active else "停止中" }}</p>
+
+<p>
+  <form method="post" action="/link/{{ link.code }}/toggle" style="display:inline">
+    <button>有効/停止 切替</button></form>
+  <a href="/link/{{ link.code }}?bots=1"><button type="button">ボットも表示</button></a>
+  <form method="post" action="/link/{{ link.code }}/hits/clear" style="display:inline">
+    <button>履歴を消す</button></form>
+  <form method="post" action="/link/{{ link.code }}/delete" style="display:inline">
+    <button>リンクを削除</button></form>
+</p>
+
+<h2>解析サマリ</h2>
+<div class="card">
+<table>
+<tr><th>総ヒット</th><td>{{ stats.total }}</td></tr>
+<tr><th>人のヒット</th><td>{{ stats.real }}</td></tr>
+<tr><th>ボット/プレビュー</th><td>{{ stats.bots }}</td></tr>
+<tr><th>ユニークIP</th><td>{{ stats.uniq_ip }}</td></tr>
+<tr><th>推定国 / 地域 / 市区町村</th><td>{{ stats.country }} / {{ stats.region }} / {{ stats.city }}</td></tr>
+<tr><th>推定タイムゾーン</th><td>{{ stats.tz }}</td></tr>
+<tr><th>ISP / ASN</th><td>{{ stats.isp }} / {{ stats.asn }}</td></tr>
+<tr><th>モバイル / VPN・プロキシ / データセンター</th>
+    <td>{{ stats.mobile }} / {{ stats.proxy }} / {{ stats.hosting }}</td></tr>
+<tr><th>GPS取得成功</th><td>{{ stats.gps }}</td></tr>
+<tr><th>初回 / 最終</th><td>{{ (stats.first or "")[:19] }} / {{ (stats.last or "")[:19] }}</td></tr>
+</table>
+<p class="dim">同じIPの再訪: {% for ip, n in stats.repeat_ip %}<span class="mono">{{ ip }}({{ n }}回) </span>{% else %}なし{% endfor %}</p>
+<p class="dim">アプリ内ブラウザ: {% for k, n in stats.inapps %}{{ k }}({{ n }}) {% else %}なし{% endfor %}</p>
+<p class="dim">端末: {% for k, n in stats.devices %}{{ k }}({{ n }}) {% endfor %}</p>
+<p class="dim">OS: {% for k, n in stats.oses %}{{ k }}({{ n }}) {% endfor %}</p>
+<p class="dim">ブラウザ: {% for k, n in stats.browsers %}{{ k }}({{ n }}) {% endfor %}</p>
+<p class="dim">言語: {% for k, n in stats.langs %}{{ k }}({{ n }}) {% endfor %}</p>
+<p class="warn">IPの座標は回線の出口地点です。VPNなら実際の住所とズレます。
+GPSが取れている行はそちらが正確です。</p>
+</div>
+
+<h2>地図</h2>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const PTS = {{ points_json|safe }};
+const m = L.map('map').setView([36.2, 138.2], 4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {attribution:'&copy; OpenStreetMap'}).addTo(m);
+const bounds = [];
+PTS.forEach(p=>{
+  if(p.lat===null||p.lon===null) return;
+  const c = p.gps ? '#2ecc71' : '#4c8dff';
+  const mk = L.circleMarker([p.lat,p.lon], {radius: p.gps?8:6, color:c, fillColor:c, fillOpacity:.5});
+  mk.bindPopup((p.gps?'GPS: ':'IP: ')+ (p.city||'') + '<br>' + p.ip + '<br>' + (p.ts||'').slice(0,19));
+  mk.addTo(m); bounds.push([p.lat,p.lon]);
+});
+if(bounds.length) m.fitBounds(bounds, {padding:[30,30]});
+</script>
+
+<h2>ヒット一覧</h2>
+<table>
+<tr><th>時刻</th><th>IP</th><th>推定地域</th><th>回線</th><th>端末</th><th>UA</th><th></th></tr>
+{% for h in hits %}
+<tr class="{{ 'botrow' if h.is_bot else '' }}">
+  <td>{{ (h.ts or "")[:19] }}</td>
+  <td class="mono">{{ h.ip }}</td>
+  <td>{{ h.country }} {{ h.region }} {{ h.city }}
+    {% if h.gps_lat %} <span class="badge">GPS {{ h.gps_lat|round(4) }},{{ h.gps_lon|round(4) }} ±{{ h.gps_acc|round(0) }}m</span>{% endif %}</td>
+  <td>{{ net[h.id] }}{% if h.isp %}<br><small>{{ h.isp }}</small>{% endif %}</td>
+  <td>{{ h.device }}<br><small>{{ h.os }} / {{ h.browser }}</small>
+    {% if h.inapp %}<br><span class="badge">{{ h.inapp }}内</span>{% endif %}</td>
+  <td><small class="mono">{{ h.ua }}</small>
+    {% if h.screen %}<br><small>画面 {{ h.screen }}</small>{% endif %}
+    {% if h.tz %}<br><small>tz {{ h.tz }}</small>{% endif %}</td>
+  <td>{% if h.is_bot %}<span class="badge">ボット</span>{% endif %}
+    <form method="post" action="/link/{{ link.code }}/hit/{{ h.id }}/bot">
+      <button>分類切替</button></form></td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
