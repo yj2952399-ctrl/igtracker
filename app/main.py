@@ -38,7 +38,9 @@ RUN_IG_BOOT = os.getenv("RUN_IG_BOOT", "1") != "0"
 IG_BOOT_MAX_TRIES = int(os.getenv("IG_BOOT_MAX_TRIES", "8"))
 
 admin = APIRouter(prefix=ADMIN_PATH)
-
+# --- マルチSNS（新規） ---
+from . import snsx
+app.include_router(snsx.router)
 
 # ---------- Instagram 接続の状態管理 ----------
 
