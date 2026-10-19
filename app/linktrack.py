@@ -227,3 +227,41 @@ def summarize(hits):
         "first": min((h["ts"] for h in hits), default=None),
         "last": max((h["ts"] for h in hits), default=None),
     }
+
+
+# ---------- 端末キー署名の検証 ----------
+
+def _b64d(s):
+    import base64
+    s = (s or "").replace("-", "+").replace("_", "/")
+    return base64.b64decode(s + "=" * (-len(s) % 4))
+
+
+def _raw_to_der(sig: bytes) -> bytes:
+    """WebCrypto の ECDSA 署名(生 r||s) を DER に変換する。"""
+    n = len(sig) // 2
+    r = int.from_bytes(sig[:n], "big")
+    s = int.from_bytes(sig[n:], "big")
+
+    def enc(x):
+        b = x.to_bytes((x.bit_length() + 7) // 8 or 1, "big")
+        if b[0] & 0x80:
+            b = b"\x00" + b
+        return b"\x02" + bytes([len(b)]) + b
+
+    body = enc(r) + enc(s)
+    return b"\x30" + bytes([len(body)]) + body
+
+
+def verify_sig(pubkey_b64, sig_b64, message):
+    """ブラウザの端末キーが nonce に正しく署名したかを検証する。"""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.serialization import load_der_public_key
+        pub = load_der_public_key(_b64d(pubkey_b64))
+        pub.verify(_raw_to_der(_b64d(sig_b64)), (message or "").encode(),
+                   ec.ECDSA(hashes.SHA256()))
+        return True
+    except Exception:
+        return False
