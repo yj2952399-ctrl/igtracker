@@ -1,32 +1,44 @@
 {% extends "base.html" %}{% block content %}
-<h1>裏垢特定エンジン v2</h1>
+<h1>特定</h1>
 
-<form method="post" action="/identity/run">
-  <label>対象裏垢 <input name="target" placeholder="secret_handle" required></label>
-  <label>本体候補（改行/カンマ区切り・空でも可）<textarea name="candidates">{{ cands|join('\n') }}</textarea></label>
-  <label><input type="checkbox" name="auto" value="1" checked> 候補を自動収集して総当たり</label>
-  <button>スキャン開始</button>
+<form method="post" action="/identity/run" class="card">
+  <h2>① 特定したいアカウント</h2>
+  <label>@ユーザー名 または 数値ID
+    <input name="target" placeholder="@secret_handle または 123456789" required></label>
+
+  <h2>② 確認するアカウント（1行1件・複数可）</h2>
+  <label>@ユーザー名 または 数値ID
+    <textarea name="candidates" rows="6"
+      placeholder="candidate_main&#10;987654321"></textarea></label>
+
+  <label><input type="checkbox" name="auto" value="1"> 自動収集した候補も総当たりする</label>
+  <label><input type="checkbox" name="archive" value="1" checked>
+    確認するアカウントを今すぐアーカイブ（削除対策）</label>
+  <label>メモ <input name="note" placeholder="例: 2026-10 時点"></label>
+  <button>照合開始</button>
 </form>
 
-<h2>実行状況</h2>
-<table><tr><th>ID</th><th>対象</th><th>状態</th><th>進捗</th><th>開始</th><th>ログ</th></tr>
-{% for r in runs %}
-<tr><td>{{ r.id }}</td><td>{{ r.target_username }}</td><td>{{ r.status }}</td>
-<td>{{ r.progress }}/{{ r.total }}</td><td>{{ r.started_at[:19] if r.started_at else "" }}</td>
-<td>{{ (r.log or "")[:120] }}</td></tr>
+<h2>保存済みの組み合わせ</h2>
+<table><tr><th>対象</th><th>確認</th><th>メモ</th><th></th><th></th></tr>
+{% for p in pairs %}
+<tr>
+  <td>@{{ p.target_username }} <small>{{ p.target_uid }}</small></td>
+  <td>@{{ p.candidate_username }} <small>{{ p.candidate_uid }}</small></td>
+  <td>{{ p.note or "" }}</td>
+  <td><form method="post" action="/pair/run">
+      <input type="hidden" name="pid" value="{{ p.id }}"><button>再照合</button></form></td>
+  <td><form method="post" action="/pairs/{{ p.id }}/delete"><button>削除</button></form></td>
+</tr>
 {% endfor %}</table>
 
-<h2>結果（スコア降順）</h2>
-{% for s in scores %}
-<div class="card">
-  <h3>{{ s.verdict }} — @{{ s.candidate_username }}
-    <span class="score">{{ s.score }}</span></h3>
-  <table>
-  {% for e in s.evidence|fromjson if e.score > 0.2 %}
-    <tr><td>{{ e.name }}</td><td>{{ e.score }}</td><td>{{ e.weight }}</td>
-    <td>{{ e.detail }}</td></tr>
-  {% endfor %}
-  </table>
-</div>
-{% endfor %}
+<h2>最近の実行</h2>
+<table><tr><th>ID</th><th>対象</th><th>状態</th><th>進捗</th><th>開始</th></tr>
+{% for r in runs %}
+<tr><td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
+<td>@{{ r.target_username }}</td><td>{{ r.status }}</td>
+<td>{{ r.progress }}/{{ r.total }}</td>
+<td>{{ r.started_at[:19] if r.started_at else "" }}</td></tr>
+{% endfor %}</table>
+
+<p><a href="/accounts">🆔 削除済みアカウントのIDはここで登録</a></p>
 {% endblock %}
