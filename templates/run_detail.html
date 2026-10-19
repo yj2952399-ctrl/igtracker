@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% block content %}
+<h1>特定結果 #{{ run.id }}</h1>
+<p><a href="/runs">← 履歴一覧</a></p>
+
+<table>
+<tr><th>対象</th><td>@{{ run.target_username }} ({{ run.target_uid }})
+  {% if run.target_deleted %}<span class="badge">削除済み</span>{% endif %}</td></tr>
+<tr><th>状態</th><td>{{ run.status }} {{ run.progress }}/{{ run.total }}</td></tr>
+<tr><th>確認した相手</th><td>{{ run.candidates_raw or "" }}</td></tr>
+<tr><th>メモ</th><td>{{ run.note or "" }}</td></tr>
+<tr><th>開始 / 終了</th><td>{{ run.started_at }} / {{ run.finished_at or "" }}</td></tr>
+{% if run.log %}<tr><th>ログ</th><td>{{ run.log }}</td></tr>{% endif %}
+</table>
+
+{% if tp %}
+<h2>対象プロフィール（実行時の記録）</h2>
+<table>
+<tr><th>ユーザー名</th><td>@{{ tp.username }}</td></tr>
+<tr><th>表示名</th><td>{{ tp.full_name or "" }}</td></tr>
+<tr><th>bio</th><td>{{ tp.bio or "" }}</td></tr>
+<tr><th>外部URL</th><td>{{ tp.external_url or "" }}</td></tr>
+<tr><th>フォロワー / フォロー</th><td>{{ tp.follower_count }} / {{ tp.following_count }}</td></tr>
+<tr><th>都市 / 住所</th><td>{{ tp.city or "" }} / {{ tp.address or "" }}</td></tr>
+<tr><th>メール / 電話</th><td>{{ tp.public_email or tp.business_email or "" }} / {{ tp.contact_phone or tp.business_phone or "" }}</td></tr>
+</table>
+{% endif %}
+
+<h2>判定 {{ scores|length }} 件（スコア降順）</h2>
+{% for s in scores %}
+{% set f = s.flags|fromjson if s.flags else {} %}
+<div class="card">
+  <h3>{{ s.verdict }} — @{{ s.candidate_display or s.candidate_username }}
+    <span class="score">{{ s.score }}</span>
+    {% if f.deleted %}<span class="badge">削除済み／キャッシュ復元</span>{% endif %}
+    {% if f.partial %}<span class="badge">データ欠損</span>{% endif %}
+  </h3>
+  <p>UID {{ s.candidate_user_id }} ／ {{ s.computed_at[:19] }}</p>
+  <table>
+  {% for e in s.evidence|fromjson if e.score > 0 %}
+    <tr><td>{{ e.name }}</td><td>{{ e.score }}</td><td>{{ e.weight }}</td>
+        <td>{{ e.detail }}</td></tr>
+  {% endfor %}
+  </table>
+</div>
+{% endfor %}
+
+<form method="post" action="/runs/{{ run.id }}/delete"><button>この記録を削除</button></form>
+{% endblock %}
