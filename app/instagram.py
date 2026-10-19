@@ -1,5 +1,5 @@
 """instagrapi ラッパ。取れるものは全部取ってDBに書く。"""
-import os, json, datetime as dt
+import os, json
 from io import BytesIO
 
 import requests
@@ -12,6 +12,11 @@ from .database import now
 from . import forensics
 
 _cl = None
+
+
+def reset_client():
+    global _cl
+    _cl = None
 
 
 def client():
@@ -37,8 +42,25 @@ def client():
     return cl
 
 
+def login_now(username, password, session_file):
+    """Webから明示的にログインしてセッションを保存する。"""
+    global _cl
+    cl = Client()
+    cl.delay_range = [1, 3]
+    cl.login(username, password)
+    try:
+        cl.get_timeline_feed()
+    except Exception:
+        pass
+    d = os.path.dirname(session_file)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    cl.dump_settings(session_file)
+    _cl = cl
+    return cl
+
+
 def avatar_features(url):
-    """アイコンのpHashと色ヒストグラムを抽出"""
     if not url:
         return "", []
     try:
@@ -66,7 +88,6 @@ def avatar_features(url):
 
 
 def raw_profile(cl, uid):
-    """取得できる全フィールドを辞書化"""
     i = cl.user_info(uid)
     ph, hist = avatar_features(str(i.profile_pic_url) if i.profile_pic_url else None)
     forensics.capture_headers(cl._db if hasattr(cl, "_db") else None, cl, f"user_info:{uid}")
