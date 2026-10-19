@@ -1,10 +1,10 @@
 """FastAPI アプリ本体。Cookieセッション認証 + マルチテナント完全分離版。"""
-import os, time, secrets, random, string, base64, json as _json, traceback, shutil, threading
+import os, io, time, secrets, random, string, base64, json as _json, traceback, shutil, threading
 from collections import Counter
 from urllib.parse import quote
 
 from fastapi import FastAPI, APIRouter, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -15,7 +15,7 @@ persist.pull()
 from . import config, tenancy, users
 from .config import get as get_cfg
 from . import instagram as ig
-from . import identity, watcher, forensics, linktrack, together
+from . import identity, watcher, forensics, linktrack, together, snscheck, campaign
 
 config.load()
 users.init()
@@ -52,7 +52,6 @@ def _ig_note(msg):
 
 
 def _ig_client(force=False, tries=1, quiet=False):
-    """Instagram クライアントを取得。429 などに備えて少し粘る。"""
     with _IG_LOCK:
         if not force and _IG_STATE["ok"]:
             try:
@@ -91,7 +90,6 @@ def _ig_client(force=False, tries=1, quiet=False):
 
 
 def _ig_boot(force=False):
-    """全テナント分のターゲットを解決して登録する。ログイン失敗時は中断。"""
     with _IG_LOCK:
         if _IG_STATE["running"]:
             return
@@ -125,7 +123,6 @@ def _ig_boot(force=False):
 
 
 def _ig_boot_loop():
-    """ログインが通るまで指数バックオフで粘る。"""
     delay = 20
     for attempt in range(1, IG_BOOT_MAX_TRIES + 1):
         if _IG_STATE["ok"]:
@@ -180,6 +177,10 @@ def _ua(request):
     return request.headers.get("user-agent", "")
 
 
+def _base(request):
+    return str(request.base_url).rstrip("/")
+
+
 def _set_cookie(resp, name, token):
     resp.set_cookie(name, token, max_age=users.SESSION_DAYS * 86400, httponly=True,
                     secure=SECURE_COOKIE, samesite="lax", path="/")
@@ -228,7 +229,7 @@ async def _debug_handler(request: Request, exc: Exception):
     return PlainTextResponse(f"PATH: {request.url.path}\n\n{tb}", status_code=500)
 
 
-# ---------- ヘルスチェック（HEAD も受ける） ----------
+# ---------- ヘルスチェック ----------
 
 @app.get("/healthz")
 def healthz():
@@ -432,7 +433,7 @@ def account_logout_all(request: Request, u=Depends(auth)):
     return r
 
 
-# ---------- 管理（別パス・別Cookie） ----------
+# ---------- 管理 ----------
 
 @admin.get("/login", response_class=HTMLResponse)
 def admin_login_page(request: Request, next: str = "", msg: str = "", err: str = ""):
@@ -989,7 +990,7 @@ def ig_logout(u=Depends(auth)):
     return RedirectResponse("/settings?msg=" + quote("ログアウトしました"), 303)
 
 
-# ---------- バックアップ操作 ----------
+# ---------- バックアップ ----------
 
 @app.get("/api/backup")
 def api_backup(u=Depends(auth)):
@@ -1005,6 +1006,194 @@ def backup_push(u=Depends(auth)):
 def backup_pull(u=Depends(auth)):
     return RedirectResponse("/settings?msg=" + quote(
         "復元: " + str(persist.pull(force=True)) + "（DBを反映するには再起動推奨）"), 303)
+
+
+# ---------- SNS横断検索 ----------
+
+@app.get("/sns", response_class=HTMLResponse)
+def sns_page(request: Request, u=Depends(auth)):
+    return render("sns.html", request, scans=db.scans(100), cats=snscheck.CATS)
+
+
+@app.post("/sns/scan")
+def sns_scan(username: str = Form(...), cats: list[str] = Form([]), u=Depends(auth)):
+    name = username.strip().lstrip("@")
+    if not name:
+        return RedirectResponse("/sns", 303)
+    sid = db.start_scan(name)
+
+    def job():
+        try:
+            res = snscheck.scan(name, cats=cats or None)
+            for r in res:
+                db.add_sns_hit({"scan_id": sid, "username": name, "site": r["site"],
+                                "site_name": r["site_name"], "cat": r["cat"],
+                                "url": r["url"], "state": r["state"], "code": r["code"],
+                                "title": r["title"], "og_image": r["og_image"],
+                                "phash": "", "seen_at": now_iso()})
+            found = sum(1 for r in res if r["state"] == "yes")
+            db.finish_scan(sid, total=len(res), found=found, status="ok")
+        except Exception as e:
+            db.finish_scan(sid, status="error", log=repr(e) + "\n\n" + traceback.format_exc())
+
+    watcher.run_bg(job)
+    return RedirectResponse(f"/sns/{sid}", 303)
+
+
+@app.get("/sns/{sid}", response_class=HTMLResponse)
+def sns_result(sid: int, request: Request, u=Depends(auth)):
+    sc = db.scan(sid)
+    if not sc:
+        raise HTTPException(404)
+    hits = [dict(r) for r in db.sns_hits(sid)]
+    return render("sns_result.html", request, sc=sc, hits=hits)
+
+
+@app.post("/sns/{sid}/delete")
+def sns_delete(sid: int, u=Depends(auth)):
+    db.del_scan(sid)
+    return RedirectResponse("/sns", 303)
+
+
+@app.post("/sns/{sid}/avatars")
+def sns_avatars(sid: int, u=Depends(auth)):
+    def job():
+        for r in db.q("SELECT * FROM sns_hits WHERE scan_id=? AND og_image<>''", (sid,)):
+            ph = snscheck.phash_url(r["og_image"])
+            if ph:
+                db.update_hit  # noop
+                with db.tx() as c:
+                    c.execute("UPDATE sns_hits SET phash=? WHERE id=?", (ph, r["id"]))
+                db.upsert_avatar("sns", r["username"], r["site"], r["og_image"], ph)
+    watcher.run_bg(job)
+    return RedirectResponse(f"/sns/{sid}?msg=" + quote("アイコン照合を開始しました"), 303)
+
+
+@app.get("/avatars", response_class=HTMLResponse)
+def avatars_page(request: Request, u=Depends(auth)):
+    rows = [dict(r) for r in db.avatars(3000)]
+    groups = {}
+    for r in rows:
+        if not r["phash"]:
+            continue
+        key = None
+        for k in list(groups):
+            if snscheck.phash_distance(k, r["phash"]) <= 8:
+                key = k
+                break
+        groups.setdefault(key or r["phash"], []).append(r)
+    gs = [g for g in groups.values() if len(g) > 1]
+    gs.sort(key=lambda g: -len(g))
+    return render("avatars.html", request, groups=gs, total=len(rows))
+
+
+@app.get("/gravatar", response_class=HTMLResponse)
+def gravatar_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
+    return render("gravatar.html", request, rows=db.gravatars(200), msg=msg, err=err)
+
+
+@app.post("/gravatar")
+def gravatar_lookup(email: str = Form(...), u=Depends(auth)):
+    d = snscheck.gravatar(email)
+    if not d:
+        return RedirectResponse("/gravatar?err=" + quote("メールが空です"), 303)
+    db.add_gravatar(d)
+    return RedirectResponse("/gravatar?msg=" + quote("取得しました"), 303)
+
+
+@app.post("/gravatar/{gid}/delete")
+def gravatar_del(gid: int, u=Depends(auth)):
+    db.del_gravatar(gid)
+    return RedirectResponse("/gravatar", 303)
+
+
+# ---------- キャンペーン / 一斉操作 ----------
+
+@app.get("/campaigns", response_class=HTMLResponse)
+def campaigns_page(request: Request, u=Depends(auth)):
+    return render("campaigns.html", request, camps=db.campaigns(200),
+                  base=_base(request))
+
+
+@app.post("/campaigns/add")
+def campaigns_add(name: str = Form(...), handles: str = Form(""), message: str = Form(""),
+                  mode: str = Form("page"), dest: str = Form(""), note: str = Form(""),
+                  u=Depends(auth)):
+    hs = [h.strip() for h in handles.replace(",", "\n").splitlines() if h.strip()]
+    cid = campaign.create(db, u, name, hs, message, mode, dest, note)
+    persist.push(force=True)
+    return RedirectResponse(f"/campaign/{cid}", 303)
+
+
+@app.get("/campaign/{cid}", response_class=HTMLResponse)
+def campaign_detail(cid: int, request: Request, u=Depends(auth)):
+    c = db.campaign(cid)
+    if not c:
+        raise HTTPException(404)
+    rows = campaign.match(db, cid)
+    hit = sum(1 for r in rows if r["hits"])
+    return render("campaign_detail.html", request, c=c, rows=rows, hit=hit,
+                  base=_base(request))
+
+
+@app.post("/campaign/{cid}/send")
+def campaign_send(cid: int, request: Request, delay: float = Form(8.0),
+                  limit: int = Form(0), dry: str = Form(""), u=Depends(auth)):
+    base = _base(request)
+
+    def job():
+        try:
+            campaign.send(db, cid, base, delay=delay, limit=limit, dry=bool(dry))
+        except Exception as e:
+            db.set_campaign_status(cid, "error")
+            db.log("campaign", "send_error", {"id": cid, "error": repr(e)})
+    watcher.run_bg(job)
+    return RedirectResponse(f"/campaign/{cid}", 303)
+
+
+@app.post("/campaign/{cid}/delete")
+def campaign_del(cid: int, u=Depends(auth)):
+    for r in db.q("SELECT code FROM campaign_targets WHERE campaign_id=?", (cid,)):
+        users.unregister_link(r["code"])
+        db.del_link(r["code"])
+    db.del_campaign(cid)
+    return RedirectResponse("/campaigns", 303)
+
+
+@app.get("/tools", response_class=HTMLResponse)
+def tools_page(request: Request, u=Depends(auth)):
+    return render("tools.html", request)
+
+
+@app.post("/tools/follow")
+def tools_follow(handles: str = Form(...), delay: float = Form(6.0),
+                 unfollow: str = Form(""), u=Depends(auth)):
+    hs = [h.strip() for h in handles.replace(",", "\n").splitlines() if h.strip()]
+    if hs:
+        watcher.run_bg(lambda: campaign.bulk_follow(hs, delay=delay, unfollow=bool(unfollow)))
+    return RedirectResponse("/tools", 303)
+
+
+@app.post("/tools/like")
+def tools_like(username: str = Form(...), amount: int = Form(12),
+               delay: float = Form(5.0), u=Depends(auth)):
+    watcher.run_bg(lambda: campaign.bulk_like(username, amount=amount, delay=delay))
+    return RedirectResponse("/tools", 303)
+
+
+@app.post("/tools/comment")
+def tools_comment(target: str = Form(...), text: str = Form(...),
+                  delay: float = Form(6.0), u=Depends(auth)):
+    watcher.run_bg(lambda: campaign.bulk_comment(target, text, delay=delay))
+    return RedirectResponse("/tools", 303)
+
+
+@app.post("/tools/archive")
+def tools_archive(handles: str = Form(...), u=Depends(auth)):
+    hs = [h.strip() for h in handles.replace(",", "\n").splitlines() if h.strip()]
+    if hs:
+        watcher.run_bg(lambda: campaign.bulk_archive(db, hs))
+    return RedirectResponse("/tools", 303)
 
 
 # ---------- リンク追跡（公開ルート） ----------
@@ -1223,7 +1412,7 @@ def _new_code(n=8):
 @app.get("/links", response_class=HTMLResponse)
 def links_page(request: Request, u=Depends(auth)):
     return render("links.html", request, links=db.links(500),
-                  base=str(request.base_url).rstrip("/"))
+                  base=_base(request))
 
 
 @app.post("/links/add")
@@ -1254,12 +1443,11 @@ def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
     fp_counts = Counter(h["fingerprint"] for h in hits if h.get("fingerprint"))
     return render("link_detail.html", request, link=link, hits=hits, stats=stats,
                   points_json=_json.dumps(points, ensure_ascii=False),
-                  base=str(request.base_url).rstrip("/"), bots=bots,
+                  base=_base(request), bots=bots,
                   net={h["id"]: linktrack.network_label(h) for h in hits},
                   answers_by_hit={h["id"]: [dict(a) for a in db.answers_for(h["id"])]
                                   for h in hits},
-                  qs=db.questions(code),
-                  fp_counts=dict(fp_counts),
+                  qs=db.questions(code), fp_counts=dict(fp_counts),
                   vlabels={v["vid"]: (v["label"] or "") for v in db.visitors(500)})
 
 
@@ -1293,6 +1481,22 @@ def link_hit_bot(code: str, hid: int, u=Depends(auth)):
     return RedirectResponse(f"/link/{code}?bots=1", 303)
 
 
+@app.get("/link/{code}/qr.png")
+def link_qr(code: str, request: Request):
+    if not _bind_owner(code):
+        raise HTTPException(404)
+    try:
+        import qrcode
+    except Exception:
+        return PlainTextResponse("qrcode が未インストールです", status_code=501)
+    url = f"{_base(request)}/l/{code}"
+    img = qrcode.make(url, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
 # ---------- クイズ編集 / 訪問者 / 一緒解析 ----------
 
 @app.get("/link/{code}/questions", response_class=HTMLResponse)
@@ -1301,7 +1505,7 @@ def link_questions(code: str, request: Request, u=Depends(auth)):
     if not link:
         raise HTTPException(404)
     return render("link_questions.html", request, link=link, qs=db.questions(code),
-                  base=str(request.base_url).rstrip("/"))
+                  base=_base(request))
 
 
 @app.post("/link/{code}/questions/add")
@@ -1360,7 +1564,7 @@ def together_page(request: Request, code: str = "", window: int = 6,
                   window=window, minscore=minscore, links=db.links(500))
 
 
-# ---------- API / エクスポート ----------
+# ---------- API ----------
 
 @app.get("/api/summary")
 def api_summary(u=Depends(auth)):
@@ -1371,6 +1575,8 @@ def api_summary(u=Depends(auth)):
         "runs": db.q1("SELECT COUNT(*) c FROM identity_runs")["c"],
         "links": db.q1("SELECT COUNT(*) c FROM links")["c"],
         "visitors": db.q1("SELECT COUNT(*) c FROM visitors")["c"],
+        "scans": db.q1("SELECT COUNT(*) c FROM sns_scans")["c"],
+        "campaigns": db.q1("SELECT COUNT(*) c FROM campaigns")["c"],
         "events": db.q1("SELECT COUNT(*) c FROM events")["c"],
     }
 
@@ -1383,6 +1589,12 @@ def api_events(limit: int = 500, u=Depends(auth)):
 @app.get("/api/ig_state")
 def api_ig_state(u=Depends(auth)):
     return dict(_IG_STATE)
+
+
+@app.get("/api/sns")
+def api_sns(username: str, cats: str = "", u=Depends(auth)):
+    cs = [c for c in cats.split(",") if c] or None
+    return snscheck.scan(username, cats=cs)
 
 
 @app.get("/api/together")
