@@ -1287,7 +1287,7 @@ def _bind_owner(code):
     owner = users.owner_of_link(code)
     if owner:
         tenancy.set_current(owner)
-        persist.touch(owner)
+        persist.touch(owner, interval=persist.cfg()["every_hit"])
     return owner
 
 
