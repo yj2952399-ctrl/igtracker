@@ -5,10 +5,9 @@
 {% if err %}<p class="err">{{ err }}</p>{% endif %}
 
 <div class="card">
-  <h2>Instagram 接続</h2>
-  <p class="dim">ここで設定した内容が <code>{{ settings_file }}</code> に保存されます。
-  環境変数は「空欄のときだけ」補完されます。</p>
-  {% if env_user %}<p class="dim">環境変数のフォールバック: <code>{{ env_user }}</code></p>{% endif %}
+  <h2>Instagram 接続（このユーザー専用）</h2>
+  <p class="dim">このユーザーだけの設定として <code>{{ tenant_dir }}</code> に保存されます。
+  IG ユーザー名が空のときだけ環境変数（{{ env_user or "なし" }}）が使われます。</p>
 
   <form method="post" action="/settings">
     <label>IG ユーザー名 <input name="ig_user" value="{{ ig.username or '' }}"></label>
@@ -65,6 +64,6 @@
 <button>保存</button>
 </form>
 
-<p class="dim">※ 監視間隔（monitor）の変更はプロセス再起動後（Renderで Manual Deploy）に反映されます。<br>
+<p class="dim">※ 監視間隔（monitor）の変更は次回tick以降に反映されます。<br>
 ※ <code>web.port</code> は Render の PORT が優先されます。</p>
 {% endblock %}
