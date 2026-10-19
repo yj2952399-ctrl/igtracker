@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<h1>特定履歴</h1>
+<table><tr><th>ID</th><th>対象</th><th>確認した相手</th><th>状態</th><th>メモ</th><th>開始</th></tr>
+{% for r in runs %}
+<tr>
+  <td><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
+  <td>@{{ r.target_username }} <small>{{ r.target_uid }}</small></td>
+  <td><small>{{ (r.candidates_raw or "")[:80] }}</small></td>
+  <td>{{ r.status }} {{ r.progress }}/{{ r.total }}</td>
+  <td>{{ r.note or "" }}</td>
+  <td>{{ r.started_at[:19] if r.started_at else "" }}</td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
