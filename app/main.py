@@ -1,11 +1,16 @@
 """FastAPI アプリ本体。Cookieセッション認証 + マルチテナント完全分離版。"""
 import os, time, secrets, random, string, base64, json as _json, traceback, shutil, threading
+from collections import Counter
 from urllib.parse import quote
 
 from fastapi import FastAPI, APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# persist を最初に読み、DB を開く前に復元する
+from . import persist
+persist.pull()
 
 from . import config, tenancy, users
 from .config import get as get_cfg
@@ -15,6 +20,7 @@ from . import identity, watcher, forensics, linktrack, together
 config.load()
 users.init()
 db = tenancy.db
+persist.start()
 
 app = FastAPI(title="Uraaka Tracker", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -352,6 +358,14 @@ def _startup():
         threading.Thread(target=_ig_boot_loop, daemon=True).start()
     if os.getenv("RUN_SCHEDULER", "1") == "1":
         watcher.start()
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    try:
+        persist.push(force=True)
+    except Exception:
+        pass
 
 
 # ---------- 自分のアカウント ----------
@@ -886,7 +900,7 @@ def settings_page(request: Request, msg: str = "", err: str = "", u=Depends(auth
                   env_user=os.getenv("IG_USER") or "",
                   targets="\n".join(cfg.get("targets", [])),
                   candidates="\n".join(cfg.get("candidates", [])),
-                  msg=msg, err=err, ig_state=_IG_STATE)
+                  msg=msg, err=err, ig_state=_IG_STATE, backup=persist.state())
 
 
 @app.post("/settings")
@@ -920,6 +934,7 @@ async def settings_save(request: Request, u=Depends(auth)):
         config.write_session_file(igd["session_b64"], get_cfg()["instagram"]["session_file"])
     ig.reset_client()
     _IG_STATE["ok"] = False
+    persist.push(force=True)
     return RedirectResponse("/settings?msg=" + quote("設定を保存しました"), 303)
 
 
@@ -954,6 +969,7 @@ def ig_login(user: str = Form(""), password: str = Form(""), u=Depends(auth)):
         config.save_sections({"instagram": {"username": un, "password": pw, "session_b64": b64}})
         ig.reset_client()
         _IG_STATE["ok"] = True
+        persist.push(force=True)
         return RedirectResponse("/settings?msg=" + quote("ログイン成功・セッションを保存しました"), 303)
     except Exception as e:
         return RedirectResponse("/settings?err=" + quote(repr(e)), 303)
@@ -971,6 +987,24 @@ def ig_logout(u=Depends(auth)):
     ig.reset_client()
     _IG_STATE["ok"] = False
     return RedirectResponse("/settings?msg=" + quote("ログアウトしました"), 303)
+
+
+# ---------- バックアップ操作 ----------
+
+@app.get("/api/backup")
+def api_backup(u=Depends(auth)):
+    return persist.state()
+
+
+@app.post("/backup/push")
+def backup_push(u=Depends(auth)):
+    return RedirectResponse("/settings?msg=" + quote("退避: " + str(persist.push(force=True))), 303)
+
+
+@app.post("/backup/pull")
+def backup_pull(u=Depends(auth)):
+    return RedirectResponse("/settings?msg=" + quote(
+        "復元: " + str(persist.pull(force=True)) + "（DBを反映するには再起動推奨）"), 303)
 
 
 # ---------- リンク追跡（公開ルート） ----------
@@ -1199,6 +1233,7 @@ def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
     users.register_link(code, u)
     db.add_link(code, name or code, dest.strip(), note,
                 mode if mode in ("page", "geo", "redirect", "quiz", "identify") else "page")
+    persist.push(force=True)
     return RedirectResponse(f"/link/{code}", 303)
 
 
@@ -1216,6 +1251,7 @@ def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
     points += [{"lat": h["gps_lat"], "lon": h["gps_lon"], "city": h["city"],
                 "ts": h["ts"], "ip": h["ip"], "gps": True}
                for h in hits if h.get("gps_lat") is not None]
+    fp_counts = Counter(h["fingerprint"] for h in hits if h.get("fingerprint"))
     return render("link_detail.html", request, link=link, hits=hits, stats=stats,
                   points_json=_json.dumps(points, ensure_ascii=False),
                   base=str(request.base_url).rstrip("/"), bots=bots,
@@ -1223,6 +1259,7 @@ def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
                   answers_by_hit={h["id"]: [dict(a) for a in db.answers_for(h["id"])]
                                   for h in hits},
                   qs=db.questions(code),
+                  fp_counts=dict(fp_counts),
                   vlabels={v["vid"]: (v["label"] or "") for v in db.visitors(500)})
 
 
@@ -1238,6 +1275,7 @@ def link_toggle(code: str, u=Depends(auth)):
 def link_delete(code: str, u=Depends(auth)):
     db.del_link(code)
     users.unregister_link(code)
+    persist.push(force=True)
     return RedirectResponse("/links", 303)
 
 
@@ -1300,8 +1338,10 @@ def visitor_detail(vid: str, request: Request, u=Depends(auth)):
     v = db.visitor(vid)
     if not v:
         raise HTTPException(404)
+    same_dev, dev_stat = together.same_device_vids(db, vid)
     return render("visitor.html", request, v=v, hits=db.hits_by_vid(vid),
-                  near=together.for_visitor(db, vid))
+                  near=together.for_visitor(db, vid),
+                  same_dev=same_dev, dev_stat=dev_stat)
 
 
 @app.post("/visitor/{vid}/label")
