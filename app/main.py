@@ -1,5 +1,5 @@
 """FastAPI アプリ本体。Cookieセッション認証 + マルチテナント完全分離版。"""
-import os, secrets, random, string, base64, json as _json, traceback, shutil
+import os, time, secrets, random, string, base64, json as _json, traceback, shutil, threading
 from urllib.parse import quote
 
 from fastapi import FastAPI, APIRouter, Request, Depends, Form, HTTPException
@@ -27,8 +27,114 @@ SECURE_COOKIE = os.getenv("COOKIE_SECURE", "1") != "0"
 ADMIN_PATH = "/" + (os.getenv("ADMIN_PATH", "admin").strip("/") or "admin")
 EDITABLE = ["identity", "monitor", "archive"]
 SIGNUP_OPEN = os.getenv("SIGNUP_OPEN", "1") != "0"
+RUN_IG_BOOT = os.getenv("RUN_IG_BOOT", "1") != "0"
+IG_BOOT_MAX_TRIES = int(os.getenv("IG_BOOT_MAX_TRIES", "8"))
 
 admin = APIRouter(prefix=ADMIN_PATH)
+
+
+# ---------- Instagram 接続の状態管理 ----------
+
+_IG_LOCK = threading.RLock()
+_IG_STATE = {"ok": False, "running": False, "last_try": 0.0, "fails": 0,
+             "last_err": "", "last_ok_at": 0.0, "note": ""}
+
+
+def _ig_note(msg):
+    _IG_STATE["note"] = msg
+    print("[igboot]", msg)
+
+
+def _ig_client(force=False, tries=1, quiet=False):
+    """Instagram クライアントを取得。429 などに備えて少し粘る。"""
+    with _IG_LOCK:
+        if not force and _IG_STATE["ok"]:
+            try:
+                return ig.client()
+            except Exception as e:
+                _IG_STATE["ok"] = False
+                _IG_STATE["last_err"] = repr(e)
+                _IG_STATE["fails"] += 1
+                try:
+                    ig.reset_client()
+                except Exception:
+                    pass
+
+        last = None
+        for i in range(max(1, tries)):
+            try:
+                cl = ig.client()
+                _IG_STATE["ok"] = True
+                _IG_STATE["last_ok_at"] = time.time()
+                _IG_STATE["fails"] = 0
+                if not quiet:
+                    _ig_note("ログイン成功")
+                return cl
+            except Exception as e:
+                last = e
+                _IG_STATE["last_err"] = repr(e)
+                _IG_STATE["fails"] += 1
+                _IG_STATE["last_try"] = time.time()
+                try:
+                    ig.reset_client()
+                except Exception:
+                    pass
+                if i + 1 < tries:
+                    time.sleep(min(5 * (2 ** i), 60))
+        raise last if last else RuntimeError("instagram client unavailable")
+
+
+def _ig_boot(force=False):
+    """全テナント分のターゲットを解決して登録する。ログイン失敗時は中断。"""
+    with _IG_LOCK:
+        if _IG_STATE["running"]:
+            return
+        _IG_STATE["running"] = True
+    try:
+        for t in users.list_usernames():
+            tenancy.set_current(t)
+            cfg = get_cfg()
+            if not cfg["instagram"].get("username"):
+                continue
+            try:
+                cl = _ig_client(force=force, tries=2)
+            except Exception as e:
+                _IG_STATE["ok"] = False
+                _ig_note(f"{t} ログイン失敗: {e!r}")
+                return
+            for h in cfg.get("targets", []):
+                try:
+                    uid = str(cl.user_id_from_username(h))
+                except Exception as e:
+                    _ig_note(f"{t} target解決失敗: {h} {e!r}")
+                    continue
+                try:
+                    db.add_target(uid, h)
+                    db.add_known(uid, h, source="target")
+                except Exception:
+                    pass
+            _ig_note(f"{t} ターゲット登録 完了")
+    finally:
+        _IG_STATE["running"] = False
+
+
+def _ig_boot_loop():
+    """ログインが通るまで指数バックオフで粘る。"""
+    delay = 20
+    for attempt in range(1, IG_BOOT_MAX_TRIES + 1):
+        if _IG_STATE["ok"]:
+            return
+        try:
+            _ig_boot()
+        except Exception as e:
+            _ig_note(f"想定外: {e!r}")
+        if _IG_STATE["ok"]:
+            _ig_note("接続確立")
+            return
+        _ig_note(f"再試行まで {delay} 秒待機（{attempt}/{IG_BOOT_MAX_TRIES}）")
+        time.sleep(delay)
+        delay = min(delay * 2, 900)
+    _ig_note("起動時の接続は諦めました。/ig/boot か /ig/test で再試行できます")
 
 
 # ---------- 共通 ----------
@@ -114,6 +220,23 @@ async def _debug_handler(request: Request, exc: Exception):
     except Exception:
         pass
     return PlainTextResponse(f"PATH: {request.url.path}\n\n{tb}", status_code=500)
+
+
+# ---------- ヘルスチェック（HEAD も受ける） ----------
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.head("/healthz")
+def healthz_head():
+    return PlainTextResponse("")
+
+
+@app.head("/")
+def head_root():
+    return PlainTextResponse("")
 
 
 # ---------- 認証依存 ----------
@@ -225,22 +348,8 @@ def logout_get(request: Request):
 def _startup():
     users.bootstrap_admin()
     users.purge_expired()
-    for t in users.list_usernames():
-        tenancy.set_current(t)
-        cfg = get_cfg()
-        if not cfg["instagram"].get("username"):
-            continue
-        for h in cfg.get("targets", []):
-            try:
-                uid = ig.client().user_id_from_username(h)
-            except Exception as e:
-                print(f"[startup] {t} target解決失敗:", h, e)
-                uid = h
-            try:
-                db.add_target(uid, h)
-                db.add_known(str(uid), h, source="target")
-            except Exception:
-                pass
+    if RUN_IG_BOOT:
+        threading.Thread(target=_ig_boot_loop, daemon=True).start()
     if os.getenv("RUN_SCHEDULER", "1") == "1":
         watcher.start()
 
@@ -531,7 +640,7 @@ def identity_run(target: str = Form(...), candidates: str = Form(""),
     toks = [t.strip().lstrip("@") for t in (candidates or "").replace(",", "\n").split()
             if t.strip()]
     try:
-        cl = ig.client()
+        cl = _ig_client(tries=2)
     except Exception as e:
         rid = db.start_run("0", target.strip().lstrip("@"), note=note)
         db.update_run(rid, status="error",
@@ -628,7 +737,7 @@ def accounts_add(token: str = Form(...), note: str = Form(""),
                  deleted: str = Form(""), u=Depends(auth)):
     t = token.strip().lstrip("@")
     try:
-        uid = identity.resolve_uid(ig.client(), db, t)
+        uid = identity.resolve_uid(_ig_client(tries=1), db, t)
     except Exception:
         uid = t
     name = identity.name_of(db, uid, "" if t.isdigit() else t)
@@ -710,7 +819,7 @@ def targets_page(request: Request, u=Depends(auth)):
 def targets_add(handle: str = Form(...), u=Depends(auth)):
     h = handle.strip().lstrip("@")
     try:
-        uid = identity.resolve_uid(ig.client(), db, h)
+        uid = identity.resolve_uid(_ig_client(tries=1), db, h)
     except Exception:
         uid = h
     db.add_target(uid, h)
@@ -777,7 +886,7 @@ def settings_page(request: Request, msg: str = "", err: str = "", u=Depends(auth
                   env_user=os.getenv("IG_USER") or "",
                   targets="\n".join(cfg.get("targets", [])),
                   candidates="\n".join(cfg.get("candidates", [])),
-                  msg=msg, err=err)
+                  msg=msg, err=err, ig_state=_IG_STATE)
 
 
 @app.post("/settings")
@@ -810,16 +919,24 @@ async def settings_save(request: Request, u=Depends(auth)):
     if igd.get("session_b64"):
         config.write_session_file(igd["session_b64"], get_cfg()["instagram"]["session_file"])
     ig.reset_client()
+    _IG_STATE["ok"] = False
     return RedirectResponse("/settings?msg=" + quote("設定を保存しました"), 303)
 
 
 @app.post("/ig/test")
 def ig_test(u=Depends(auth)):
     try:
-        me = ig.client().account_info()
+        me = _ig_client(force=True, tries=2).account_info()
         return RedirectResponse("/settings?msg=" + quote(f"接続OK: @{me.username}"), 303)
     except Exception as e:
         return RedirectResponse("/settings?err=" + quote(repr(e)), 303)
+
+
+@app.post("/ig/boot")
+def ig_boot_route(u=Depends(auth)):
+    _IG_STATE["ok"] = False
+    threading.Thread(target=_ig_boot, kwargs={"force": True}, daemon=True).start()
+    return RedirectResponse("/settings?msg=" + quote("Instagram再接続を開始しました"), 303)
 
 
 @app.post("/ig/login")
@@ -830,11 +947,13 @@ def ig_login(user: str = Form(""), password: str = Form(""), u=Depends(auth)):
     sf = cfg["instagram"]["session_file"]
     try:
         ig.reset_client()
+        _IG_STATE["ok"] = False
         ig.login_now(un, pw, sf)
         with open(sf, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
         config.save_sections({"instagram": {"username": un, "password": pw, "session_b64": b64}})
         ig.reset_client()
+        _IG_STATE["ok"] = True
         return RedirectResponse("/settings?msg=" + quote("ログイン成功・セッションを保存しました"), 303)
     except Exception as e:
         return RedirectResponse("/settings?err=" + quote(repr(e)), 303)
@@ -850,6 +969,7 @@ def ig_logout(u=Depends(auth)):
         pass
     config.save_sections({"instagram": {"session_b64": ""}})
     ig.reset_client()
+    _IG_STATE["ok"] = False
     return RedirectResponse("/settings?msg=" + quote("ログアウトしました"), 303)
 
 
@@ -1220,6 +1340,11 @@ def api_events(limit: int = 500, u=Depends(auth)):
     return [dict(r) for r in db.q("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,))]
 
 
+@app.get("/api/ig_state")
+def api_ig_state(u=Depends(auth)):
+    return dict(_IG_STATE)
+
+
 @app.get("/api/together")
 def api_together(code: str = "", window: int = 6, minscore: float = 0.35, u=Depends(auth)):
     return together.analyze(db, code=code or None,
@@ -1256,8 +1381,3 @@ async def import_json(request: Request, u=Depends(auth)):
     for p in doc.get("profiles", []):
         db.upsert_profile(p)
     return RedirectResponse("/accounts", 303)
-
-
-@app.get("/healthz")
-def healthz():
-    return {"ok": True}
