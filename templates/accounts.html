@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% block content %}
+<h1>アカウント台帳</h1>
+<p>削除されたアカウントは、ここに <b>数値ID</b> を登録しておけばID照合できます。</p>
+
+<form method="post" action="/accounts/add" class="card">
+  <label>@ユーザー名 または 数値ID
+    <input name="token" required placeholder="@handle / 123456789"></label>
+  <label>メモ <input name="note"></label>
+  <label><input type="checkbox" name="deleted" value="1"> 削除済みとして登録</label>
+  <button>登録</button>
+</form>
+
+<h2>エクスポート / インポート</h2>
+<p><a href="/export.json">export.json をダウンロード</a>
+（Renderの再デプロイ前に控えておくと安全）</p>
+<form method="post" action="/import">
+  <textarea name="payload" rows="4" placeholder="export.json の中身を貼り付け"></textarea>
+  <button>取り込み</button>
+</form>
+
+<h2>登録済み {{ rows|length }} 件</h2>
+<table><tr><th>UID</th><th>ユーザー名</th><th>状態</th><th>メモ</th><th>最終確認</th><th></th></tr>
+{% for r in rows %}
+<tr>
+  <td><a href="/target/{{ r.user_id }}">{{ r.user_id }}</a></td>
+  <td>@{{ r.username or "?" }}</td>
+  <td>{% if r.deleted %}<span class="badge">削除済み</span>{% else %}生存{% endif %}</td>
+  <td>{{ r.note or "" }}</td>
+  <td>{{ (r.last_seen or "")[:19] }}</td>
+  <td>
+    <form method="post" action="/accounts/{{ r.user_id }}/archive"><button>アーカイブ</button></form>
+    <form method="post" action="/accounts/{{ r.user_id }}/deleted"><button>削除済み切替</button></form>
+    <form method="post" action="/accounts/{{ r.user_id }}/delete"><button>削除</button></form>
+  </td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
