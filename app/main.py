@@ -348,7 +348,7 @@ def signup_post(request: Request, username: str = Form(""), password: str = Form
         return RedirectResponse("/signup?err=" + quote(str(e)), 303)
     u = users.norm(username)
     users.audit(u, "signup", {"ip": ip})
-    persist.touch(u, force=True, sync_first=False)
+    persist.touch(u, force=True, sync_first=True)
     tok = users.new_session(u, "user", ip, _ua(request))
     r = RedirectResponse("/", 303)
     _set_cookie(r, COOKIE_USER, tok)
