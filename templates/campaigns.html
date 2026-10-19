@@ -1,0 +1,34 @@
+{% extends "base.html" %}{% block content %}
+<h1>🎯 キャンペーン</h1>
+<p class="dim">対象ごとに<b>固有のリンク</b>を自動生成して一斉DMします。
+どのリンクが踏まれたか＝誰が踏んだかが確定します。</p>
+
+<form method="post" action="/campaigns/add" class="card">
+  <label>名前 <input name="name" required placeholder="例: 1年A組 男子"></label>
+  <label>対象アカウント（1行1つ・カンマ区切りも可）<br>
+    <textarea name="handles" rows="6" placeholder="taro_ura&#10;jiro_sub&#10;@ken_2nd"></textarea></label>
+  <label>DM本文（{link} と {name} が使えます）<br>
+    <textarea name="message" rows="3">@さん、これ見て {link}</textarea></label>
+  <label>リンクのモード
+    <select name="mode">
+      <option value="page">ページを挟む</option>
+      <option value="identify">識別カードを出す</option>
+      <option value="quiz">クイズ</option>
+      <option value="geo">GPS要求</option>
+      <option value="redirect">即リダイレクト</option>
+    </select></label>
+  <label>飛び先URL <input name="dest" placeholder="https://www.instagram.com/xxxx/"></label>
+  <label>メモ <input name="note"></label>
+  <button>キャンペーン作成</button>
+</form>
+
+<h2>作成済み</h2>
+<table><tr><th>ID</th><th>名前</th><th>対象</th><th>送信</th><th>失敗</th><th>状態</th></tr>
+{% for c in camps %}
+<tr>
+  <td><a href="/campaign/{{ c.id }}">#{{ c.id }}</a></td>
+  <td>{{ c.name }}</td><td>{{ c.total }}</td><td>{{ c.sent }}</td>
+  <td>{{ c.failed }}</td><td>{{ c.status }}</td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
