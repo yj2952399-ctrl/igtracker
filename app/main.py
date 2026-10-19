@@ -18,6 +18,8 @@ db = DB(cfg["storage"]["db_path"])
 app = FastAPI(title="Uraaka Tracker")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+import json as _json
+templates.env.filters["fromjson"] = _json.loads
 security = HTTPBasic()
 
 
