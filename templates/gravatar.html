@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block content %}
+<h1>✉️ メールから逆引き</h1>
+<p class="dim">メールアドレスからGravatarを引き、紐付いたSNSやプロフィールを取得します。</p>
+
+<form method="post" action="/gravatar" class="card">
+  <label>メールアドレス <input name="email" type="email" required></label>
+  <button>逆引きする</button>
+</form>
+
+{% if msg %}<p>{{ msg }}</p>{% endif %}{% if err %}<p class="warn">{{ err }}</p>{% endif %}
+
+<table><tr><th>メール</th><th>表示名</th><th>アバター</th><th>紐付きSNS</th><th></th></tr>
+{% for g in rows %}
+<tr>
+  <td class="mono">{{ g.email }}</td>
+  <td>{{ g.display_name }}</td>
+  <td>{% if g.has_avatar %}<span class="badge">あり</span>{% endif %}</td>
+  <td><small>
+    {% for a in g.accounts|fromjson %}{{ a.shortname }}:{{ a.username }}<br>{% endfor %}
+    {% for u in g.urls|fromjson %}{{ u.title }}: {{ u.value }}<br>{% endfor %}
+  </small></td>
+  <td><form method="post" action="/gravatar/{{ g.id }}/delete"><button>削除</button></form></td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
