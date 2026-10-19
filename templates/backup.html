@@ -1,0 +1,51 @@
+{% extends "base.html" %}{% block content %}
+<h1>💾 バックアップ</h1>
+<p class="dim">Render の無料枠はファイルシステムが消えるため、あなたのデータを
+GitHub の private リポジトリへ自動退避します。ログインすると自動で実行されます。</p>
+
+{% if msg %}<p class="card">{{ msg }}</p>{% endif %}
+{% if err %}<p class="warn">{{ err }}</p>{% endif %}
+
+<div class="card">
+<table>
+<tr><th>状態</th><td>{% if st.enabled %}<b>有効</b>{% else %}<span class="badge">未設定</span>{% endif %}</td></tr>
+<tr><th>保存先</th><td class="mono">{{ repo or "(BACKUP_REPO 未設定)" }}</td></tr>
+<tr><th>自動バックアップ間隔</th><td>{{ every }} 秒</td></tr>
+<tr><th>最終 退避 / 復元</th><td>{{ (st.last_push or 0)|int }} / {{ (st.last_pull or 0)|int }}</td></tr>
+</table>
+</div>
+
+<h2>あなたのデータ</h2>
+<div class="card">
+<table>
+<tr><th>最終 退避</th><td>{{ my.last_push or "-" }}</td></tr>
+<tr><th>最終 復元</th><td>{{ my.last_pull or "-" }}</td></tr>
+<tr><th>復元したファイル数</th><td>{{ my.restored or 0 }}</td></tr>
+{% if my.err %}<tr><th>エラー</th><td class="mono"><small>{{ my.err }}</small></td></tr>{% endif %}
+</table>
+<form method="post" action="/backup/me/push" style="display:inline">
+  <button>今すぐバックアップ</button></form>
+<form method="post" action="/backup/me/pull" style="display:inline">
+  <button>今すぐ復元</button></form>
+</div>
+
+<h2>全ユーザー</h2>
+<table><tr><th>ユーザー</th><th>最終退避</th><th>復元</th></tr>
+{% for k, v in st.users.items() %}
+<tr><td>{{ k }}</td><td>{{ v.last_push or "-" }}</td><td>{{ v.restored or 0 }}</td></tr>
+{% endfor %}</table>
+
+{% if not st.enabled %}
+<h2>設定方法</h2>
+<div class="card">
+<ol>
+  <li>private のバックアップ用リポジトリを作る</li>
+  <li>Fine-grained PAT を発行（Contents: Read and write のみ）</li>
+  <li>Render の Environment に <span class="mono">BACKUP_REPO</span> と
+      <span class="mono">BACKUP_TOKEN</span> を設定して再デプロイ</li>
+</ol>
+<p class="warn">バックアップには Instagram のセッションが含まれるので
+リポジトリは private にしてください。</p>
+</div>
+{% endif %}
+{% endblock %}
