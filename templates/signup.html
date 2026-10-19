@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block content %}
+<div class="authwrap">
+  <h1>新規登録</h1>
+  {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="err">{{ err }}</p>{% endif %}
+  <form method="post" action="/signup" class="authcard">
+    <label>ユーザー名
+      <input name="username" autocomplete="username" required autofocus
+             pattern="[a-z0-9][a-z0-9_.\-]{0,38}[a-z0-9]|[a-z0-9]">
+      <span class="dim tiny">英小文字/数字/._- の2〜40文字。ログイン名になります</span></label>
+    <label>パスワード（8文字以上）
+      <input type="password" name="password" autocomplete="new-password" required></label>
+    <label>もう一度
+      <input type="password" name="password2" autocomplete="new-password" required></label>
+    <button>登録する</button>
+  </form>
+  <p class="dim">既にアカウントがある場合は <a href="/login">ログイン</a></p>
+  <p class="dim tiny">※ このツールはあなた専用のデータ領域を持ちます。
+    他の利用者からはあなたの IG 垢・ターゲット・リンク履歴は見えません。</p>
+</div>
+{% endblock %}
