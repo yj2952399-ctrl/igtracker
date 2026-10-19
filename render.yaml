@@ -8,17 +8,19 @@ services:
     startCommand: python run.py
     healthCheckPath: /healthz
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.12.5"
+      # ===== 秘密情報：値は書かず Render ダッシュボードで入力させる =====
       - key: IG_USER
         sync: false
       - key: IG_PASS
         sync: false
-      - key: WEB_USER
-        value: admin
-      - key: WEB_PASS
-        sync: false
       - key: IG_SESSION_B64
         sync: false
+      - key: WEB_PASS
+        sync: false
+      # ===== 秘密ではないものはここに書いてOK =====
+      - key: WEB_USER
+        value: admin
+      - key: PYTHON_VERSION
+        value: "3.12.5"
       - key: RUN_SCHEDULER
         value: "1"
