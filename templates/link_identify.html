@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }}</title>
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;
+ display:flex;min-height:100vh;align-items:center;justify-content:center}
+.wrap{padding:24px;max-width:440px;width:100%}
+h1{font-size:18px;margin:0 0 6px} p{color:#9aa3b2;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0}
+th{text-align:left;color:#7b8494;font-weight:400;padding:6px 8px 6px 0;white-space:nowrap;vertical-align:top}
+td{padding:6px 0;word-break:break-all}
+.mono{font-family:ui-monospace,Menlo,monospace}
+button{margin-top:14px;padding:12px 32px;border:0;border-radius:999px;background:#4c8dff;color:#fff;font-size:15px}
+</style></head><body>
+<div class="wrap">
+  <h1>{{ link.name }}</h1>
+  <p id="st">確認しています…</p>
+  <div id="card" hidden>
+    <table>
+      <tr><th>IP</th><td class="mono">{{ ip }}</td></tr>
+      <tr><th>推定地域</th><td>{{ g.country }} / {{ g.region }} / {{ g.city }}</td></tr>
+      <tr><th>回線</th><td>{{ g.isp }} {{ g.asn }}</td></tr>
+      <tr><th>端末</th><td>{{ p.device }} / {{ p.os }} / {{ p.browser }}</td></tr>
+      <tr><th>端末ID</th><td class="mono" id="vid">—</td></tr>
+      <tr><th>フィンガープリント</th><td class="mono" id="fp">—</td></tr>
+    </table>
+    <button id="go">続ける</button>
+  </div>
+</div>
+<script>
+window.LT_CODE = {{ code|tojson }};
+window.LT_HIT  = {{ hit_id }};
+window.LT_NONCE = {{ nonce|tojson }};
+window.LT_GEO  = {{ 1 if link.mode == "geo" else 0 }};
+window.LT_READY = function (p) {
+  document.getElementById("st").textContent = "確認できました";
+  document.getElementById("card").hidden = false;
+  document.getElementById("vid").textContent = p.vid || "—";
+  document.getElementById("fp").textContent = (p.fp || "").slice(0, 32) || "—";
+};
+</script>
+<script src="/static/collect.js"></script>
+<script>
+const DEST = {{ dest|tojson }};
+document.getElementById("go").onclick = async function () {
+  try { await LT.send(await LT.geo()); } catch (e) {}
+  if (DEST) location.href = DEST;
+};
+</script>
+</body></html>
