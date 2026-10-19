@@ -1,4 +1,5 @@
 """FastAPI アプリ本体。"""
+import os
 import secrets
 from fastapi import FastAPI, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -39,7 +40,8 @@ def _startup():
             db.add_target(uid, h)
         except Exception:
             pass
-    watcher.start(db)
+    if os.getenv("RUN_SCHEDULER", "1") == "1":
+        watcher.start(db)
 
 
 # ---------- 画面 ----------
