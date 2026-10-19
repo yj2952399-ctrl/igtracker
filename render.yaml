@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: igtracker
+    name: uploader
     runtime: python
     plan: free
     region: singapore
