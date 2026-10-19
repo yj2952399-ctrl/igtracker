@@ -227,89 +227,12 @@ class Acct:
         return [p["taken_at"] for p in self.posts if p.get("taken_at")]
 
 
-def gather(cl, uid, g):
-    a = Acct(uid=str(uid))
-    try:
-        p = raw_profile(cl, uid)
-    except Exception:
-        return a
-    a.username = p.get("username") or ""
-    a.full_name = p.get("full_name") or ""
-    a.bio = p.get("bio") or ""
-    a.external_url = p.get("external_url") or ""
-    a.business_email = (p.get("business_email") or "").lower()
-    a.business_phone = (p.get("business_phone") or "").lower()
-    a.public_email = (p.get("public_email") or "").lower()
-    a.contact_phone = (p.get("contact_phone") or "").lower()
-    a.city = (p.get("city") or "").lower()
-    a.address = (p.get("address") or "").lower()
-    a.follower_count = p.get("follower_count") or 0
-    a.following_count = p.get("following_count") or 0
-    a.media_count = p.get("media_count") or 0
-    a.is_private = bool(p.get("is_private"))
-    a.is_business = bool(p.get("is_business"))
-    a.avatar_phash = p.get("profile_pic_phash") or ""
-    a.avatar_hist = p.get("_avatar_hist") or []
-
-    try:
-        a.followers = {str(k): v.username for k, v in
-                       cl.user_followers(uid, amount=g["followers"]).items()}
-    except Exception:
-        pass
-    try:
-        a.following = {str(k): v.username for k, v in
-                       cl.user_following(uid, amount=g["following"]).items()}
-    except Exception:
-        pass
-    try:
-        for m in cl.user_medias(uid, amount=g["posts"]):
-            a.posts.append({
-                "taken_at": m.taken_at.isoformat() if m.taken_at else None,
-                "caption": m.caption_text or "",
-                "hashtags": [w for w in (m.caption_text or "").split() if w.startswith("#")],
-                "mentions": [w[1:].lower() for w in (m.caption_text or "").split()
-                             if w.startswith("@")],
-                "location_id": str(getattr(m.location, "pk", "")) if m.location else None,
-            })
-    except Exception:
-        pass
-    try:
-        for m in cl.user_medias(uid, amount=g["liker_posts"]):
-            try:
-                for u in cl.media_likers(str(m.pk))[:g["likers_per_post"]]:
-                    a.liker_ids.add(str(u.pk))
-            except Exception:
-                continue
-    except Exception:
-        pass
-    try:
-        for r in cl.media_comments(uid, amount=1):
-            pass
-    except Exception:
-        pass
-    try:
-        rows = cl.user_medias(uid, amount=g["commenter_posts"])
-        for m in rows:
-            try:
-                for cm in cl.media_comments(str(m.pk), amount=50):
-                    a.commenter_ids.add(str(cm.user_id))
-            except Exception:
-                continue
-    except Exception:
-        pass
-    try:
-        if hasattr(cl, "user_related_profiles"):
-            for u in cl.user_related_profiles(uid):
-                a.related_ids.add(str(u.pk))
-    except Exception:
-        pass
-    try:
-        for m in cl.user_tagged_medias(uid, amount=100):
-            if getattr(m, "user", None):
-                a.tagged_ids.add(str(m.user.pk))
-    except Exception:
-        pass
-    return a
+liker_ids: set = field(default_factory=set)
+    commenter_ids: set = field(default_factory=set)
+    # --- 追加 ---
+    deleted: bool = False      # user_info が取れない＝削除/凍結の疑い
+    cached: bool = False       # DBキャッシュから復元した
+    partial: bool = False      # 一部のシグナルが欠けている
 
 
 # ---------- 比較 ----------
