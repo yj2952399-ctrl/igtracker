@@ -7,6 +7,9 @@
   端末キー(pubkey)やフィンガープリントが一致すれば同一人物の複数端末。
 
   モバイル回線は CGNAT で他人とIPを共有するため、時刻の近さを必須にする。
+
+  さらに端末単位の解析も行う。同じ端末で複数回来ていれば「同一端末の再訪」、
+  同じ端末なのに訪問者IDが別なら「同一端末・別訪問者」として検出する。
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ from itertools import combinations
 
 # 信号の重み。noisy-or で合成するので「単独でどれだけ確からしいか」を表す。
 W_PUBKEY = 0.97      # 同一端末キー = ほぼ同一人物
-W_FP = 0.80          # 同一フィンガープリント = 同一端末の可能性が高い
+W_FP = 0.88          # 同一フィンガープリント = 同一端末
 W_IP = 0.60          # 同じ固定回線IP = 同じ家/職場
 W_IP_MOBILE = 0.35   # 同じモバイルIP（CGNATなので弱い）
 W_IP_TIME = 0.45     # 同じIPで時刻が近い = 同時に同じ場所
@@ -26,7 +29,8 @@ W_SUBNET = 0.18      # 同じ/24 = 同一ISPの近隣
 W_ASN_CITY = 0.12    # 同じASN・同じ市区町村
 
 TH = [(0.90, "同一人物の可能性が高い"),
-      (0.75, "同居・同一世帯の可能性が高い"),
+      (0.80, "同一端末の可能性が高い"),
+      (0.70, "同居・同一世帯の可能性が高い"),
       (0.55, "同じ回線（同じ家・職場の可能性）"),
       (0.35, "近い関係の可能性")]
 
@@ -84,7 +88,7 @@ def label_of(v):
     return "訪問者 " + v.vid[:8]
 
 
-def load(db, code=None, limit=20000):
+def _hits(db, code=None, limit=20000):
     sql = "SELECT * FROM link_hits WHERE is_bot=0"
     args = []
     if code:
@@ -92,11 +96,12 @@ def load(db, code=None, limit=20000):
         args.append(code)
     sql += " ORDER BY ts DESC LIMIT ?"
     args.append(limit)
-    rows = db.q(sql, tuple(args))
+    return [dict(r) for r in db.q(sql, tuple(args))]
 
+
+def load(db, code=None, limit=20000):
     vs = {}
-    for r in rows:
-        h = dict(r)
+    for h in _hits(db, code, limit):
         ip = h.get("ip") or ""
         vid = h.get("vid") or ("ip:" + (ip or "?"))
         v = vs.get(vid)
@@ -202,6 +207,67 @@ def _layout(members, vs, pairs):
     return {"gw": w, "gh": h, "cx": cx, "cy": cy, "nodes": nodes, "edges": edges}
 
 
+# ---------- 端末単位の解析 ----------
+
+def device_groups(db, code=None, limit=20000):
+    """フィンガープリント/端末キー単位でまとめる。
+
+    同じ端末の再訪、同じ端末で訪問者IDが変わった相手を検出する。
+    """
+    dev = {}
+    for h in _hits(db, code, limit):
+        key = h.get("pubkey") or h.get("fingerprint") or ""
+        if not key:
+            continue
+        d = dev.get(key)
+        if d is None:
+            d = {"key": key, "short": key[:12], "pubkey": h.get("pubkey") or "",
+                 "fp": h.get("fingerprint") or "", "vids": set(), "hits": 0,
+                 "ips": set(), "codes": set(), "first": "", "last": "",
+                 "device": h.get("device"), "os": h.get("os"),
+                 "browser": h.get("browser"), "inapp": h.get("inapp")}
+            dev[key] = d
+        d["hits"] += 1
+        if h.get("vid"):
+            d["vids"].add(h["vid"])
+        if h.get("ip"):
+            d["ips"].add(h["ip"])
+        if h.get("code"):
+            d["codes"].add(h["code"])
+        ts = h.get("ts") or ""
+        if not d["first"] or ts < d["first"]:
+            d["first"] = ts
+        if ts > d["last"]:
+            d["last"] = ts
+
+    out = []
+    for d in dev.values():
+        if d["hits"] < 2 and len(d["vids"]) < 2:
+            continue
+        d["vids"] = sorted(d["vids"])
+        d["ips"] = sorted(d["ips"])
+        d["codes"] = sorted(d["codes"])
+        d["revisit"] = d["hits"] >= 2
+        d["multi_vid"] = len(d["vids"]) >= 2
+        d["verdict"] = ("同一端末・別訪問者" if d["multi_vid"]
+                        else "同一端末の再訪")
+        out.append(d)
+    out.sort(key=lambda d: (not d["multi_vid"], -d["hits"], d["last"]))
+    return out
+
+
+def self_visits(vs):
+    """同じ訪問者が何度も来ている場合の一覧。"""
+    out = []
+    for v in vs.values():
+        if v.hits >= 2:
+            out.append({"vid": v.vid, "label": label_of(v), "hits": v.hits,
+                        "ips": sorted(v.ips), "last": v.last,
+                        "verdict": "同一端末の再訪"})
+    out.sort(key=lambda d: -d["hits"])
+    return out
+
+
 def analyze(db, code=None, window_h=6, min_score=0.35, group_th=GROUP_TH, limit=20000):
     vs = load(db, code, limit)
     vids = sorted(vs)
@@ -242,7 +308,7 @@ def analyze(db, code=None, window_h=6, min_score=0.35, group_th=GROUP_TH, limit=
         buckets[find(v)].append(v)
 
     groups = []
-    for root, members in buckets.items():
+    for _root, members in buckets.items():
         if len(members) < 2:
             continue
         sub = [p for p in pairs if p["a"] in members and p["b"] in members]
@@ -262,18 +328,44 @@ def analyze(db, code=None, window_h=6, min_score=0.35, group_th=GROUP_TH, limit=
         groups.append(g)
     groups.sort(key=lambda g: (-g["score"], -len(g["members"])))
 
+    devs = device_groups(db, code, limit)
+    selfv = self_visits(vs)
+
     summary = {
         "visitors": len(vids),
         "hits": sum(v.hits for v in vs.values()),
         "pairs": len(pairs),
         "groups": len(groups),
-        "same_device": sum(1 for p in pairs if "同一端末キー" in p["signals"]),
+        "same_device": sum(1 for p in pairs if "同一端末キー" in p["signals"]
+                           or "同一フィンガープリント" in p["signals"]),
         "same_ip": sum(1 for p in pairs if any("IP" in s for s in p["signals"])),
+        "devices": len(devs),
+        "multi_vid_devices": sum(1 for d in devs if d["multi_vid"]),
+        "revisits": len(selfv),
     }
-    return {"pairs": pairs, "groups": groups, "summary": summary, "window": window_h}
+    return {"pairs": pairs, "groups": groups, "summary": summary,
+            "window": window_h, "devices": devs, "self": selfv}
 
 
 def for_visitor(db, vid, window_h=6, min_score=0.30):
     res = analyze(db, window_h=window_h, min_score=min_score)
     return {"pairs": [p for p in res["pairs"] if vid in (p["a"], p["b"])],
-            "window": window_h}
+            "window": window_h,
+            "devices": [d for d in res["devices"] if vid in d["vids"]]}
+
+
+def same_device_vids(db, vid, limit=200):
+    """同じ端末（フィンガープリント）を使っている別の訪問者。"""
+    fps = [r["fingerprint"] for r in db.q(
+        "SELECT DISTINCT fingerprint FROM link_hits WHERE vid=? "
+        "AND fingerprint IS NOT NULL AND fingerprint<>''", (vid,))]
+    if not fps:
+        return [], None
+    ph = ",".join("?" * len(fps))
+    args = tuple(fps)
+    stat = db.q1(f"SELECT COUNT(*) c, MIN(ts) f, MAX(ts) l, COUNT(DISTINCT code) k "
+                 f"FROM link_hits WHERE fingerprint IN ({ph}) AND is_bot=0", args)
+    rows = db.q(f"SELECT DISTINCT vid, device, os, browser, inapp FROM link_hits "
+                f"WHERE fingerprint IN ({ph}) AND vid<>? AND vid IS NOT NULL "
+                f"AND is_bot=0", args + (vid,))
+    return [dict(r) for r in rows], stat
