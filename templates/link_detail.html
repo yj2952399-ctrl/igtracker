@@ -11,11 +11,17 @@
   {% if link.mode == "quiz" %}
   <a href="/link/{{ link.code }}/questions"><button type="button">クイズを編集</button></a>
   {% endif %}
+  <a href="/link/{{ link.code }}/qr.png" target="_blank" rel="noopener"><button type="button">QR</button></a>
   <form method="post" action="/link/{{ link.code }}/hits/clear" style="display:inline">
     <button>履歴を消す</button></form>
   <form method="post" action="/link/{{ link.code }}/delete" style="display:inline">
     <button>リンクを削除</button></form>
 </p>
+
+<div class="card">
+  <img src="/link/{{ link.code }}/qr.png" alt="QR" style="width:180px;image-rendering:pixelated">
+  <p class="dim">このQRを黒板に貼れば一気に踏ませられます。</p>
+</div>
 
 <h2>解析サマリ</h2>
 <div class="card">
