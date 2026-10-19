@@ -193,7 +193,9 @@ def api_summary(_=Depends(auth)):
         "dm_messages": db.q1("SELECT COUNT(*) c FROM dm_messages")["c"],
         "forensics": db.q1("SELECT COUNT(*) c FROM forensics")["c"],
     }
-
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 @app.get("/api/events")
 def api_events(limit: int = 500, _=Depends(auth)):
