@@ -1,12 +1,11 @@
-"""FastAPI アプリ本体。マルチテナント完全分離版。"""
+"""FastAPI アプリ本体。Cookieセッション認証 + マルチテナント完全分離版。"""
 import os, secrets, random, string, base64, json as _json, traceback, shutil
 from urllib.parse import quote
 
-from fastapi import FastAPI, Request, Depends, Form, HTTPException
+from fastapi import FastAPI, APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from . import config, tenancy, users
 from .config import get as get_cfg
@@ -21,19 +20,75 @@ app = FastAPI(title="Uraaka Tracker", docs_url=None, redoc_url=None, openapi_url
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.filters["fromjson"] = _json.loads
-security = HTTPBasic()
-REALM = 'Basic realm="igtracker"'
-EDITABLE = ["identity", "monitor", "archive"]
 
+COOKIE_USER = "igt_sid"
+COOKIE_ADMIN = "igt_admin"
+SECURE_COOKIE = os.getenv("COOKIE_SECURE", "1") != "0"
+ADMIN_PATH = "/" + (os.getenv("ADMIN_PATH", "admin").strip("/") or "admin")
+EDITABLE = ["identity", "monitor", "archive"]
+SIGNUP_OPEN = os.getenv("SIGNUP_OPEN", "1") != "0"
+
+admin = APIRouter(prefix=ADMIN_PATH)
+
+
+# ---------- 共通 ----------
 
 def render(name, request, **ctx):
     ctx["request"] = request
     ctx["me"] = getattr(request.state, "user_name", None)
     ctx["real_user"] = getattr(request.state, "real_user", None)
     ctx["is_admin"] = getattr(request.state, "is_admin", False)
+    ctx["admin_realm"] = getattr(request.state, "admin_ok", False)
     ctx["must_change"] = getattr(request.state, "must_change", False)
     ctx["impersonating"] = bool(ctx["me"] and ctx["real_user"] and ctx["me"] != ctx["real_user"])
+    ctx["admin_path"] = ADMIN_PATH
+    ctx["signup_open"] = SIGNUP_OPEN
     return templates.TemplateResponse(name, ctx)
+
+
+def _wants_json(request):
+    p = request.url.path
+    if p.startswith("/api/") or p in ("/export.json", "/import"):
+        return True
+    acc = request.headers.get("accept", "")
+    return "application/json" in acc and "text/html" not in acc
+
+
+def _safe_next(n, default="/"):
+    if not n or not n.startswith("/") or n.startswith("//"):
+        return default
+    return n
+
+
+def _ip(request):
+    return linktrack.client_ip(request)
+
+
+def _ua(request):
+    return request.headers.get("user-agent", "")
+
+
+def _set_cookie(resp, name, token):
+    resp.set_cookie(name, token, max_age=users.SESSION_DAYS * 86400, httponly=True,
+                    secure=SECURE_COOKIE, samesite="lax", path="/")
+
+
+def _activate(request, row, admin_ok=False):
+    real = row["username"]
+    is_admin = row["role"] == "admin"
+    effective = real
+    if is_admin:
+        want = users.norm(request.cookies.get("view_as") or "")
+        r2 = users.get(want) if want else None
+        if r2 and not r2["disabled"]:
+            effective = want
+    tenancy.set_current(effective)
+    request.state.user_name = effective
+    request.state.real_user = real
+    request.state.is_admin = is_admin
+    request.state.admin_ok = admin_ok
+    request.state.must_change = bool(row["must_change"]) and effective == real
+    return effective
 
 
 @app.middleware("http")
@@ -41,7 +96,7 @@ async def harden(request: Request, call_next):
     resp = await call_next(request)
     if not request.url.path.startswith("/static"):
         resp.headers["Cache-Control"] = "private, no-store, must-revalidate"
-        resp.headers["Vary"] = "Authorization, Cookie"
+        resp.headers["Vary"] = "Cookie"
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "SAMEORIGIN"
         if not request.url.path.startswith("/l/"):
@@ -61,56 +116,115 @@ async def _debug_handler(request: Request, exc: Exception):
     return PlainTextResponse(f"PATH: {request.url.path}\n\n{tb}", status_code=500)
 
 
-# ---------- 認証 ----------
+# ---------- 認証依存 ----------
 
-async def auth(request: Request, cred: HTTPBasicCredentials = Depends(security)) -> str:
-    ip = linktrack.client_ip(request)
-    if users.is_throttled(ip):
-        raise HTTPException(429, "試行回数が多すぎます。少し待ってください")
-    info = users.verify(cred.username, cred.password, ip=ip)
+async def auth(request: Request) -> str:
+    tok = request.cookies.get(COOKIE_USER)
+    row = users.resolve_session(tok, "user")
+    if row:
+        return _activate(request, row)
+
+    hdr = request.headers.get("authorization", "")
+    if hdr.lower().startswith("basic "):
+        try:
+            raw = base64.b64decode(hdr.split(" ", 1)[1]).decode("utf-8")
+            un, _, pw = raw.partition(":")
+        except Exception:
+            un = pw = ""
+        if users.verify_user(un, pw):
+            return _activate(request, users.get(un))
+
+    if _wants_json(request):
+        raise HTTPException(401, "unauthorized")
+    raise HTTPException(303, headers={
+        "Location": "/login?next=" + quote(str(request.url.path))})
+
+
+async def admin_auth(request: Request) -> str:
+    tok = request.cookies.get(COOKIE_ADMIN)
+    row = users.resolve_session(tok, "admin")
+    if not row:
+        if _wants_json(request):
+            raise HTTPException(401, "admin login required")
+        raise HTTPException(303, headers={
+            "Location": f"{ADMIN_PATH}/login?next=" + quote(str(request.url.path))})
+    return _activate(request, row, admin_ok=True)
+
+
+# ---------- ログイン / 登録 / ログアウト ----------
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "", msg: str = "", err: str = ""):
+    return render("login.html", request, next=_safe_next(next), msg=msg, err=err)
+
+
+@app.post("/login")
+def login_post(request: Request, username: str = Form(""), password: str = Form(""),
+               next: str = Form("/")):
+    ip = _ip(request)
+    key = "u:" + ip
+    if users.is_throttled(key):
+        return RedirectResponse("/login?err=" + quote("試行回数が多すぎます。少し待ってください"), 303)
+    info = users.verify_user(username, password)
     if not info:
-        raise HTTPException(401, "unauthorized", {"WWW-Authenticate": REALM})
-
-    real = info["username"]
-    is_admin = info["role"] == "admin"
-
-    effective = real
-    if is_admin:
-        want = request.cookies.get("view_as") or request.query_params.get("as")
-        want = users.norm(want) if want else ""
-        row = users.get(want) if want else None
-        if row and not row["disabled"]:
-            effective = want
-
-    tenancy.set_current(effective)
-    request.state.user_name = effective
-    request.state.real_user = real
-    request.state.is_admin = is_admin
-    request.state.must_change = info["must_change"] and effective == real
-    return effective
+        users.bump_fail(key)
+        users.audit(username, "login_fail", {"ip": ip})
+        return RedirectResponse("/login?next=" + quote(_safe_next(next)) +
+                                "&err=" + quote("ユーザー名かパスワードが違います"), 303)
+    users.clear_fail(key)
+    users.audit(info["username"], "login_ok", {"ip": ip, "ua": _ua(request)[:120]})
+    tok = users.new_session(info["username"], "user", ip, _ua(request))
+    r = RedirectResponse(_safe_next(next), 303)
+    _set_cookie(r, COOKIE_USER, tok)
+    return r
 
 
-async def admin_only(user: str = Depends(auth)) -> str:
-    if not users.is_admin(user):
-        raise HTTPException(403, "管理者専用です")
-    return user
+@app.get("/signup", response_class=HTMLResponse)
+def signup_page(request: Request, msg: str = "", err: str = ""):
+    return render("signup.html", request, msg=msg, err=err)
 
 
-def _tokens(raw):
-    return [t.strip().lstrip("@") for t in (raw or "").replace(",", "\n").split() if t.strip()]
+@app.post("/signup")
+def signup_post(request: Request, username: str = Form(""), password: str = Form(""),
+                password2: str = Form("")):
+    if not SIGNUP_OPEN:
+        return RedirectResponse("/signup?err=" + quote("現在、新規登録は停止しています"), 303)
+    ip = _ip(request)
+    key = "s:" + ip
+    if users.is_throttled(key, limit=10):
+        return RedirectResponse("/signup?err=" + quote("試行回数が多すぎます"), 303)
+    if password != password2:
+        return RedirectResponse("/signup?err=" + quote("パスワードが一致しません"), 303)
+    try:
+        users.create(username, password, role="user", note="self signup")
+    except ValueError as e:
+        users.bump_fail(key)
+        return RedirectResponse("/signup?err=" + quote(str(e)), 303)
+    u = users.norm(username)
+    users.audit(u, "signup", {"ip": ip})
+    tok = users.new_session(u, "user", ip, _ua(request))
+    r = RedirectResponse("/", 303)
+    _set_cookie(r, COOKIE_USER, tok)
+    return r
 
 
-def _new_code(n=8):
-    for _ in range(50):
-        c = "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
-        if not users.owner_of_link(c):
-            return c
-    return secrets.token_urlsafe(8)
+@app.post("/logout")
+def logout_post(request: Request):
+    users.delete_session(request.cookies.get(COOKIE_USER))
+    r = RedirectResponse("/login?msg=" + quote("ログアウトしました"), 303)
+    r.delete_cookie(COOKIE_USER, path="/")
+    return r
+
+
+@app.get("/logout")
+def logout_get(request: Request):
+    return logout_post(request)
 
 
 @app.on_event("startup")
 def _startup():
-    users.bootstrap_env_admin()
+    users.bootstrap_admin()
+    users.purge_expired()
     for t in users.list_usernames():
         tenancy.set_current(t)
         cfg = get_cfg()
@@ -129,6 +243,258 @@ def _startup():
                 pass
     if os.getenv("RUN_SCHEDULER", "1") == "1":
         watcher.start()
+
+
+# ---------- 自分のアカウント ----------
+
+@app.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
+    real = request.state.real_user
+    toks = request.cookies.get(COOKIE_USER) or ""
+    cur = users.sid_of(toks)
+    sess = [dict(s) | {"short": s["sid"][:8],
+                       "current": s["sid"] == cur,
+                       "admin_short": None} for s in users.list_sessions(real, "user")]
+    adms = [dict(s) | {"short": s["sid"][:8]} for s in users.list_sessions(real, "admin")]
+    return render("account.html", request, msg=msg, err=err,
+                  role=users.role_of(real),
+                  env_admin=bool(users.env_admin()[0] == real),
+                  breakglass=bool(users.env_breakglass()),
+                  sessions=sess, admin_sessions=adms,
+                  session_days=users.SESSION_DAYS)
+
+
+@app.post("/account/password")
+def account_password(request: Request, cur: str = Form(""), new: str = Form(""),
+                     new2: str = Form(""), u=Depends(auth)):
+    real = request.state.real_user
+    if new != new2:
+        return RedirectResponse("/account?err=" + quote("新しいパスワードが一致しません"), 303)
+    if not users.check_password(real, cur):
+        return RedirectResponse("/account?err=" + quote("現在のパスワードが違います"), 303)
+    try:
+        users.set_password(real, new, must_change=0)
+    except ValueError as e:
+        return RedirectResponse("/account?err=" + quote(str(e)), 303)
+    tok = users.new_session(real, "user", _ip(request), _ua(request))
+    users.audit(real, "password_changed", {})
+    r = RedirectResponse("/account?msg=" + quote(
+        "パスワードを変更し、他の全端末からログアウトしました"), 303)
+    _set_cookie(r, COOKIE_USER, tok)
+    return r
+
+
+@app.post("/account/sessions/delete")
+def account_session_delete(request: Request, sid: str = Form(...), u=Depends(auth)):
+    real = request.state.real_user
+    cur = users.sid_of(request.cookies.get(COOKIE_USER) or "")
+    for s in users.list_sessions(real, "user"):
+        if s["sid"].startswith(sid):
+            if s["sid"] == cur:
+                return RedirectResponse("/account?err=" + quote(
+                    "使用中のセッションは「全端末ログアウト」で消してください"), 303)
+            users.delete_session_by_sid(s["sid"])
+            break
+    return RedirectResponse("/account?msg=" + quote("セッションを削除しました"), 303)
+
+
+@app.post("/account/logout-all")
+def account_logout_all(request: Request, u=Depends(auth)):
+    real = request.state.real_user
+    users.delete_sessions(real, "user")
+    tok = users.new_session(real, "user", _ip(request), _ua(request))
+    users.audit(real, "logout_all", {})
+    r = RedirectResponse("/account?msg=" + quote("全端末からログアウトしました"), 303)
+    _set_cookie(r, COOKIE_USER, tok)
+    return r
+
+
+# ---------- 管理（別パス・別Cookie） ----------
+
+@admin.get("/login", response_class=HTMLResponse)
+def admin_login_page(request: Request, next: str = "", msg: str = "", err: str = ""):
+    return render("admin_login.html", request, next=_safe_next(next, ADMIN_PATH + "/"),
+                  msg=msg, err=err)
+
+
+@admin.post("/login")
+def admin_login_post(request: Request, username: str = Form(""), password: str = Form(""),
+                     next: str = Form("")):
+    ip = _ip(request)
+    key = "a:" + ip
+    if users.is_throttled(key, limit=10):
+        return RedirectResponse(f"{ADMIN_PATH}/login?err=" +
+                                quote("試行回数が多すぎます"), 303)
+    if not users.verify_admin(username, password):
+        users.bump_fail(key)
+        users.audit(username, "admin_login_fail", {"ip": ip})
+        return RedirectResponse(f"{ADMIN_PATH}/login?err=" +
+                                quote("管理者として認証できません"), 303)
+    users.clear_fail(key)
+    u = users.norm(username)
+    users.audit(u, "admin_login_ok", {"ip": ip})
+    tok = users.new_session(u, "admin", ip, _ua(request))
+    r = RedirectResponse(_safe_next(next, ADMIN_PATH + "/"), 303)
+    _set_cookie(r, COOKIE_ADMIN, tok)
+    return r
+
+
+@admin.post("/logout")
+def admin_logout(request: Request):
+    users.delete_session(request.cookies.get(COOKIE_ADMIN))
+    r = RedirectResponse(f"{ADMIN_PATH}/login?msg=" + quote("管理者ログアウトしました"), 303)
+    r.delete_cookie(COOKIE_ADMIN, path="/")
+    return r
+
+
+def _tenant_size(t):
+    p = os.path.join(tenancy.ROOT, t)
+    tot = 0
+    for root, _, files in os.walk(p):
+        for f in files:
+            try:
+                tot += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return tot
+
+
+@admin.get("", response_class=HTMLResponse)
+@admin.get("/", response_class=HTMLResponse)
+def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_auth)):
+    rows = []
+    for r in users.list_users():
+        d = dict(r)
+        t = tenancy.safe_name(r["username"])
+        try:
+            tdb = tenancy.db_for(t)
+            d["targets"] = tdb.q1("SELECT COUNT(*) c FROM targets")["c"]
+            d["known"] = tdb.q1("SELECT COUNT(*) c FROM known_accounts")["c"]
+            d["links"] = tdb.q1("SELECT COUNT(*) c FROM links")["c"]
+            d["hits"] = tdb.q1("SELECT COUNT(*) c FROM link_hits")["c"]
+        except Exception:
+            d["targets"] = d["known"] = d["links"] = d["hits"] = "-"
+        d["ig_user"] = config.load(t).get("instagram", {}).get("username") or ""
+        d["size_mb"] = round(_tenant_size(t) / 1048576, 2)
+        d["sessions"] = len(users.list_sessions(r["username"], "user"))
+        rows.append(d)
+    return render("admin.html", request, rows=rows, msg=msg, err=err,
+                  env_user=users.env_admin()[0],
+                  breakglass=bool(users.env_breakglass()),
+                  tenant_root=tenancy.ROOT,
+                  audits=users.list_audit(200),
+                  me=request.state.real_user)
+
+
+@admin.get("/audit", response_class=HTMLResponse)
+def admin_audit(request: Request, u=Depends(admin_auth)):
+    return render("admin_audit.html", request, rows=users.list_audit(1000),
+                  tenant_root=tenancy.ROOT)
+
+
+@admin.post("/password")
+def admin_password(request: Request, cur: str = Form(""), new: str = Form(""),
+                   new2: str = Form(""), u=Depends(admin_auth)):
+    real = request.state.real_user
+    if new != new2:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("一致しません"), 303)
+    bg = users.env_breakglass()
+    ok = users.verify_admin(real, cur) or (bg and cur == bg)
+    if not ok:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("現在の管理者パスワードが違います"), 303)
+    try:
+        users.set_admin_password(real, new)
+    except ValueError as e:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
+    tok = users.new_session(real, "admin", _ip(request), _ua(request))
+    users.audit(real, "admin_password_changed", {})
+    r = RedirectResponse(ADMIN_PATH + "/?msg=" + quote(
+        "管理者パスワードを変更し、他の管理者セッションを無効化しました"), 303)
+    _set_cookie(r, COOKIE_ADMIN, tok)
+    return r
+
+
+@admin.post("/users/create")
+def admin_create(username: str = Form(...), password: str = Form(...),
+                 role: str = Form("user"), note: str = Form(""),
+                 must_change: str = Form(""), u=Depends(admin_auth)):
+    try:
+        users.create(username, password, role="admin" if role == "admin" else "user",
+                     note=note, must_change=bool(must_change))
+        users.audit(request_actor(u), "admin_create", {"username": username, "role": role})
+        return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{username} を作成しました"), 303)
+    except ValueError as e:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
+
+
+@admin.post("/users/{target}/password")
+def admin_setpw(target: str, password: str = Form(...), u=Depends(admin_auth)):
+    try:
+        users.set_password(target, password, must_change=1)
+        users.audit(u, "admin_setpw", {"username": target})
+        return RedirectResponse(ADMIN_PATH + "/?msg=" +
+                                quote(f"{target} のパスワードを再設定しました"), 303)
+    except ValueError as e:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
+
+
+@admin.post("/users/{target}/adminpw")
+def admin_set_adminpw(target: str, password: str = Form(...), u=Depends(admin_auth)):
+    try:
+        users.set_admin_password(target, password)
+        users.audit(u, "admin_set_adminpw", {"username": target})
+        return RedirectResponse(ADMIN_PATH + "/?msg=" +
+                                quote(f"{target} の管理者パスワードを設定しました"), 303)
+    except ValueError as e:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
+
+
+@admin.post("/users/{target}/role")
+def admin_role(target: str, role: str = Form(...), u=Depends(admin_auth)):
+    users.set_role(target, "admin" if role == "admin" else "user")
+    users.audit(u, "admin_role", {"username": target, "role": role})
+    return RedirectResponse(ADMIN_PATH + "/", 303)
+
+
+@admin.post("/users/{target}/toggle")
+def admin_toggle(target: str, u=Depends(admin_auth)):
+    row = users.get(target)
+    if row:
+        users.set_disabled(target, not row["disabled"])
+        users.audit(u, "admin_toggle", {"username": target, "disabled": bool(not row["disabled"])})
+    return RedirectResponse(ADMIN_PATH + "/", 303)
+
+
+@admin.post("/users/{target}/delete")
+def admin_delete(target: str, purge: str = Form(""), u=Depends(admin_auth)):
+    if users.norm(target) == users.norm(u):
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("自分自身は削除できません"), 303)
+    users.delete(target)
+    if purge:
+        shutil.rmtree(os.path.join(tenancy.ROOT, tenancy.safe_name(target)),
+                      ignore_errors=True)
+        with tenancy._lock:
+            tenancy._dbs.pop(tenancy.safe_name(target), None)
+    users.audit(u, "admin_delete", {"username": target, "purge": bool(purge)})
+    return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{target} を削除しました"), 303)
+
+
+@admin.get("/switch")
+def admin_switch(request: Request, to: str = "", back: str = "/", u=Depends(admin_auth)):
+    r = RedirectResponse(_safe_next(back, ADMIN_PATH + "/"), 303)
+    if to and users.get(to):
+        r.set_cookie("view_as", users.norm(to), httponly=True, samesite="lax",
+                     secure=SECURE_COOKIE, max_age=8 * 3600, path="/")
+    else:
+        r.delete_cookie("view_as", path="/")
+    return r
+
+
+def request_actor(_):
+    return tenancy.get_current() or ""
+
+
+app.include_router(admin)
 
 
 # ---------- ダッシュボード ----------
@@ -161,7 +527,8 @@ def identity_page(request: Request, u=Depends(auth)):
 def identity_run(target: str = Form(...), candidates: str = Form(""),
                  auto: str = Form(""), archive: str = Form(""),
                  note: str = Form(""), u=Depends(auth)):
-    toks = _tokens(candidates)
+    toks = [t.strip().lstrip("@") for t in (candidates or "").replace(",", "\n").split()
+            if t.strip()]
     try:
         cl = ig.client()
     except Exception as e:
@@ -485,128 +852,6 @@ def ig_logout(u=Depends(auth)):
     return RedirectResponse("/settings?msg=" + quote("ログアウトしました"), 303)
 
 
-# ---------- 自分のアカウント ----------
-
-@app.get("/account", response_class=HTMLResponse)
-def account_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
-    return render("account.html", request, msg=msg, err=err,
-                  role=users.role_of(request.state.real_user),
-                  env_admin=bool(users.env_admin()[0] == request.state.real_user))
-
-
-@app.post("/account/password")
-def account_password(request: Request, cur: str = Form(""), new: str = Form(""),
-                     new2: str = Form(""), u=Depends(auth)):
-    real = request.state.real_user
-    if new != new2:
-        return RedirectResponse("/account?err=" + quote("新しいパスワードが一致しません"), 303)
-    if not users.check_password(real, cur):
-        return RedirectResponse("/account?err=" + quote("現在のパスワードが違います"), 303)
-    try:
-        users.set_password(real, new, must_change=0)
-    except ValueError as e:
-        return RedirectResponse("/account?err=" + quote(str(e)), 303)
-    return RedirectResponse("/account?msg=" + quote("パスワードを変更しました"), 303)
-
-
-# ---------- 管理 ----------
-
-def _tenant_size(t):
-    p = os.path.join(tenancy.ROOT, t)
-    tot = 0
-    for root, _, files in os.walk(p):
-        for f in files:
-            try:
-                tot += os.path.getsize(os.path.join(root, f))
-            except OSError:
-                pass
-    return tot
-
-
-@app.get("/admin", response_class=HTMLResponse)
-def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_only)):
-    rows = []
-    for r in users.list_users():
-        d = dict(r)
-        t = tenancy.safe_name(r["username"])
-        try:
-            tdb = tenancy.db_for(t)
-            d["targets"] = tdb.q1("SELECT COUNT(*) c FROM targets")["c"]
-            d["known"] = tdb.q1("SELECT COUNT(*) c FROM known_accounts")["c"]
-            d["links"] = tdb.q1("SELECT COUNT(*) c FROM links")["c"]
-            d["hits"] = tdb.q1("SELECT COUNT(*) c FROM link_hits")["c"]
-        except Exception:
-            d["targets"] = d["known"] = d["links"] = d["hits"] = "-"
-        d["ig_user"] = config.load(t).get("instagram", {}).get("username") or ""
-        d["size_mb"] = round(_tenant_size(t) / 1048576, 2)
-        rows.append(d)
-    return render("admin.html", request, rows=rows, msg=msg, err=err,
-                  env_user=users.env_admin()[0], tenant_root=tenancy.ROOT)
-
-
-@app.post("/admin/users/create")
-def admin_create(username: str = Form(...), password: str = Form(...),
-                 role: str = Form("user"), note: str = Form(""),
-                 must_change: str = Form(""), u=Depends(admin_only)):
-    try:
-        users.create(username, password, role="admin" if role == "admin" else "user",
-                     note=note, must_change=bool(must_change))
-        users.audit(u, "admin_create", {"username": username, "role": role})
-        return RedirectResponse("/admin?msg=" + quote(f"{username} を作成しました"), 303)
-    except ValueError as e:
-        return RedirectResponse("/admin?err=" + quote(str(e)), 303)
-
-
-@app.post("/admin/users/{target}/password")
-def admin_setpw(target: str, password: str = Form(...), u=Depends(admin_only)):
-    try:
-        users.set_password(target, password, must_change=1)
-        users.audit(u, "admin_setpw", {"username": target})
-        return RedirectResponse("/admin?msg=" + quote(f"{target} のパスワードを再設定しました"), 303)
-    except ValueError as e:
-        return RedirectResponse("/admin?err=" + quote(str(e)), 303)
-
-
-@app.post("/admin/users/{target}/role")
-def admin_role(target: str, role: str = Form(...), u=Depends(admin_only)):
-    users.set_role(target, "admin" if role == "admin" else "user")
-    users.audit(u, "admin_role", {"username": target, "role": role})
-    return RedirectResponse("/admin", 303)
-
-
-@app.post("/admin/users/{target}/toggle")
-def admin_toggle(target: str, u=Depends(admin_only)):
-    row = users.get(target)
-    if row:
-        users.set_disabled(target, not row["disabled"])
-    return RedirectResponse("/admin", 303)
-
-
-@app.post("/admin/users/{target}/delete")
-def admin_delete(target: str, purge: str = Form(""), u=Depends(admin_only)):
-    if users.norm(target) == users.norm(u):
-        return RedirectResponse("/admin?err=" + quote("自分自身は削除できません"), 303)
-    users.delete(target)
-    if purge:
-        shutil.rmtree(os.path.join(tenancy.ROOT, tenancy.safe_name(target)),
-                      ignore_errors=True)
-        with tenancy._lock:
-            tenancy._dbs.pop(tenancy.safe_name(target), None)
-    users.audit(u, "admin_delete", {"username": target, "purge": bool(purge)})
-    return RedirectResponse("/admin?msg=" + quote(f"{target} を削除しました"), 303)
-
-
-@app.get("/admin/switch")
-def admin_switch(request: Request, to: str = "", back: str = "/", u=Depends(admin_only)):
-    r = RedirectResponse(back or "/", 303)
-    if to and users.get(to):
-        r.set_cookie("view_as", users.norm(to), httponly=True, samesite="lax",
-                     secure=True, max_age=8 * 3600)
-    else:
-        r.delete_cookie("view_as")
-    return r
-
-
 # ---------- リンク追跡（公開ルート） ----------
 
 def _record_hit(request: Request, code: str):
@@ -707,6 +952,14 @@ def link_me(request: Request):
 
 
 # ---------- リンク管理 ----------
+
+def _new_code(n=8):
+    for _ in range(50):
+        c = "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
+        if not users.owner_of_link(c):
+            return c
+    return secrets.token_urlsafe(8)
+
 
 @app.get("/links", response_class=HTMLResponse)
 def links_page(request: Request, u=Depends(auth)):
