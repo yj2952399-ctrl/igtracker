@@ -328,6 +328,22 @@ def save_dms(db, max_threads=300):
     return total
 
 
+def archive_account(db, uid, max_posts=200, max_follow=2000):
+    """削除対策：あとで削除されても照合できるようDBに残す。"""
+    for fn, args in ((save_profile, (db, uid)),
+                     (save_posts, (db, uid, max_posts)),
+                     (save_relations, (db, uid, max_follow)),
+                     (save_likers, (db, uid, 12, 200)),
+                     (save_tagged, (db, uid, 200)),
+                     (save_related, (db, uid)),
+                     (save_comments, (db, uid, 20))):
+        try:
+            fn(*args)
+        except Exception as e:
+            db.log(uid, "archive_partial", {"fn": fn.__name__, "error": str(e)})
+    db.log(uid, "account_archived", {})
+
+
 def full_archive(db, uid, cfg=None):
     cfg = cfg or get_cfg()
     a = cfg["archive"]
@@ -342,17 +358,3 @@ def full_archive(db, uid, cfg=None):
     save_tagged(db, uid)
     save_dms(db, a["max_threads"])
     forensics.snapshot_all(db, client())
-def archive_account(db, uid, max_posts=200, max_follow=2000):
-    """削除対策：あとで削除されても照合できるようDBに残す"""
-    for fn, args in ((save_profile, (db, uid)),
-                     (save_posts, (db, uid, max_posts)),
-                     (save_relations, (db, uid, max_follow)),
-                     (save_likers, (db, uid, 12, 200)),
-                     (save_tagged, (db, uid, 200)),
-                     (save_related, (db, uid)),
-                     (save_comments, (db, uid, 20))):
-        try:
-            fn(*args)
-        except Exception as e:
-            db.log(uid, "archive_partial", {"fn": fn.__name__, "error": str(e)})
-    db.log(uid, "account_archived", {})
