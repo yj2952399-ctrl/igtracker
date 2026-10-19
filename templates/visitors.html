@@ -1,1 +1,21 @@
-templates/visitors.html
+{% extends "base.html" %}{% block content %}
+<h1>訪問者台帳</h1>
+<p class="dim">端末キー(WebCrypto)とフィンガープリントから作られた訪問者ID単位の一覧です。
+再訪や複数リンクの横断が分かります。</p>
+<table>
+<tr><th>ラベル</th><th>訪問者ID</th><th>回数</th><th>初回</th><th>最終</th>
+    <th>地域</th><th>回線</th><th>端末</th><th>鍵</th></tr>
+{% for v in rows %}
+<tr>
+  <td><a href="/visitor/{{ v.vid }}">{{ v.label or "(未設定)" }}</a></td>
+  <td class="mono"><a href="/visitor/{{ v.vid }}">{{ v.vid[:16] }}…</a></td>
+  <td>{{ v.hits }}</td>
+  <td>{{ (v.first_seen or "")[:16] }}</td>
+  <td>{{ (v.last_seen or "")[:16] }}</td>
+  <td>{{ v.country }} {{ v.city }}</td>
+  <td>{{ v.isp }}</td>
+  <td>{{ v.device }}<br><small>{{ v.os }} / {{ v.browser }}</small></td>
+  <td>{% if v.pubkey %}<span class="badge">署名鍵あり</span>{% endif %}</td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
