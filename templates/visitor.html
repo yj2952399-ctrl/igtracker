@@ -17,6 +17,30 @@
 </form>
 </div>
 
+<h2>この端末</h2>
+<div class="card">
+{% if dev_stat and dev_stat.c %}
+<table>
+  <tr><th>この端末の総ヒット</th><td>{{ dev_stat.c }}</td></tr>
+  <tr><th>初回 / 最終</th><td>{{ (dev_stat.f or "")[:19] }} / {{ (dev_stat.l or "")[:19] }}</td></tr>
+  <tr><th>踏んだリンク数</th><td>{{ dev_stat.k }}</td></tr>
+</table>
+{% if dev_stat.c > 1 %}<p class="badge">同一端末の再訪あり</p>{% endif %}
+{% else %}
+<p class="dim">端末情報がまだありません。</p>
+{% endif %}
+
+{% if same_dev %}
+<p class="warn">同じ端末なのに訪問者IDが別の相手が {{ same_dev|length }} 人います。
+ストレージが消えてIDが振り直されただけで、実体は同じ端末です。</p>
+<table><tr><th>訪問者</th><th>端末</th></tr>
+{% for s in same_dev %}
+<tr><td><a class="mono" href="/visitor/{{ s.vid }}">{{ s.vid[:16] }}…</a></td>
+  <td>{{ s.device }} / {{ s.os }} / {{ s.browser }}</td></tr>
+{% endfor %}</table>
+{% endif %}
+</div>
+
 <h2>一緒の相手</h2>
 {% if near.pairs %}
 <table><tr><th>スコア</th><th>判定</th><th>相手</th><th>根拠</th></tr>
