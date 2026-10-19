@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% block content %}
+<h1>リンク追跡</h1>
+<p class="dim">作ったURLを踏ませると、IP・推定地域・端末・回線が記録されます。
+InstagramのDMで送って踏ませる用途を想定しています。</p>
+
+<form method="post" action="/links/add" class="card">
+  <label>名前 <input name="name" placeholder="例: 裏垢Aに送る"></label>
+  <label>飛び先URL <input name="dest" placeholder="https://www.instagram.com/xxxx/"></label>
+  <label>メモ <input name="note"></label>
+  <label>モード
+    <select name="mode">
+      <option value="page">ページを挟む（端末情報を多めに取得）</option>
+      <option value="geo">位置情報を要求する（GPS。許可されれば高精度）</option>
+      <option value="redirect">即リダイレクト（気づかれにくい）</option>
+    </select></label>
+  <button>リンクを作成</button>
+</form>
+
+<p><a href="/link/me" target="_blank">自分のIPで動作確認する</a></p>
+
+<h2>作成済み {{ links|length }} 件</h2>
+<table><tr><th>名前</th><th>URL</th><th>飛び先</th><th>モード</th><th>ヒット</th><th>状態</th><th></th></tr>
+{% for l in links %}
+<tr>
+  <td><a href="/link/{{ l.code }}">{{ l.name }}</a></td>
+  <td class="mono">{{ base }}/l/{{ l.code }}</td>
+  <td class="mono">{{ (l.dest or "")[:40] }}</td>
+  <td>{{ l.mode }}</td>
+  <td>{{ l.hit_count }}</td>
+  <td>{% if l.active %}有効{% else %}<span class="badge">停止中</span>{% endif %}</td>
+  <td>
+    <form method="post" action="/link/{{ l.code }}/toggle"><button>切替</button></form>
+    <form method="post" action="/link/{{ l.code }}/delete"><button>削除</button></form>
+  </td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
