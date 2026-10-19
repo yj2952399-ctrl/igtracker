@@ -11,11 +11,26 @@
 <tr><th>公開鍵</th><td class="mono"><small>{{ v.pubkey }}</small></td></tr>
 </table>
 <form method="post" action="/visitor/{{ v.vid }}/label">
-  <label>ラベル <input name="label" value="{{ v.label or '' }}"></label>
+  <label>ラベル <input name="label" value="{{ v.label or '' }}" placeholder="例: @uraaka_a / 田中さん"></label>
   <label>メモ <input name="note" value="{{ v.note or '' }}"></label>
   <button>保存</button>
 </form>
 </div>
+
+<h2>一緒の相手</h2>
+{% if near.pairs %}
+<table><tr><th>スコア</th><th>判定</th><th>相手</th><th>根拠</th></tr>
+{% for p in near.pairs %}
+<tr>
+  <td>{{ p.score }}</td><td>{{ p.verdict }}</td>
+  <td><a href="/visitor/{{ p.b if p.a == v.vid else p.a }}">{{ p.blabel if p.a == v.vid else p.alabel }}</a></td>
+  <td><small>{{ p.signals|join(" / ") }}</small></td>
+</tr>
+{% endfor %}</table>
+<p class="dim"><a href="/together">→ 一緒解析の全体を見る</a></p>
+{% else %}
+<p class="dim">まだ検出されていません。</p>
+{% endif %}
 
 <h2>踏んだリンク</h2>
 <table><tr><th>時刻</th><th>コード</th><th>IP</th><th>端末</th><th>署名</th></tr>
