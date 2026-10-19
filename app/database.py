@@ -1,5 +1,5 @@
-"""SQLite スキーマとアクセス層。特定エンジン + リンク追跡。"""
-import sqlite3, json, datetime as dt, os
+"""SQLite スキーマとアクセス層。特定エンジン + リンク追跡。スレッド安全版。"""
+import sqlite3, json, datetime as dt, os, threading
 from contextlib import contextmanager
 
 SCHEMA = """
@@ -153,10 +153,15 @@ def now():
 class DB:
     def __init__(self, path):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.RLock()
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=10000")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        with self._lock:
+            self.conn.executescript(SCHEMA)
+            self.conn.commit()
         self._migrate()
 
     def _migrate(self):
@@ -178,18 +183,21 @@ class DB:
 
     @contextmanager
     def tx(self):
-        try:
-            yield self.conn
-            self.conn.commit()
-        except Exception:
-            self.conn.rollback()
-            raise
+        with self._lock:
+            try:
+                yield self.conn
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def q(self, sql, args=()):
-        return self.conn.execute(sql, args).fetchall()
+        with self._lock:
+            return self.conn.execute(sql, args).fetchall()
 
     def q1(self, sql, args=()):
-        return self.conn.execute(sql, args).fetchone()
+        with self._lock:
+            return self.conn.execute(sql, args).fetchone()
 
     def log(self, user_id, kind, payload):
         with self.tx() as c:
@@ -400,7 +408,7 @@ class DB:
     def update_hit(self, hid, **f):
         if not f:
             return
-        sets = ",".join(f"{k}=?" for k in f)
+        sets = ", ".join(f"{k}=?" for k in f)
         with self.tx() as c:
             c.execute(f"UPDATE link_hits SET {sets} WHERE id=?", list(f.values()) + [hid])
 
