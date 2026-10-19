@@ -213,6 +213,10 @@ class Acct:
     related_ids: set = field(default_factory=set)
     liker_ids: set = field(default_factory=set)
     commenter_ids: set = field(default_factory=set)
+    # --- 追加 ---
+    deleted: bool = False      # user_info が取れない＝削除/凍結の疑い
+    cached: bool = False       # DBキャッシュから復元した
+    partial: bool = False      # 一部のシグナルが欠けている
 
     @property
     def captions(self):
