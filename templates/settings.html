@@ -1,0 +1,38 @@
+{% extends "base.html" %}{% block content %}
+<h1>設定</h1>
+<p>保存先: <code>{{ settings_file }}</code>（GitHubの config.yaml は汚しません）</p>
+
+<form method="post" action="/settings">
+{% for sec, val in sections.items() %}
+  <h2>{{ sec }}</h2>
+  <table>
+  {% for k, v in val.items() %}
+    <tr><th>{{ k }}</th><td>
+    {% if v is mapping %}
+      {% for k2, v2 in v.items() %}
+        <label class="inline">{{ k2 }}
+          <input name="{{ sec }}.{{ k }}.{{ k2 }}" value="{{ v2 }}"
+          {% if v2 is boolean %}type="checkbox" {% if v2 %}checked{% endif %}
+          {% elif v2 is number %}type="number" step="any"
+          {% else %}type="text"{% endif %}></label>
+      {% endfor %}
+    {% else %}
+      <input name="{{ sec }}.{{ k }}" value="{{ v }}"
+      {% if v is boolean %}type="checkbox" {% if v %}checked{% endif %}
+      {% elif v is number %}type="number" step="any"
+      {% else %}type="text"{% endif %}>
+    {% endif %}
+    </td></tr>
+  {% endfor %}
+  </table>
+{% endfor %}
+
+<h2>監視対象（1行1件・@不要）</h2>
+<textarea name="__targets" rows="5">{{ targets }}</textarea>
+<h2>本体候補（1行1件）</h2>
+<textarea name="__candidates" rows="5">{{ candidates }}</textarea>
+
+<button>保存</button>
+</form>
+<p>※ 監視間隔（monitor）の変更はプロセス再起動後（RenderでManual Deploy）に反映されます。</p>
+{% endblock %}
