@@ -1,4 +1,4 @@
-"""SQLite スキーマとアクセス層。全データはここに集約される。"""
+"""SQLite スキーマとアクセス層。特定エンジン用テーブルを大幅追加。"""
 import sqlite3, json, datetime as dt, os
 from contextlib import contextmanager
 
@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS profiles (
     user_id TEXT PRIMARY KEY,
     username TEXT, full_name TEXT, bio TEXT, external_url TEXT,
     follower_count INTEGER, following_count INTEGER, media_count INTEGER,
-    is_private INTEGER, is_verified INTEGER, business_category TEXT,
+    is_private INTEGER, is_verified INTEGER, is_business INTEGER,
+    business_category TEXT, public_email TEXT, contact_phone TEXT,
+    business_email TEXT, business_phone TEXT,
+    city TEXT, address TEXT, zipcode TEXT, latitude REAL, longitude REAL,
     profile_pic_url TEXT, profile_pic_phash TEXT,
     first_seen TEXT, last_seen TEXT
 );
@@ -54,6 +57,22 @@ CREATE TABLE IF NOT EXISTS comments (
     pk TEXT PRIMARY KEY, media_id TEXT, user_id TEXT, username TEXT,
     text TEXT, created_at TEXT, like_count INTEGER, archived_at TEXT
 );
+CREATE TABLE IF NOT EXISTS media_likers (
+    media_id TEXT, user_id TEXT, username TEXT, archived_at TEXT,
+    PRIMARY KEY (media_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS media_commenters (
+    media_id TEXT, user_id TEXT, username TEXT, archived_at TEXT,
+    PRIMARY KEY (media_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS tagged_media (
+    media_id TEXT, user_id TEXT, owner_id TEXT, code TEXT, taken_at TEXT,
+    archived_at TEXT, PRIMARY KEY (media_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS related_profiles (
+    user_id TEXT, related_id TEXT, related_username TEXT, archived_at TEXT,
+    PRIMARY KEY (user_id, related_id)
+);
 CREATE TABLE IF NOT EXISTS dm_threads (
     thread_id TEXT PRIMARY KEY, title TEXT, participants TEXT,
     last_activity_at TEXT, updated_at TEXT
@@ -65,8 +84,19 @@ CREATE TABLE IF NOT EXISTS dm_messages (
 );
 CREATE TABLE IF NOT EXISTS identity_scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uraaka_user_id TEXT, candidate_user_id TEXT, candidate_username TEXT,
-    score REAL, evidence TEXT, computed_at TEXT
+    run_id INTEGER, uraaka_user_id TEXT, candidate_user_id TEXT,
+    candidate_username TEXT, score REAL, verdict TEXT, evidence TEXT,
+    computed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS identity_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_uid TEXT, target_username TEXT, status TEXT,
+    progress INTEGER DEFAULT 0, total INTEGER DEFAULT 0,
+    started_at TEXT, finished_at TEXT, log TEXT
+);
+CREATE TABLE IF NOT EXISTS forensics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT, kind TEXT, payload TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,7 +109,10 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_dm_msg ON dm_messages(thread_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_snap ON profile_snapshots(user_id, taken_at);
+CREATE INDEX IF NOT EXISTS idx_scores_run ON identity_scores(run_id, score);
+CREATE INDEX IF NOT EXISTS idx_forensics_ts ON forensics(ts);
 """
+
 
 def now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -102,7 +135,6 @@ class DB:
             self.conn.rollback()
             raise
 
-    # ---- 汎用 ----
     def q(self, sql, args=()):
         return self.conn.execute(sql, args).fetchall()
 
@@ -112,7 +144,13 @@ class DB:
     def log(self, user_id, kind, payload):
         with self.tx() as c:
             c.execute("INSERT INTO events(ts,user_id,kind,payload) VALUES(?,?,?,?)",
-                      (now(), user_id, kind, json.dumps(payload, ensure_ascii=False, default=str)))
+                      (now(), user_id, kind,
+                       json.dumps(payload, ensure_ascii=False, default=str)))
+
+    def forensic(self, kind, payload):
+        with self.tx() as c:
+            c.execute("INSERT INTO forensics(ts,kind,payload) VALUES(?,?,?)",
+                      (now(), kind, json.dumps(payload, ensure_ascii=False, default=str)))
 
     # ---- ターゲット ----
     def add_target(self, user_id, username, note=""):
@@ -132,9 +170,11 @@ class DB:
     def upsert_profile(self, u):
         with self.tx() as c:
             c.execute("""INSERT INTO profiles(user_id,username,full_name,bio,external_url,
-                follower_count,following_count,media_count,is_private,is_verified,
-                business_category,profile_pic_url,profile_pic_phash,first_seen,last_seen)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                follower_count,following_count,media_count,is_private,is_verified,is_business,
+                business_category,public_email,contact_phone,business_email,business_phone,
+                city,address,zipcode,latitude,longitude,profile_pic_url,profile_pic_phash,
+                first_seen,last_seen)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     username=excluded.username, full_name=excluded.full_name,
                     bio=excluded.bio, external_url=excluded.external_url,
@@ -142,7 +182,15 @@ class DB:
                     following_count=excluded.following_count,
                     media_count=excluded.media_count,
                     is_private=excluded.is_private, is_verified=excluded.is_verified,
+                    is_business=excluded.is_business,
                     business_category=excluded.business_category,
+                    public_email=excluded.public_email,
+                    contact_phone=excluded.contact_phone,
+                    business_email=excluded.business_email,
+                    business_phone=excluded.business_phone,
+                    city=excluded.city, address=excluded.address,
+                    zipcode=excluded.zipcode, latitude=excluded.latitude,
+                    longitude=excluded.longitude,
                     profile_pic_url=excluded.profile_pic_url,
                     profile_pic_phash=excluded.profile_pic_phash,
                     last_seen=excluded.last_seen""",
@@ -150,8 +198,12 @@ class DB:
                  u.get("bio"), u.get("external_url"), u.get("follower_count"),
                  u.get("following_count"), u.get("media_count"),
                  int(bool(u.get("is_private"))), int(bool(u.get("is_verified"))),
-                 u.get("business_category"), u.get("profile_pic_url"),
-                 u.get("profile_pic_phash"), now(), now()))
+                 int(bool(u.get("is_business"))), u.get("business_category"),
+                 u.get("public_email"), u.get("contact_phone"),
+                 u.get("business_email"), u.get("business_phone"),
+                 u.get("city"), u.get("address"), u.get("zipcode"),
+                 u.get("latitude"), u.get("longitude"),
+                 u.get("profile_pic_url"), u.get("profile_pic_phash"), now(), now()))
 
     def snapshot_profile(self, u):
         with self.tx() as c:
@@ -173,3 +225,27 @@ class DB:
         with self.tx() as c:
             c.execute("UPDATE jobs SET status=?,finished_at=?,log=? WHERE id=?",
                       (status, now(), log[:20000], job_id))
+
+    # ---- 特定ラン ----
+    def start_run(self, target_uid, target_username):
+        with self.tx() as c:
+            cur = c.execute("""INSERT INTO identity_runs(target_uid,target_username,
+                status,started_at) VALUES(?,?,?,?)""",
+                (target_uid, target_username, "running", now()))
+            return cur.lastrowid
+
+    def update_run(self, run_id, progress=None, total=None, status=None, log=None):
+        sets, args = [], []
+        if progress is not None:
+            sets.append("progress=?"); args.append(progress)
+        if total is not None:
+            sets.append("total=?"); args.append(total)
+        if status is not None:
+            sets.append("status=?"); args.append(status)
+        if log is not None:
+            sets.append("log=?"); args.append(log[:20000])
+        if status in ("ok", "error"):
+            sets.append("finished_at=?"); args.append(now())
+        args.append(run_id)
+        with self.tx() as c:
+            c.execute(f"UPDATE identity_runs SET {','.join(sets)} WHERE id=?", args)
