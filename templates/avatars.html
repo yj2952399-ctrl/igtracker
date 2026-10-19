@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block content %}
+<h1>🖼 アイコン一致</h1>
+<p class="dim">各SNSのOGP画像をpHashで比較し、同じアイコンを使っているアカウントを
+まとめます。ハンドルが違ってもアイコンが同じなら同一人物の可能性が高いです。
+登録 {{ total }} 件。</p>
+
+{% for g in groups %}
+<div class="card">
+  <h3>{{ g|length }} 件が一致</h3>
+  <table><tr><th>ソース</th><th>識別子</th><th>サイト</th><th>画像</th><th>pHash</th></tr>
+  {% for r in g %}
+  <tr>
+    <td>{{ r.source }}</td>
+    <td class="mono">{{ r.ref }}</td>
+    <td>{{ r.site }}</td>
+    <td><a href="{{ r.url }}" target="_blank" rel="noopener">開く</a></td>
+    <td class="mono"><small>{{ r.phash }}</small></td>
+  </tr>
+  {% endfor %}</table>
+</div>
+{% else %}
+<p>まだ一致はありません。SNS横断検索の結果から「アイコンを取得して照合に回す」を押してください。</p>
+{% endfor %}
+{% endblock %}
