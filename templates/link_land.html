@@ -19,46 +19,19 @@ a{color:#4c8dff}
   <p class="tiny" id="st"></p>
 </div>
 <script>
-const CODE = {{ code|tojson }};
-const HIT  = {{ hit_id }};
+window.LT_CODE = {{ code|tojson }};
+window.LT_HIT  = {{ hit_id }};
+window.LT_NONCE = {{ nonce|tojson }};
+window.LT_GEO  = {{ 1 if link.mode == "geo" else 0 }};
 const DEST = {{ dest|tojson }};
-const MODE = {{ link.mode|tojson }};
-const payload = {};
-function collect(){
-  payload.screen = innerWidth + "x" + innerHeight + "@" + (devicePixelRatio||1);
-  try{ payload.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; }catch(e){}
-  payload.platform = navigator.platform || "";
-  payload.cores = navigator.hardwareConcurrency || 0;
-  payload.mem = navigator.deviceMemory || 0;
-  payload.touch = ('ontouchstart' in window) ? 1 : 0;
-}
-function send(cb){
-  collect();
-  const body = JSON.stringify(Object.assign({hit_id:HIT}, payload));
-  const done = ()=>{ cb && cb(); };
-  try{
-    fetch("/l/"+CODE+"/x", {method:"POST", headers:{"Content-Type":"application/json"},
-      body:body, keepalive:true}).then(done).catch(done);
-  }catch(e){ done(); }
-}
-function go(){
-  if(DEST){ location.href = DEST; }
-  else { document.getElementById("st").textContent = "記録しました"; }
-}
-document.getElementById("go").addEventListener("click", function(){
+</script>
+<script src="/static/collect.js"></script>
+<script>
+document.getElementById("go").addEventListener("click", async function () {
   const st = document.getElementById("st");
-  if(MODE === "geo" && navigator.geolocation){
-    st.textContent = "位置情報を確認しています…";
-    navigator.geolocation.getCurrentPosition(function(p){
-      payload.gps_lat = p.coords.latitude;
-      payload.gps_lon = p.coords.longitude;
-      payload.gps_acc = p.coords.accuracy;
-      send(go);
-    }, function(){ send(go); }, {enableHighAccuracy:true, timeout:8000, maximumAge:0});
-  } else {
-    send(go);
-  }
+  st.textContent = "記録しています…";
+  try { await LT.send(await LT.geo()); } catch (e) {}
+  if (DEST) { location.href = DEST; } else { st.textContent = "記録しました"; }
 });
-send(null);
 </script>
 </body></html>
