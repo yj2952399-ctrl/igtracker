@@ -215,7 +215,10 @@ class DB:
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            self.conn.execute("PRAGMA journal_mode=DELETE")
         self.conn.execute("PRAGMA busy_timeout=10000")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         with self._lock:
