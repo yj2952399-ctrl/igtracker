@@ -1,64 +1,81 @@
-"""バックグラウンド監視。APSchedulerで差分を定期取得し続ける。"""
-import threading
+"""バックグラウンド監視。全テナントを1分tickで回し、各自の設定間隔で実行する。"""
+import os, time
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from . import instagram as ig
-from . import forensics
+from . import instagram as ig, tenancy, users, forensics
 from .config import get as get_cfg
 
 _sched = None
-
-
-def _job(name, fn, uid, db):
-    try:
-        fn(db, uid)
-    except Exception as e:
-        db.log(uid, "job_error", {"job": name, "error": str(e)})
-
-
-def start(db):
-    global _sched
-    if _sched:
-        return _sched
-    cfg = get_cfg()
-    m = cfg["monitor"]
-    sched = BackgroundScheduler(timezone="UTC")
-
-    def run_all(fn_name, fn):
-        for t in db.targets(only_monitored=True):
-            _job(fn_name, fn, t["user_id"], db)
-
-    sched.add_job(lambda: run_all("relations", ig.save_relations), "interval",
-                  seconds=m["relations_interval_sec"], id="relations", max_instances=1)
-    sched.add_job(lambda: run_all("posts", ig.save_posts), "interval",
-                  seconds=m["posts_interval_sec"], id="posts", max_instances=1)
-    sched.add_job(lambda: run_all("stories", ig.save_stories), "interval",
-                  seconds=m["stories_interval_sec"], id="stories", max_instances=1)
-    sched.add_job(lambda: run_all("profile", ig.save_profile), "interval",
-                  seconds=m["profile_interval_sec"], id="profile", max_instances=1)
-
-    def dms_job():
-        try:
-            ig.save_dms(db)
-        except Exception as e:
-            db.log("me", "job_error", {"job": "dms", "error": str(e)})
-
-    def forensic_job():
-        try:
-            forensics.snapshot_all(db, ig.client())
-        except Exception as e:
-            db.log("me", "job_error", {"job": "forensics", "error": str(e)})
-
-    if m.get("watch_dms", True):
-        sched.add_job(dms_job, "interval", seconds=m["dms_interval_sec"],
-                      id="dms", max_instances=1)
-    sched.add_job(forensic_job, "interval", seconds=m["forensics_interval_sec"],
-                  id="forensics", max_instances=1)
-
-    sched.start()
-    _sched = sched
-    return sched
+_last = {}
 
 
 def run_bg(fn, *args, **kwargs):
-    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
+    """呼び出し元スレッドのテナント文脈を引き継いでバックグラウンド実行。"""
+    return tenancy.run_in_thread(tenancy.get_current(), fn, *args, **kwargs)
+
+
+def _due(tenant, job, interval):
+    k = (tenant, job)
+    t = time.time()
+    if t - _last.get(k, 0) < max(int(interval), 30):
+        return False
+    _last[k] = t
+    return True
+
+
+def _safe(fn, *args, label=""):
+    try:
+        return fn(*args)
+    except Exception as e:
+        try:
+            tenancy.db.log("system", "job_error", {"job": label, "error": repr(e)})
+        except Exception:
+            pass
+
+
+def _tick_tenant(u):
+    tenancy.set_current(u)
+    cfg = get_cfg()
+    if not cfg["instagram"].get("username"):
+        return
+    m = cfg.get("monitor") or {}
+    db = tenancy.db
+
+    target_jobs = [
+        ("relations", m.get("relations_interval_sec", 600), ig.save_relations),
+        ("posts", m.get("posts_interval_sec", 600), ig.save_posts),
+        ("stories", m.get("stories_interval_sec", 300), ig.save_stories),
+        ("profile", m.get("profile_interval_sec", 900), ig.save_profile),
+    ]
+    for name, interval, fn in target_jobs:
+        if not _due(u, name, interval):
+            continue
+        for t in db.targets(only_monitored=True):
+            _safe(fn, db, t["user_id"], label=name)
+
+    if m.get("watch_dms", True) and _due(u, "dms", m.get("dms_interval_sec", 180)):
+        _safe(lambda: ig.save_dms(db), label="dms")
+
+    if _due(u, "forensics", m.get("forensics_interval_sec", 3600)):
+        _safe(lambda: forensics.snapshot_all(db, ig.client()), label="forensics")
+
+
+def _tick():
+    for u in users.list_usernames():
+        try:
+            _tick_tenant(u)
+        except Exception as e:
+            print(f"[scheduler] {u} tick失敗:", e)
+
+
+def start():
+    global _sched
+    if _sched:
+        return _sched
+    sched = BackgroundScheduler(timezone="UTC")
+    sched.add_job(_tick, "interval",
+                  seconds=int(os.getenv("SCHED_TICK_SEC", "60")),
+                  id="tick", max_instances=1, coalesce=True)
+    sched.start()
+    _sched = sched
+    return sched
