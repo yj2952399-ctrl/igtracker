@@ -48,3 +48,18 @@ ul{padding-left:18px}
 .imp{background:#3a2f00;color:#ffe9a8;padding:8px 12px;font-size:14px}
 .imp a{color:#ffe9a8}
 .card{border:1px solid #444;padding:12px;margin:12px 0;border-radius:6px}
+.topbar{display:flex;align-items:center;gap:10px;background:#111;color:#ddd;
+  padding:8px 12px;font-size:14px}
+.topbar .spacer{flex:1}
+.topbar a{color:#8cf}
+.imp{background:#3a2f00;color:#ffe9a8;padding:8px 12px;font-size:14px}
+.imp a{color:#ffe9a8}
+.authwrap{max-width:420px;margin:40px auto}
+.authcard{display:flex;flex-direction:column;gap:12px;border:1px solid #444;
+  padding:20px;border-radius:8px}
+.card{border:1px solid #444;padding:12px;margin:12px 0;border-radius:6px}
+.dim{opacity:.7}
+.tiny{font-size:12px}
+.small{font-size:13px}
+.subrow{background:#181818}
+button.mini{padding:2px 8px;font-size:12px}
