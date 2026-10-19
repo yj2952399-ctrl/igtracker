@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-# persist を最初に読み、DB を開く前に復元する
+# persist を最初に読み、DB を開く前に共有ファイルを復元する
 from . import persist
 persist.pull()
 
@@ -252,7 +252,9 @@ async def auth(request: Request) -> str:
     tok = request.cookies.get(COOKIE_USER)
     row = users.resolve_session(tok, "user")
     if row:
-        return _activate(request, row)
+        u = _activate(request, row)
+        persist.touch(u)
+        return u
 
     hdr = request.headers.get("authorization", "")
     if hdr.lower().startswith("basic "):
@@ -262,7 +264,9 @@ async def auth(request: Request) -> str:
         except Exception:
             un = pw = ""
         if users.verify_user(un, pw):
-            return _activate(request, users.get(un))
+            u = _activate(request, users.get(un))
+            persist.touch(u)
+            return u
 
     if _wants_json(request):
         raise HTTPException(401, "unauthorized")
@@ -278,7 +282,9 @@ async def admin_auth(request: Request) -> str:
             raise HTTPException(401, "admin login required")
         raise HTTPException(303, headers={
             "Location": f"{ADMIN_PATH}/login?next=" + quote(str(request.url.path))})
-    return _activate(request, row, admin_ok=True)
+    u = _activate(request, row, admin_ok=True)
+    persist.touch(u)
+    return u
 
 
 # ---------- ログイン / 登録 / ログアウト ----------
@@ -303,7 +309,16 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
                                 "&err=" + quote("ユーザー名かパスワードが違います"), 303)
     users.clear_fail(key)
     users.audit(info["username"], "login_ok", {"ip": ip, "ua": _ua(request)[:120]})
-    tok = users.new_session(info["username"], "user", ip, _ua(request))
+
+    # ログイン時に自分のデータを復元してからバックアップ
+    u = info["username"]
+    try:
+        persist.pull_user(u)
+    except Exception as e:
+        print("[backup] ログイン時復元に失敗:", repr(e))
+    persist.touch(u, force=True, sync_first=False)
+
+    tok = users.new_session(u, "user", ip, _ua(request))
     r = RedirectResponse(_safe_next(next), 303)
     _set_cookie(r, COOKIE_USER, tok)
     return r
@@ -332,6 +347,7 @@ def signup_post(request: Request, username: str = Form(""), password: str = Form
         return RedirectResponse("/signup?err=" + quote(str(e)), 303)
     u = users.norm(username)
     users.audit(u, "signup", {"ip": ip})
+    persist.touch(u, force=True, sync_first=False)
     tok = users.new_session(u, "user", ip, _ua(request))
     r = RedirectResponse("/", 303)
     _set_cookie(r, COOKIE_USER, tok)
@@ -340,6 +356,12 @@ def signup_post(request: Request, username: str = Form(""), password: str = Form
 
 @app.post("/logout")
 def logout_post(request: Request):
+    try:
+        row = users.resolve_session(request.cookies.get(COOKIE_USER), "user")
+        if row:
+            persist.push_user(row["username"], force=True)
+    except Exception:
+        pass
     users.delete_session(request.cookies.get(COOKIE_USER))
     r = RedirectResponse("/login?msg=" + quote("ログアウトしました"), 303)
     r.delete_cookie(COOKIE_USER, path="/")
@@ -367,6 +389,11 @@ def _shutdown():
         persist.push(force=True)
     except Exception:
         pass
+    try:
+        for t in users.list_usernames(include_disabled=True):
+            persist.push_user(t, force=True)
+    except Exception:
+        pass
 
 
 # ---------- 自分のアカウント ----------
@@ -385,7 +412,8 @@ def account_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)
                   env_admin=bool(users.env_admin()[0] == real),
                   breakglass=bool(users.env_breakglass()),
                   sessions=sess, admin_sessions=adms,
-                  session_days=users.SESSION_DAYS)
+                  session_days=users.SESSION_DAYS,
+                  backup=persist.state(), my_backup=persist.user_state(u))
 
 
 @app.post("/account/password")
@@ -402,6 +430,7 @@ def account_password(request: Request, cur: str = Form(""), new: str = Form(""),
         return RedirectResponse("/account?err=" + quote(str(e)), 303)
     tok = users.new_session(real, "user", _ip(request), _ua(request))
     users.audit(real, "password_changed", {})
+    persist.push_user(real, force=True)
     r = RedirectResponse("/account?msg=" + quote(
         "パスワードを変更し、他の全端末からログアウトしました"), 303)
     _set_cookie(r, COOKIE_USER, tok)
@@ -425,12 +454,50 @@ def account_session_delete(request: Request, sid: str = Form(...), u=Depends(aut
 @app.post("/account/logout-all")
 def account_logout_all(request: Request, u=Depends(auth)):
     real = request.state.real_user
+    persist.push_user(real, force=True)
     users.delete_sessions(real, "user")
     tok = users.new_session(real, "user", _ip(request), _ua(request))
     users.audit(real, "logout_all", {})
     r = RedirectResponse("/account?msg=" + quote("全端末からログアウトしました"), 303)
     _set_cookie(r, COOKIE_USER, tok)
     return r
+
+
+# ---------- バックアップ ----------
+
+@app.get("/backup", response_class=HTMLResponse)
+def backup_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
+    return render("backup.html", request, st=persist.state(),
+                  my=persist.user_state(u),
+                  repo=os.getenv("BACKUP_REPO") or "",
+                  every=os.getenv("BACKUP_EVERY") or "300",
+                  msg=msg, err=err)
+
+
+@app.post("/backup/me/push")
+def backup_me_push(u=Depends(auth)):
+    return RedirectResponse("/backup?msg=" + quote("退避: " + str(persist.push_user(u, force=True))), 303)
+
+
+@app.post("/backup/me/pull")
+def backup_me_pull(u=Depends(auth)):
+    return RedirectResponse("/backup?msg=" + quote(
+        "復元: " + str(persist.pull_user(u, force=True)) + "（再読み込みで反映）"), 303)
+
+
+@app.post("/backup/all/push")
+def backup_all_push(u=Depends(auth)):
+    return RedirectResponse("/backup?msg=" + quote("全ユーザー退避を開始しました"), 303)
+
+
+@app.get("/api/backup")
+def api_backup(u=Depends(auth)):
+    return persist.state()
+
+
+@app.get("/api/backup/me")
+def api_backup_me(u=Depends(auth)):
+    return persist.user_state(u)
 
 
 # ---------- 管理 ----------
@@ -502,6 +569,7 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
         d["ig_user"] = config.load(t).get("instagram", {}).get("username") or ""
         d["size_mb"] = round(_tenant_size(t) / 1048576, 2)
         d["sessions"] = len(users.list_sessions(r["username"], "user"))
+        d["backup"] = persist.user_state(r["username"])
         rows.append(d)
     return render("admin.html", request, rows=rows, msg=msg, err=err,
                   env_user=users.env_admin()[0],
@@ -936,6 +1004,7 @@ async def settings_save(request: Request, u=Depends(auth)):
     ig.reset_client()
     _IG_STATE["ok"] = False
     persist.push(force=True)
+    persist.push_user(u, force=True)
     return RedirectResponse("/settings?msg=" + quote("設定を保存しました"), 303)
 
 
@@ -970,7 +1039,7 @@ def ig_login(user: str = Form(""), password: str = Form(""), u=Depends(auth)):
         config.save_sections({"instagram": {"username": un, "password": pw, "session_b64": b64}})
         ig.reset_client()
         _IG_STATE["ok"] = True
-        persist.push(force=True)
+        persist.push_user(u, force=True)
         return RedirectResponse("/settings?msg=" + quote("ログイン成功・セッションを保存しました"), 303)
     except Exception as e:
         return RedirectResponse("/settings?err=" + quote(repr(e)), 303)
@@ -987,25 +1056,8 @@ def ig_logout(u=Depends(auth)):
     config.save_sections({"instagram": {"session_b64": ""}})
     ig.reset_client()
     _IG_STATE["ok"] = False
+    persist.push_user(u, force=True)
     return RedirectResponse("/settings?msg=" + quote("ログアウトしました"), 303)
-
-
-# ---------- バックアップ ----------
-
-@app.get("/api/backup")
-def api_backup(u=Depends(auth)):
-    return persist.state()
-
-
-@app.post("/backup/push")
-def backup_push(u=Depends(auth)):
-    return RedirectResponse("/settings?msg=" + quote("退避: " + str(persist.push(force=True))), 303)
-
-
-@app.post("/backup/pull")
-def backup_pull(u=Depends(auth)):
-    return RedirectResponse("/settings?msg=" + quote(
-        "復元: " + str(persist.pull(force=True)) + "（DBを反映するには再起動推奨）"), 303)
 
 
 # ---------- SNS横断検索 ----------
@@ -1061,7 +1113,6 @@ def sns_avatars(sid: int, u=Depends(auth)):
         for r in db.q("SELECT * FROM sns_hits WHERE scan_id=? AND og_image<>''", (sid,)):
             ph = snscheck.phash_url(r["og_image"])
             if ph:
-                db.update_hit  # noop
                 with db.tx() as c:
                     c.execute("UPDATE sns_hits SET phash=? WHERE id=?", (ph, r["id"]))
                 db.upsert_avatar("sns", r["username"], r["site"], r["og_image"], ph)
@@ -1111,8 +1162,7 @@ def gravatar_del(gid: int, u=Depends(auth)):
 
 @app.get("/campaigns", response_class=HTMLResponse)
 def campaigns_page(request: Request, u=Depends(auth)):
-    return render("campaigns.html", request, camps=db.campaigns(200),
-                  base=_base(request))
+    return render("campaigns.html", request, camps=db.campaigns(200), base=_base(request))
 
 
 @app.post("/campaigns/add")
@@ -1121,7 +1171,7 @@ def campaigns_add(name: str = Form(...), handles: str = Form(""), message: str =
                   u=Depends(auth)):
     hs = [h.strip() for h in handles.replace(",", "\n").splitlines() if h.strip()]
     cid = campaign.create(db, u, name, hs, message, mode, dest, note)
-    persist.push(force=True)
+    persist.push_user(u, force=True)
     return RedirectResponse(f"/campaign/{cid}", 303)
 
 
@@ -1132,8 +1182,7 @@ def campaign_detail(cid: int, request: Request, u=Depends(auth)):
         raise HTTPException(404)
     rows = campaign.match(db, cid)
     hit = sum(1 for r in rows if r["hits"])
-    return render("campaign_detail.html", request, c=c, rows=rows, hit=hit,
-                  base=_base(request))
+    return render("campaign_detail.html", request, c=c, rows=rows, hit=hit, base=_base(request))
 
 
 @app.post("/campaign/{cid}/send")
@@ -1237,6 +1286,7 @@ def _bind_owner(code):
     owner = users.owner_of_link(code)
     if owner:
         tenancy.set_current(owner)
+        persist.touch(owner)
     return owner
 
 
@@ -1411,8 +1461,7 @@ def _new_code(n=8):
 
 @app.get("/links", response_class=HTMLResponse)
 def links_page(request: Request, u=Depends(auth)):
-    return render("links.html", request, links=db.links(500),
-                  base=_base(request))
+    return render("links.html", request, links=db.links(500), base=_base(request))
 
 
 @app.post("/links/add")
@@ -1422,7 +1471,7 @@ def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
     users.register_link(code, u)
     db.add_link(code, name or code, dest.strip(), note,
                 mode if mode in ("page", "geo", "redirect", "quiz", "identify") else "page")
-    persist.push(force=True)
+    persist.push_user(u, force=True)
     return RedirectResponse(f"/link/{code}", 303)
 
 
@@ -1463,7 +1512,7 @@ def link_toggle(code: str, u=Depends(auth)):
 def link_delete(code: str, u=Depends(auth)):
     db.del_link(code)
     users.unregister_link(code)
-    persist.push(force=True)
+    persist.push_user(u, force=True)
     return RedirectResponse("/links", 303)
 
 
