@@ -7,20 +7,43 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python run.py
     healthCheckPath: /healthz
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.5"
       - key: RUN_SCHEDULER
         value: "1"
-      # 以下は任意。全部Webの設定画面で入れられるので、空でもOK。
-      # 値を持たせたくない場合は sync: false のままにする。
+      - key: TENANT_ROOT
+        value: /var/data/tenants
+      - key: ROOT_DB
+        value: /var/data/root.db
+      - key: SETTINGS_FILE
+        value: /var/data/settings.json
+      - key: SECRET_KEY
+        sync: false
+      # 初回だけ使われる（以降は DB が正）
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASS
+        sync: false
+      # 非常口。設定すると管理者ログインで常に通る（未設定でも可）
+      - key: ADMIN_BREAKGLASS
+        sync: false
+      - key: SESSION_DAYS
+        value: "30"
+      - key: COOKIE_SECURE
+        value: "1"
+      # 管理画面のURL。推測されにくくしたい場合に変更（例: /panel-x7k2）
+      - key: ADMIN_PATH
+        value: admin
+      - key: SIGNUP_OPEN
+        value: "1"
       - key: IG_USER
         sync: false
       - key: IG_PASS
         sync: false
       - key: IG_SESSION_B64
-        sync: false
-      - key: WEB_USER
-        sync: false
-      - key: WEB_PASS
         sync: false
