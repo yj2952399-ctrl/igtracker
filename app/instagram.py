@@ -1,5 +1,5 @@
-"""instagrapi ラッパ。取れるものは全部取ってDBに書く。"""
-import os, json
+"""instagrapi ラッパ。テナントごとに独立したクライアント＋セッションを持つ。"""
+import os, json, threading
 from io import BytesIO
 
 import requests
@@ -7,22 +7,35 @@ import imagehash
 from PIL import Image
 from instagrapi import Client
 
+from . import tenancy
 from .config import get as get_cfg
 from .database import now
 from . import forensics
 
-_cl = None
+_clients = {}
+_locks = {}
+_lock = threading.RLock()
 
 
-def reset_client():
-    global _cl
-    _cl = None
+def _lock_for(u):
+    with _lock:
+        l = _locks.get(u)
+        if l is None:
+            l = threading.Lock()
+            _locks[u] = l
+        return l
 
 
-def client():
-    global _cl
-    if _cl:
-        return _cl
+def reset_client(user=None):
+    u = user if user is not None else tenancy.get_current()
+    with _lock:
+        if u:
+            _clients.pop(u, None)
+        else:
+            _clients.clear()
+
+
+def _build():
     cfg = get_cfg()
     cl = Client()
     cl.delay_range = [1, 3]
@@ -32,19 +45,35 @@ def client():
             cl.load_settings(sf)
             cl.login(cfg["instagram"]["username"], cfg["instagram"]["password"])
             cl.get_timeline_feed()
-            _cl = cl
             return cl
         except Exception:
             pass
     cl.login(cfg["instagram"]["username"], cfg["instagram"]["password"])
     cl.dump_settings(sf)
-    _cl = cl
     return cl
+
+
+def client():
+    u = tenancy.get_current()
+    if not u:
+        raise RuntimeError("tenant context is not set")
+    with _lock:
+        c = _clients.get(u)
+    if c:
+        return c
+    with _lock_for(u):
+        with _lock:
+            c = _clients.get(u)
+        if c:
+            return c
+        c = _build()
+        with _lock:
+            _clients[u] = c
+        return c
 
 
 def login_now(username, password, session_file):
     """Webから明示的にログインしてセッションを保存する。"""
-    global _cl
     cl = Client()
     cl.delay_range = [1, 3]
     cl.login(username, password)
@@ -56,7 +85,10 @@ def login_now(username, password, session_file):
     if d:
         os.makedirs(d, exist_ok=True)
     cl.dump_settings(session_file)
-    _cl = cl
+    u = tenancy.get_current()
+    with _lock:
+        if u:
+            _clients[u] = cl
     return cl
 
 
