@@ -1,13 +1,18 @@
-"""instagrapi ラッパ。プロフィール/投稿/ストーリー/関係/DM を全部取ってDBに書く。"""
-import os, json, time, datetime as dt
+"""instagrapi ラッパ。取れるものは全部取ってDBに書く。"""
+import os, json, datetime as dt
+from io import BytesIO
+
 import requests
+import imagehash
+from PIL import Image
 from instagrapi import Client
-from instagrapi.exceptions import LoginRequired
 
 from .config import get as get_cfg
 from .database import now
+from . import forensics
 
 _cl = None
+
 
 def client():
     global _cl
@@ -32,51 +37,71 @@ def client():
     return cl
 
 
-def phash_from_url(url):
-    from io import BytesIO
-    import imagehash
-    from PIL import Image
+def avatar_features(url):
+    """アイコンのpHashと色ヒストグラムを抽出"""
+    if not url:
+        return "", []
     try:
         r = requests.get(url, timeout=15)
-        return str(imagehash.phash(Image.open(BytesIO(r.content)).convert("RGB")))
+        img = Image.open(BytesIO(r.content)).convert("RGB")
+        ph = str(imagehash.phash(img))
+        small = img.resize((64, 64))
+        hues = [0] * 36
+        for px in small.getdata():
+            rr, gg, bb = [v / 255.0 for v in px]
+            mx, mn = max(rr, gg, bb), min(rr, gg, bb)
+            if mx == mn:
+                continue
+            d = mx - mn
+            if mx == rr:
+                h = ((gg - bb) / d) % 6
+            elif mx == gg:
+                h = (bb - rr) / d + 2
+            else:
+                h = (rr - gg) / d + 4
+            hues[int(h * 6) % 36] += 1
+        return ph, hues
     except Exception:
-        return None
+        return "", []
 
 
-def profile_dict(cl, uid):
+def raw_profile(cl, uid):
+    """取得できる全フィールドを辞書化"""
     i = cl.user_info(uid)
+    ph, hist = avatar_features(str(i.profile_pic_url) if i.profile_pic_url else None)
+    forensics.capture_headers(cl._db if hasattr(cl, "_db") else None, cl, f"user_info:{uid}")
     return {
-        "user_id": str(i.pk), "username": i.username, "full_name": i.full_name,
-        "bio": i.biography, "external_url": i.external_url,
-        "follower_count": i.follower_count, "following_count": i.following_count,
-        "media_count": i.media_count, "is_private": i.is_private,
-        "is_verified": getattr(i, "is_verified", False),
-        "business_category": getattr(i, "business_category", None),
+        "user_id": str(i.pk),
+        "username": i.username,
+        "full_name": i.full_name,
+        "bio": i.biography,
+        "external_url": i.external_url,
+        "follower_count": i.follower_count,
+        "following_count": i.following_count,
+        "media_count": i.media_count,
+        "is_private": bool(i.is_private),
+        "is_verified": bool(getattr(i, "is_verified", False)),
+        "is_business": bool(getattr(i, "is_business", False)),
+        "business_category": getattr(i, "category_name", None) or getattr(i, "business_category_name", None),
+        "public_email": getattr(i, "public_email", None),
+        "contact_phone": getattr(i, "contact_phone_number", None),
+        "business_email": getattr(i, "business_email", None),
+        "business_phone": getattr(i, "business_phone_number", None),
+        "city": getattr(i, "city_name", None),
+        "address": getattr(i, "address_street", None),
+        "zipcode": getattr(i, "zip", None),
+        "latitude": getattr(i, "latitude", None),
+        "longitude": getattr(i, "longitude", None),
         "profile_pic_url": str(i.profile_pic_url) if i.profile_pic_url else None,
-        "profile_pic_phash": phash_from_url(str(i.profile_pic_url)) if i.profile_pic_url else None,
+        "profile_pic_phash": ph,
+        "_avatar_hist": hist,
     }
 
 
-def _dl(url, path, budget):
-    if not url or budget["mb"] <= 0:
-        return None
-    try:
-        r = requests.get(url, timeout=30, stream=True)
-        size = 0
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(8192):
-                f.write(chunk); size += len(chunk)
-        budget["mb"] -= size / 1e6
-        return path
-    except Exception:
-        return None
-
-
-# ---------- 各アーカイブ ----------
+# ---------- 保存系 ----------
 
 def save_profile(db, uid):
-    cl = client()
-    p = profile_dict(cl, uid)
+    p = raw_profile(client(), uid)
     db.upsert_profile(p)
     db.snapshot_profile(p)
     db.log(uid, "profile_snapshot", {"followers": p["follower_count"],
@@ -90,8 +115,7 @@ def save_posts(db, uid, max_posts=500):
     new = 0
     with db.tx() as c:
         for m in medias:
-            exists = c.execute("SELECT 1 FROM posts WHERE media_id=?", (str(m.pk),)).fetchone()
-            if not exists:
+            if not c.execute("SELECT 1 FROM posts WHERE media_id=?", (str(m.pk),)).fetchone():
                 new += 1
             c.execute("""INSERT OR REPLACE INTO posts(media_id,user_id,code,taken_at,
                 media_type,caption,location_name,location_id,like_count,comment_count,
@@ -152,29 +176,6 @@ def save_highlights(db, uid):
     return len(hs)
 
 
-def save_comments(db, uid, max_posts=50):
-    cl = client()
-    rows = db.q("SELECT media_id FROM posts WHERE user_id=? ORDER BY taken_at DESC LIMIT ?",
-                (uid, max_posts))
-    total = 0
-    for r in rows:
-        try:
-            cs = cl.media_comments(r["media_id"], amount=100)
-        except Exception:
-            continue
-        with db.tx() as c:
-            for cm in cs:
-                c.execute("""INSERT OR REPLACE INTO comments(pk,media_id,user_id,username,
-                    text,created_at,like_count,archived_at) VALUES(?,?,?,?,?,?,?,?)""",
-                    (str(cm.pk), r["media_id"], str(cm.user_id),
-                     getattr(cm, "user", None) and cm.user.username or "",
-                     cm.text, cm.created_at.isoformat() if cm.created_at else None,
-                     getattr(cm, "like_count", 0), now()))
-                total += 1
-    db.log(uid, "comments_synced", {"count": total})
-    return total
-
-
 def save_relations(db, uid, max_follow=10000):
     cl = client()
     out = {}
@@ -182,7 +183,8 @@ def save_relations(db, uid, max_follow=10000):
         try:
             cur = fn(uid, amount=max_follow)
         except Exception:
-            out[direction] = 0; continue
+            out[direction] = 0
+            continue
         cur_ids = {str(k): v.username for k, v in cur.items()}
         prev = {r["to_user_id"] for r in
                 db.q("SELECT to_user_id FROM relationships WHERE from_user_id=? AND direction=?",
@@ -207,6 +209,87 @@ def save_relations(db, uid, max_follow=10000):
             db.log(uid, f"{direction}_remove", {"to_id": tid})
         out[direction] = len(added)
     return out
+
+
+def save_comments(db, uid, max_posts=50):
+    cl = client()
+    rows = db.q("SELECT media_id FROM posts WHERE user_id=? ORDER BY taken_at DESC LIMIT ?",
+                (uid, max_posts))
+    total = 0
+    for r in rows:
+        try:
+            cs = cl.media_comments(r["media_id"], amount=100)
+        except Exception:
+            continue
+        with db.tx() as c:
+            for cm in cs:
+                uid_c = str(cm.user_id)
+                uname = getattr(cm, "user", None) and cm.user.username or ""
+                c.execute("""INSERT OR REPLACE INTO comments(pk,media_id,user_id,username,
+                    text,created_at,like_count,archived_at) VALUES(?,?,?,?,?,?,?,?)""",
+                    (str(cm.pk), r["media_id"], uid_c, uname, cm.text,
+                     cm.created_at.isoformat() if cm.created_at else None,
+                     getattr(cm, "like_count", 0), now()))
+                c.execute("""INSERT OR REPLACE INTO media_commenters
+                    (media_id,user_id,username,archived_at) VALUES(?,?,?,?)""",
+                    (r["media_id"], uid_c, uname, now()))
+                total += 1
+    db.log(uid, "comments_synced", {"count": total})
+    return total
+
+
+def save_likers(db, uid, max_posts=12, per_post=200):
+    cl = client()
+    rows = db.q("SELECT media_id FROM posts WHERE user_id=? ORDER BY taken_at DESC LIMIT ?",
+                (uid, max_posts))
+    total = 0
+    for r in rows:
+        try:
+            likers = cl.media_likers(r["media_id"])
+        except Exception:
+            continue
+        with db.tx() as c:
+            for u in likers[:per_post]:
+                c.execute("""INSERT OR REPLACE INTO media_likers
+                    (media_id,user_id,username,archived_at) VALUES(?,?,?,?)""",
+                    (r["media_id"], str(u.pk), u.username, now()))
+                total += 1
+    db.log(uid, "likers_synced", {"count": total})
+    return total
+
+
+def save_related(db, uid):
+    cl = client()
+    if not hasattr(cl, "user_related_profiles"):
+        return 0
+    try:
+        rels = cl.user_related_profiles(uid)
+    except Exception:
+        return 0
+    with db.tx() as c:
+        for u in rels:
+            c.execute("""INSERT OR REPLACE INTO related_profiles
+                (user_id,related_id,related_username,archived_at) VALUES(?,?,?,?)""",
+                (uid, str(u.pk), u.username, now()))
+    db.log(uid, "related_synced", {"count": len(rels)})
+    return len(rels)
+
+
+def save_tagged(db, uid, max_items=200):
+    cl = client()
+    try:
+        medias = cl.user_tagged_medias(uid, amount=max_items)
+    except Exception:
+        return 0
+    with db.tx() as c:
+        for m in medias:
+            c.execute("""INSERT OR REPLACE INTO tagged_media
+                (media_id,user_id,owner_id,code,taken_at,archived_at)
+                VALUES(?,?,?,?,?,?)""",
+                (str(m.pk), uid, str(m.user.pk) if getattr(m, "user", None) else "",
+                 m.code, m.taken_at.isoformat() if m.taken_at else None, now()))
+    db.log(uid, "tagged_synced", {"count": len(medias)})
+    return len(medias)
 
 
 def save_dms(db, max_threads=300):
@@ -254,4 +337,8 @@ def full_archive(db, uid, cfg=None):
     save_highlights(db, uid)
     save_relations(db, uid, a["max_follow"])
     save_comments(db, uid, min(a["max_posts"], 50))
+    save_likers(db, uid)
+    save_related(db, uid)
+    save_tagged(db, uid)
     save_dms(db, a["max_threads"])
+    forensics.snapshot_all(db, client())
