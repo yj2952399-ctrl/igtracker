@@ -83,6 +83,8 @@ if(bounds.length) m.fitBounds(bounds, {padding:[30,30]});
   <td>{{ net[h.id] }}{% if h.isp %}<br><small>{{ h.isp }}</small>{% endif %}</td>
   <td>{{ h.device }}<br><small>{{ h.os }} / {{ h.browser }}</small>
     {% if h.inapp %}<br><span class="badge">{{ h.inapp }}内</span>{% endif %}
+    {% if h.fingerprint and fp_counts.get(h.fingerprint, 0) > 1 %}
+      <br><span class="badge">同一端末 {{ fp_counts[h.fingerprint] }}回</span>{% endif %}
     {% if h.vid %}<br><a class="badge" href="/visitor/{{ h.vid }}">{{ vlabels.get(h.vid) or ("訪問者 " + h.vid[:8]) }}</a>{% endif %}
     {% if h.sig_ok %}<br><span class="badge">鍵署名OK</span>{% endif %}
     {% if h.quiz_done %}<br><span class="badge">クイズ完走 {{ h.quiz_score }}/{{ h.quiz_total }}</span>{% endif %}</td>
