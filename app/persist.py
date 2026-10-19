@@ -512,8 +512,7 @@ def pull_accounts():
     return {"ok": True, "restored": out}
 
 
-def touch(user, force=False, sync_first=True):
-    """ログイン中やリンク所有者アクセスのたびに呼ぶ。"""
+def touch(user, force=False, sync_first=True, interval=0):
     if not enabled() or not user:
         return
     key = _safe(user)
@@ -535,7 +534,7 @@ def touch(user, force=False, sync_first=True):
         return
 
     now = time.time()
-    every = max(60, cfg()["every"] or 600)
+    every = interval if interval and interval > 0 else max(60, cfg()["every"] or 600)
     with _TLOCK:
         if not force and now - _LAST.get(key, 0) < every:
             return
