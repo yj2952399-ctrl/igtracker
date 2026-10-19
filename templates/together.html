@@ -1,0 +1,77 @@
+{% extends "base.html" %}{% block content %}
+<h1>一緒にいる人を解析</h1>
+<p class="dim">踏ませたリンクのIPを突き合わせて、「同じ回線・同じ場所にいた人」を割り出します。
+同じ端末キーやフィンガープリントが一致すれば同一人物の可能性が高いと判定します。</p>
+
+<form method="get" class="card">
+  <label>リンクで絞る
+    <select name="code">
+      <option value="">すべて</option>
+      {% for l in links %}
+      <option value="{{ l.code }}" {{ "selected" if l.code == code }}>{{ l.name }}</option>
+      {% endfor %}
+    </select></label>
+  <label>時間窓（時間）<input name="window" type="number" value="{{ window }}" min="1" max="72"></label>
+  <label>最低スコア<input name="minscore" type="number" step="0.05" value="{{ minscore }}" min="0" max="1"></label>
+  <button>再解析</button>
+</form>
+
+<div class="card">
+<table>
+<tr><th>解析対象の訪問者</th><td>{{ res.summary.visitors }}</td></tr>
+<tr><th>ヒット数</th><td>{{ res.summary.hits }}</td></tr>
+<tr><th>検出した関係</th><td>{{ res.summary.pairs }}</td></tr>
+<tr><th>グループ数</th><td>{{ res.summary.groups }}</td></tr>
+<tr><th>うち同一端末</th><td>{{ res.summary.same_device }}</td></tr>
+<tr><th>うち同じIP</th><td>{{ res.summary.same_ip }}</td></tr>
+</table>
+<p class="dim">モバイル回線はCGNATで他人とIPを共有するため、同じIPで時刻が近いことを条件にしています。
+「同じ/24サブネット」だけの一致は弱い根拠です。</p>
+</div>
+
+<h2>グループ</h2>
+{% for g in res.groups %}
+<div class="card">
+  <h3>{{ g.verdict }}（{{ g.members|length }}人・スコア {{ g.score }}）</h3>
+  <svg viewBox="0 0 {{ g.gw }} {{ g.gh }}" width="100%" style="max-width:680px;height:auto">
+    {% for e in g.edges %}
+    <line x1="{{ e.x1 }}" y1="{{ e.y1 }}" x2="{{ e.x2 }}" y2="{{ e.y2 }}"
+      stroke="#4c8dff" stroke-width="{{ e.w }}" stroke-opacity="{{ e.op }}"/>
+    {% endfor %}
+    {% for n in g.nodes %}
+    <circle cx="{{ n.x }}" cy="{{ n.y }}" r="9" fill="#4c8dff"/>
+    <text x="{{ n.x }}" y="{{ n.y + 24 }}" text-anchor="middle"
+      font-size="12" fill="#c9d1e0">{{ n.label[:16] }}</text>
+    {% endfor %}
+  </svg>
+  <p class="dim">根拠: {{ g.signals|join(" / ") }}</p>
+  {% if g.shared_ips %}
+  <p class="dim">共有IP: {% for ip in g.shared_ips[:8] %}<span class="mono">{{ ip }} </span>{% endfor %}</p>
+  {% endif %}
+  <table>
+    <tr><th>相手</th><th>回数</th><th>IP</th></tr>
+    {% for m in g.members %}
+    <tr>
+      <td><a href="/visitor/{{ m.vid }}">{{ m.label }}</a></td>
+      <td>{{ m.hits }}</td>
+      <td class="mono"><small>{% for ip in m.ips[:4] %}{{ ip }} {% endfor %}</small></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<p>まだ関係は検出されていません。リンクを踏ませてから再解析してください。</p>
+{% endfor %}
+
+<h2>ペア一覧</h2>
+<table><tr><th>スコア</th><th>判定</th><th>A</th><th>B</th><th>根拠</th><th>共有IP</th></tr>
+{% for p in res.pairs %}
+<tr>
+  <td>{{ p.score }}</td><td>{{ p.verdict }}</td>
+  <td><a href="/visitor/{{ p.a }}">{{ p.alabel }}</a></td>
+  <td><a href="/visitor/{{ p.b }}">{{ p.blabel }}</a></td>
+  <td><small>{{ p.signals|join(" / ") }}</small></td>
+  <td class="mono"><small>{{ p.shared_ips[:3]|join(", ") }}</small></td>
+</tr>
+{% endfor %}</table>
+{% endblock %}
