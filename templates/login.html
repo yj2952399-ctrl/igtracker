@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block content %}
+<div class="authwrap">
+  <h1>ログイン</h1>
+  {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="err">{{ err }}</p>{% endif %}
+  <form method="post" action="/login" class="authcard">
+    <input type="hidden" name="next" value="{{ next or '/' }}">
+    <label>ユーザー名
+      <input name="username" autocomplete="username" required autofocus></label>
+    <label>パスワード
+      <input type="password" name="password" autocomplete="current-password" required></label>
+    <button>ログイン</button>
+  </form>
+  {% if signup_open %}
+  <p class="dim">アカウントが無い場合は <a href="/signup">新規登録</a></p>
+  {% else %}
+  <p class="dim">新規登録は現在停止中です</p>
+  {% endif %}
+  <p class="dim tiny">管理者は <a href="{{ admin_path }}/login">管理者ログイン</a></p>
+</div>
+{% endblock %}
