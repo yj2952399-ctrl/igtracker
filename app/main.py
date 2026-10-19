@@ -317,7 +317,7 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
         persist.pull_user(u)
     except Exception as e:
         print("[backup] ログイン時復元に失敗:", repr(e))
-    persist.touch(u, force=True, sync_first=False)
+    persist.touch(u, force=True, sync_first=True)
 
     tok = users.new_session(u, "user", ip, _ua(request))
     r = RedirectResponse(_safe_next(next), 303)
