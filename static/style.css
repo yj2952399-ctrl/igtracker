@@ -34,7 +34,14 @@ button:hover{filter:brightness(1.1)}
   padding:12px;margin:10px 0}
 .score{font-weight:700;color:var(--ok);margin-left:6px}
 .badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;
-  background:#3a2a2a;color:var(--warn);border:1px solid #5a3f3f;margin-left:6px}
+  background:#3a2a2a;color:var(--warn);border:1px solid #5a3f3f;margin-left:4px}
 small{color:var(--dim)}
+.dim{color:var(--dim)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.ok{color:var(--ok)}
+.err{color:var(--bad);white-space:pre-wrap;word-break:break-all}
+.warn{color:var(--warn);font-size:12px}
+.botrow{opacity:.45}
 code{background:#11141a;padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
 ul{padding-left:18px}
+#map{height:340px;border-radius:8px;border:1px solid var(--line);margin:8px 0}
