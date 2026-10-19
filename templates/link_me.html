@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block content %}
+<h1>あなたのアクセス情報</h1>
+<div class="card">
+<table>
+<tr><th>IP</th><td class="mono">{{ ip }}</td></tr>
+<tr><th>推定国 / 地域 / 市区町村</th><td>{{ g.country }} / {{ g.region }} / {{ g.city }}</td></tr>
+<tr><th>緯度経度</th><td class="mono">{{ g.lat }}, {{ g.lon }}</td></tr>
+<tr><th>ISP / ASN</th><td>{{ g.isp }} / {{ g.asn }}</td></tr>
+<tr><th>VPN / データセンター</th><td>{{ g.is_proxy }} / {{ g.is_hosting }}</td></tr>
+<tr><th>端末 / OS / ブラウザ</th><td>{{ p.device }} / {{ p.os }} / {{ p.browser }}</td></tr>
+<tr><th>アプリ内ブラウザ</th><td>{{ p.inapp or "なし" }}</td></tr>
+<tr><th>UA</th><td><small class="mono">{{ ua }}</small></td></tr>
+</table>
+</div>
+<p><a href="/links">← リンク追跡に戻る</a></p>
+{% endblock %}
