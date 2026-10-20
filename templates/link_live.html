@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
+.wrap{padding:18px;max-width:520px;margin:0 auto}
+h1{font-size:17px;margin:0 0 6px}
+p{color:#9aa3b2;font-size:13px;margin:0 0 14px}
+.lt-on{color:#2ecc71;font-size:13px}.lt-warn{color:#f0b429;font-size:13px}.lt-dim{color:#7b8494;font-size:13px}
+#map{height:230px;border-radius:10px;margin:12px 0;background:#0b0e13}
+.box{background:#151a21;border:1px solid #232a34;border-radius:10px;padding:12px;margin:10px 0;font-size:13px}
+.row{display:flex;gap:8px;align-items:center}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#cfd6e2}
+button{padding:11px 22px;font-size:14px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
+button.ghost{background:#1b2028;color:#cfd6e2;border:1px solid #2b323d}
+.tiny{font-size:11px;color:#5f6875;margin-top:12px;line-height:1.6}
+a{color:#4c8dff}
+</style></head><body>
+<div class="wrap">
+  <h1>{{ link.name }}</h1>
+  <p>{{ link.note or "位置情報を許可すると、この画面を開いている間ずっと記録されます" }}</p>
+
+  <div class="box">
+    <div class="row"><span id="lt_st" class="lt-dim">準備中…</span>
+      <span style="margin-left:auto" class="mono" id="lt_time">00:00</span></div>
+    <div class="mono" id="lt_now" style="margin-top:6px">-</div>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="row">
+    <button id="lt_go">開始</button>
+    <button class="ghost" id="lt_stop">停止</button>
+    {% if dest %}<a href="{{ dest }}"><button class="ghost">飛び先へ</button></a>{% endif %}
+  </div>
+
+  <p class="tiny">
+    この画面を閉じると記録は止まります（閉じた瞬間の位置は送信します）。<br>
+    iPhoneは画面ロックや他アプリへの切り替えで止まりやすいので、その間は「画面をつけたまま」が確実です。<br>
+    位置を許可しなくても、IPからの推定地点だけは記録されます。
+  </p>
+</div>
+
+<script>
+window.LT_CODE = {{ code|tojson }};
+window.LT_HIT  = {{ hit_id }};
+window.LT_IV   = {{ iv }};
+window.LT_MAX  = {{ maxmin }};
+window.LT_GEO  = 1;
+</script>
+<script src="/static/live.js"></script>
+<script>
+const m = L.map('map',{zoomControl:false,attributionControl:false}).setView([36.2,138.2],5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(m);
+const line = L.polyline([],{color:'#4c8dff',weight:4,opacity:.85}).addTo(m);
+const me = L.circleMarker([36.2,138.2],{radius:8,color:'#2ecc71',fillColor:'#2ecc71',fillOpacity:.9}).addTo(m);
+let first = true;
+setInterval(async function(){
+  try {
+    const j = await (await fetch("/api/track/{{ code }}?since=0&limit=1000")).json();
+    const pts = (j.points||[]).filter(p=>p.lat!==null).map(p=>[p.lat,p.lon]);
+    line.setLatLngs(pts);
+    if (pts.length) {
+      me.setLatLng(pts[pts.length-1]);
+      if (first) { m.setView(pts[pts.length-1], 16); first = false; }
+      else { m.panTo(pts[pts.length-1]); }
+    }
+  } catch(e){}
+}, 6000);
+</script>
+</body></html>
