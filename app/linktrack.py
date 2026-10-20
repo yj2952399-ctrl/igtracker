@@ -24,6 +24,24 @@ INAPP = [
     ("kakaotalk", "KakaoTalk"), ("naver", "Naver"),
 ]
 
+# モバイル回線（4G/5G）っぽいISP/ASNの手がかり
+MOBILE_KW = (
+    "mobile", "cellular", "lte", "5g", "4g", "wimax", "umts", "gsm",
+    "docomo", "kddi", "softbank", "rakuten", "au one", "au-net",
+    "t-mobile", "vodafone", "orange", "telekom", "telefonica", "movistar",
+    "verizon wireless", "at&t", "cricket", "metro pcs", "boost mobile",
+    "china mobile", "chinamobile", "china unicom", "china telecom",
+    "airtel", "jio", "vodacom", "globe telecom", "smart communications",
+    "telstra", "optus", "singtel", "starhub", "true move", "ais ", "dtac",
+    "viettel", "mobifone", "vinaphone", "celcom", "digi tele", "maxis",
+    "ooredoo", "etisalat", "zain", "mtn ", "safaricom", "claro", "tim ",
+    "turkcell", "megafon", "mts ", "beeline", "kyivstar", "plus ",
+)
+
+# 精度の注意書き
+IP_WARN = ("一部または全部がIP推定の位置です。4G/5G回線では数km〜数十kmの誤差が出ます"
+           "（GPSを許可していれば精度が上がります）")
+
 
 def client_ip(request):
     for h in ("cf-connecting-ip", "true-client-ip", "x-real-ip",
@@ -110,6 +128,14 @@ def _is_private(ip):
     return False
 
 
+def mobile_guess(isp="", org="", asn="", is_mobile=0):
+    """4G/5G（モバイル回線）っぽいかどうか。"""
+    if is_mobile:
+        return True
+    s = f"{isp or ''} {org or ''} {asn or ''}".lower()
+    return any(k in s for k in MOBILE_KW)
+
+
 def geo(ip):
     """IPから国・地域・市区町村・ISP・ASN・VPN判定を引く。"""
     if _is_private(ip):
@@ -173,20 +199,35 @@ def geo(ip):
         except Exception:
             pass
 
+    if out and "is_mobile" not in out:
+        out["is_mobile"] = 1 if mobile_guess(out.get("isp"), out.get("org"),
+                                             out.get("asn")) else 0
+
     _geo_cache[ip] = out
     _geo_ts[ip] = now
     return out
 
 
 def network_label(h):
-    if h["is_hosting"]:
+    if h.get("is_hosting"):
         return "データセンター"
-    if h["is_proxy"]:
+    if h.get("is_proxy"):
         return "VPN/プロキシ"
-    if h["is_mobile"]:
-        return "モバイル回線"
-    if h["isp"]:
+    if h.get("is_mobile"):
+        return "モバイル回線（4G/5G）"
+    if h.get("isp"):
         return "固定回線の可能性"
+    return "不明"
+
+
+def accuracy_label(src, is_mobile=0):
+    """その点の位置がどれくらい信用できるか。"""
+    if src == "gps":
+        return "GPS（高精度）"
+    if is_mobile:
+        return "IP推定・モバイル回線（誤差 数km〜数十km）"
+    if src == "ip":
+        return "IP推定（誤差 数百m〜数km）"
     return "不明"
 
 
@@ -203,6 +244,13 @@ def summarize(hits):
     real = [h for h in hits if not h["is_bot"]]
     bots = [h for h in hits if h["is_bot"]]
     ips = Counter(h["ip"] for h in real if h["ip"])
+    ip_mobile = sum(1 for h in real if h.get("is_mobile"))
+    ip_only = sum(1 for h in real if h.get("gps_lat") is None)
+    warn = ""
+    if real and ip_only:
+        warn = IP_WARN
+        if ip_mobile:
+            warn += f"（今回モバイル回線: {ip_mobile}件）"
     return {
         "total": len(hits),
         "real": len(real),
@@ -215,7 +263,9 @@ def summarize(hits):
         "tz": _top(real, "tz"),
         "isp": _top(real, "isp"),
         "asn": _top(real, "asn"),
-        "mobile": sum(1 for h in real if h["is_mobile"]),
+        "mobile": ip_mobile,
+        "ip_only": ip_only,
+        "warn": warn,
         "proxy": sum(1 for h in real if h["is_proxy"]),
         "hosting": sum(1 for h in real if h["is_hosting"]),
         "gps": sum(1 for h in real if h["gps_lat"] is not None),
