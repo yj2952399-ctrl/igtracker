@@ -252,7 +252,7 @@ class DB:
               ("last_acc", "REAL"), ("last_city", "TEXT"), ("last_ip", "TEXT"),
               ("last_src", "TEXT"), ("last_batt", "REAL"), ("last_charging", "INTEGER"),
               ("points", "INTEGER DEFAULT 0")],
-　　　　　}
+        }
         for table, defs in add.items():
             have = cols(table)
             for name, ddl in defs:
