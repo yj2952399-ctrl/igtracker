@@ -29,7 +29,6 @@ button.ghost{background:#1b2028;color:#cfd6e2;border:1px solid #2b323d}
 .tiny{font-size:11px;color:#5f6875;margin-top:12px;line-height:1.6}
 a{color:#4c8dff}
 label.chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#9aa3b2;margin-top:6px}
-/* none / map のときは状態表示をDOMにだけ残す */
 body.ui-none #lt_st,body.ui-none #lt_time,body.ui-none #lt_now,
 body.ui-none #lt_perm,body.ui-none #lt_srv,
 body.ui-map #lt_st,body.ui-map #lt_time,body.ui-map #lt_now,
@@ -64,7 +63,6 @@ body.ui-none .ask-btns{display:none !important}
     <div class="ask-t lt-dim" id="lt_st">{{ ask_text }}</div>
     <div class="ask-btns">
       <button id="lt_retry" style="display:none">{{ retry_text }}</button>
-      <button class="ghost" id="lt_skip" style="display:none">{{ skip_text }}</button>
     </div>
     <span id="lt_time"></span><span id="lt_now"></span>
     <span id="lt_perm"></span><span id="lt_srv"></span>
@@ -75,7 +73,6 @@ body.ui-none .ask-btns{display:none !important}
   <span id="lt_perm"></span><span id="lt_srv"></span>
   <div class="ask-btns">
     <button id="lt_retry" style="display:none">{{ retry_text }}</button>
-    <button class="ghost" id="lt_skip" style="display:none">{{ skip_text }}</button>
   </div>
 {% endif %}
 
@@ -89,9 +86,8 @@ body.ui-none .ask-btns{display:none !important}
     {% if dest %}<a href="{{ dest }}"><button class="ghost">飛び先へ</button></a>{% endif %}
   </div>
   <p class="tiny">
-    {% if dest_redirect %}位置情報を許可すると、取得後に飛び先へ自動で移動します。許可しない間はこの画面に留まります。{% endif %}<br>
-    iPhoneは画面ロックや他アプリへの切り替えで止まりやすいので、その間は「画面をつけたまま」が確実です。<br>
-    位置を許可しなくても、IPからの推定地点だけは記録されます。
+    {% if dest_redirect %}位置情報が取れたときだけ飛び先へ移動します。取れない間はこの画面に留まります。{% endif %}<br>
+    iPhoneは画面ロックや他アプリへの切り替えで止まりやすいので、その間は「画面をつけたまま」が確実です。
   </p>
 {% endif %}
 
@@ -106,7 +102,6 @@ window.LT_NONCE = {{ nonce|tojson }};
 window.LT_GEO   = 0;
 window.LT_BRIEF = {{ 1 if ui == "ask" else 0 }};
 window.LT_DEST  = {{ (dest if dest_redirect else "")|tojson }};
-window.LT_DEST_ALWAYS = {{ dest|tojson }};
 window.LT_DEST_MIN = {{ dest_min }};
 window.LT_WAIT     = {{ wait_sec }};
 window.LT_DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
