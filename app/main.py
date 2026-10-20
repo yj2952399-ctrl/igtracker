@@ -1483,8 +1483,14 @@ def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
               mode: str = Form("page"), u=Depends(auth)):
     code = _new_code()
     users.register_link(code, u)
-    db.add_link(code, name or code, dest.strip(), note,
-                mode if mode in ("page", "geo", "redirect", "quiz", "identify") else "page")
+    # "snap" / "live" も許可（追跡テーブルとして作る）
+    m = mode if mode in ("page", "geo", "redirect", "quiz", "identify",
+                         "snap", "live") else "page"
+    if m in ("snap", "live"):
+        db.add_track(code, name or code, mode=m, interval=15,
+                     dest=dest.strip(), note=note)
+    else:
+        db.add_link(code, name or code, dest.strip(), note, m)
     persist.push_user(u, force=True)
     return RedirectResponse(f"/link/{code}", 303)
 
