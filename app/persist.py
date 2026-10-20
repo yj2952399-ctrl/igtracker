@@ -3,11 +3,10 @@
 Render の無料枠はファイルシステムが揮発で、スリープ復帰や再デプロイのたびに
 data/ 配下が消える。GitHub を外部ストレージ代わりにして回避する。
 
-backup/users/<ユーザー>/ に「そのユーザーに属する全データ」を入れる:
-  テナントDB / settings.json / session.json / media
-  アカウント行 / リンク索引 / 監査ログ
-root.db が消えても pull_accounts() でアカウントを再構築できるので、
-個人単位のバックアップだけでログインまで復旧できる。
+v2（破損対策）:
+  ・.db は sqlite3 の backup API で「一貫スナップショット」を取ってから送る
+  ・復元は「接続を閉じる → 検証 → 原子的に差し替え」の順に変更
+  ・壊れたコピーを掴んだら salvage_file で救出し、駄目ならローカルを残す
 
 必須の環境変数:
   BACKUP_REPO   "owner/repo"           （private推奨）
@@ -33,6 +32,8 @@ import threading
 import time
 
 import requests
+
+from .database import quick_ok, salvage_file, snapshot_db
 
 API = "https://api.github.com"
 _BOOT = time.time()
@@ -182,19 +183,81 @@ def _checkpoint(path):
         pass
 
 
+# ---------- 読み書きの安全化 ----------
+
+def _read(path):
+    """.db は一貫スナップショットで読む。それ以外は普通に読む。"""
+    if path.endswith(".db"):
+        tmp = path + ".snap"
+        try:
+            snapshot_db(path, tmp)
+            with open(tmp, "rb") as f:
+                return f.read()
+        except Exception:
+            pass
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def _drop_tenant(user):
     try:
         from . import tenancy
-        with tenancy._lock:
-            inst = tenancy._dbs.pop(tenancy.safe_name(user), None)
-        if inst is not None:
-            try:
-                inst.conn.close()
-            except Exception:
-                pass
+        tenancy.close(user)
     except Exception:
         pass
 
+
+def _close_for_path(path):
+    """復元する前に、そのファイルを掴んでいる接続を閉じる。"""
+    ap = os.path.abspath(path)
+    root = os.path.abspath(_tenant_root())
+    if ap.startswith(root + os.sep):
+        rel = os.path.relpath(ap, root).split(os.sep)[0]
+        _drop_tenant(rel)
+        return
+    if ap == os.path.abspath(os.getenv("ROOT_DB") or "data/root.db"):
+        try:
+            from . import users as U
+            fn = getattr(U, "close", None)
+            if fn:
+                fn()
+        except Exception:
+            pass
+
+
+def _restore_file(lpath, data):
+    """検証してから原子的に置き換える。壊れていたら救出を試す。"""
+    os.makedirs(os.path.dirname(lpath) or ".", exist_ok=True)
+    _close_for_path(lpath)
+    tmp = lpath + ".new"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    if lpath.endswith(".db"):
+        if not quick_ok(tmp):
+            salvage_file(tmp)
+        if not quick_ok(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return False
+    os.replace(tmp, lpath)
+    for suf in ("-wal", "-shm"):
+        try:
+            os.remove(lpath + suf)
+        except OSError:
+            pass
+    return True
+
+
+# ---------- GitHub ----------
 
 def _head(path):
     c = cfg()
@@ -392,11 +455,8 @@ def push_user(user, force=True):
 
     files, sent, skipped = {}, 0, 0
     for p in user_files(user):
-        if p.endswith(".db"):
-            _checkpoint(p)
         try:
-            with open(p, "rb") as f:
-                data = f.read()
+            data = _read(p)
         except Exception:
             continue
         h = _sha(data)
@@ -464,15 +524,8 @@ def pull_user(user, force=False):
             data = _raw(rpath)
             if data is None:
                 continue
-            os.makedirs(os.path.dirname(lpath) or ".", exist_ok=True)
-            for suf in ("-wal", "-shm"):
-                try:
-                    if os.path.exists(lpath + suf):
-                        os.remove(lpath + suf)
-                except Exception:
-                    pass
-            with open(lpath, "wb") as f:
-                f.write(data)
+            if not _restore_file(lpath, data):
+                continue
             restored.append(lpath)
         except Exception as e:
             st["err"] = repr(e)
@@ -591,15 +644,8 @@ def pull(force=False):
             data = _raw(rpath)
             if data is None:
                 continue
-            os.makedirs(os.path.dirname(lpath) or ".", exist_ok=True)
-            for suf in ("-wal", "-shm"):
-                try:
-                    if os.path.exists(lpath + suf):
-                        os.remove(lpath + suf)
-                except Exception:
-                    pass
-            with open(lpath, "wb") as f:
-                f.write(data)
+            if not _restore_file(lpath, data):
+                continue
             restored.append(lpath)
         except Exception as e:
             _STATE["err"] = repr(e)
@@ -629,11 +675,8 @@ def push(force=False):
 
     files, sent, skipped = {}, 0, 0
     for p in _shared_paths():
-        if p.endswith(".db"):
-            _checkpoint(p)
         try:
-            with open(p, "rb") as f:
-                data = f.read()
+            data = _read(p)
         except Exception:
             continue
         h = _sha(data)
