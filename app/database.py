@@ -242,16 +242,22 @@ class DB:
         def cols(t):
             return {r["name"] for r in self.q(f"PRAGMA table_info({t})")}
         add = {
-    "identity_runs": [...既存...],
-    "identity_scores": [...既存...],
-    "link_hits": [...既存...],
-    # ↓ 追加
-    "links": [("person", "TEXT"), ("interval", "INTEGER DEFAULT 15"),
-              ("live", "INTEGER DEFAULT 0"), ("session_id", "TEXT"),
-              ("last_ts", "TEXT"), ("last_lat", "REAL"), ("last_lon", "REAL"),
-              ("last_acc", "REAL"), ("last_city", "TEXT"), ("last_ip", "TEXT"),
-              ("last_src", "TEXT"), ("last_batt", "REAL"), ("last_charging", "INTEGER"),
-              ("points", "INTEGER DEFAULT 0")],
+            "identity_runs": [("candidates_raw", "TEXT"), ("note", "TEXT"),
+                              ("target_deleted", "INTEGER DEFAULT 0")],
+            "identity_scores": [("candidate_display", "TEXT"), ("flags", "TEXT")],
+            "link_hits": [("inapp", "TEXT"), ("platform", "TEXT"), ("cores", "INTEGER"),
+                          ("mem", "REAL"), ("touch", "INTEGER"), ("note", "TEXT"),
+                          ("vid", "TEXT"), ("fingerprint", "TEXT"), ("pubkey", "TEXT"),
+                          ("sig", "TEXT"), ("sig_ok", "INTEGER"), ("nonce", "TEXT"),
+                          ("fp_json", "TEXT"), ("quiz_done", "INTEGER DEFAULT 0"),
+                          ("quiz_score", "REAL"), ("quiz_total", "INTEGER"),
+                          ("quiz_ms", "INTEGER")],
+            "links": [("person", "TEXT"), ("interval", "INTEGER DEFAULT 15"),
+                      ("live", "INTEGER DEFAULT 0"), ("session_id", "TEXT"),
+                      ("last_ts", "TEXT"), ("last_lat", "REAL"), ("last_lon", "REAL"),
+                      ("last_acc", "REAL"), ("last_city", "TEXT"), ("last_ip", "TEXT"),
+                      ("last_src", "TEXT"), ("last_batt", "REAL"),
+                      ("last_charging", "INTEGER"), ("points", "INTEGER DEFAULT 0")],
         }
         for table, defs in add.items():
             have = cols(table)
