@@ -155,6 +155,15 @@ CREATE TABLE IF NOT EXISTS visitors (
     device TEXT, os TEXT, browser TEXT, inapp TEXT,
     fingerprint TEXT, pubkey TEXT, label TEXT, note TEXT
 );
+CREATE TABLE IF NOT EXISTS track_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, link_id INTEGER, person TEXT, sid TEXT,
+    ts TEXT, kind TEXT DEFAULT 'pt', src TEXT DEFAULT 'gps',
+    lat REAL, lon REAL, acc REAL, spd REAL, hdg REAL,
+    ip TEXT, country TEXT, country_code TEXT, region TEXT, city TEXT, isp TEXT, asn TEXT,
+    device TEXT, os TEXT, browser TEXT, inapp TEXT,
+    battery REAL, charging INTEGER, screen TEXT, note TEXT
+);
 CREATE TABLE IF NOT EXISTS sns_scans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT, total INTEGER DEFAULT 0, found INTEGER DEFAULT 0,
