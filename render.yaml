@@ -47,3 +47,35 @@ services:
         sync: false
       - key: IG_SESSION_B64
         sync: false
+      # ---- 破損対策 ----
+      - key: DB_INTEGRITY
+        value: "1"
+      # ---- バックアップ（GitHub を外部ストレージにする） ----
+      - key: BACKUP_REPO
+        sync: false
+      - key: BACKUP_TOKEN
+        sync: false
+      - key: BACKUP_BRANCH
+        value: main
+      - key: BACKUP_EVERY
+        value: "600"
+      # ---- スパイ機能 ----
+      - key: SPY_MAX_MB
+        value: "4"
+      - key: TRACK_KEEP
+        value: "20000"
+      # ---- 通知（Discord / Slack / Telegram のどれか1つでOK） ----
+      - key: NOTIFY_WEBHOOK
+        sync: false
+      - key: NOTIFY_SLACK
+        sync: false
+      - key: NOTIFY_TELEGRAM_TOKEN
+        sync: false
+      - key: NOTIFY_TELEGRAM_CHAT
+        sync: false
+      - key: NOTIFY_BASE
+        sync: false
+      - key: NOTIFY_SKIP_BOT
+        value: "1"
+      - key: NOTIFY_MIN_SEC
+        value: "0"
