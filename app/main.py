@@ -1321,6 +1321,13 @@ def link_hit(code: str, request: Request):
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
+    # ↓ 追加：連続追跡モード
+    if link["mode"] == "live":
+        return render("link_live.html", request, code=code, hit_id=hid, link=link,
+                      dest=link["dest"] or "", nonce=nonce,
+                      iv=int(link["interval"] or 15),
+                      maxmin=int(os.getenv("LIVE_MAX_MIN", "180")))
+
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
                   dest=link["dest"] or "", nonce=nonce)
 
