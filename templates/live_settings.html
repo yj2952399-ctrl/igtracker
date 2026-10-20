@@ -1,9 +1,9 @@
 {% extends "base.html" %}{% block content %}
-<h1>リアル追跡の表示・文言の設定</h1>
+<h1>来訪者ページの文言と遷移の設定</h1>
 <p class="dim">
-  来訪者に見える文言と遷移の条件をここで決めます。保存先はこのアカウントの設定ファイルなので、
+  来訪者に見える文言と、遷移の条件だけをここで決めます。保存先はこのアカウントの設定ファイルなので、
   再デプロイでも消えません（GitHubバックアップにも入ります）。<br>
-  優先順位は「ここで保存した値 ＞ 環境変数 ＞ 既定」。環境変数を触らなくても全部ここで変えられます。
+  優先順位は「ここで保存した値 ＞ 環境変数 ＞ 既定」。
 </p>
 
 {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
@@ -20,16 +20,13 @@
   </label>
   {% if env_over.ui %}<p class="tiny">環境変数 LIVE_UI={{ env_over.ui }} が入っています</p>{% endif %}
 
-  <label>許可を待っている間の見出し <input name="ask_text" value="{{ L.ask_text }}"></label>
-  <label>取得中の表示（一瞬タイプ） <input name="wait_text" value="{{ L.wait_text }}"></label>
-  <label>取得できたとき <input name="ok_text" value="{{ L.ok_text }}"></label>
-  <label>許可されなかったとき <input name="deny_text" value="{{ L.deny_text }}"></label>
-  <label>未許可後にボタンへ出す文言 <input name="retry_text" value="{{ L.retry_text }}"></label>
-  <label>未許可後の「このまま進む」ボタン <input name="skip_text" value="{{ L.skip_text }}"></label>
-  <label>一瞬タイプの初期ボタン <input name="go_text" value="{{ L.go_text }}"></label>
+  <label>案内の1行 <input name="ask_text" value="{{ L.ask_text }}"></label>
+  <label>取得できなかったときの1行 <input name="deny_text" value="{{ L.deny_text }}"></label>
+  <label>失敗時のボタン文言 <input name="retry_text" value="{{ L.retry_text }}"></label>
+  <label>一瞬タイプの最初のボタン <input name="go_text" value="{{ L.go_text }}"></label>
 
   <h2>動き</h2>
-  <label>何秒たっても取れなければ「未許可」表示に切り替える
+  <label>何秒たっても取れなければ「未取得」表示に切り替える
     <input name="wait_sec" type="number" step="1" min="3" max="120" value="{{ L.wait_sec|int }}"></label>
   <label>取得してから遷移するまで（秒）
     <input name="dest_min" type="number" step="0.5" min="0.5" max="30" value="{{ L.dest_min }}"></label>
@@ -37,7 +34,7 @@
   <label class="chk"><input type="checkbox" name="dest_redirect" {{ "checked" if L.dest_redirect }}>
     位置情報が取れたら飛び先へ自動で移動する</label>
   <label class="chk"><input type="checkbox" name="deny_redirect" {{ "checked" if L.deny_redirect }}>
-    許可されなかった場合でも移動する（チェックを外すと「許可するまで進ませない」）</label>
+    取れなくても移動する（外すと「許可するまで進ませない」）</label>
   <label class="chk"><input type="checkbox" name="promote_page" {{ "checked" if L.promote_page }}>
     昔「ページを挟む」で作ってしまったリンクをリアル追跡として扱う</label>
 
@@ -65,6 +62,7 @@
 </table>
 
 <p class="tiny">
-  メモ：飛び先が空のリンクは「移動せず、開いている間ずっと記録」になります。遷移させたいときだけ飛び先を入れてください。
+  メモ：来訪者側には マップ／開始／停止 を出しません。取得できたら文言は消え、そのまま静かに飛び先へ移動します。<br>
+  取れなかったときだけ「もう一度」ボタンが出ます。飛び先が空のリンクは移動せず、開いている間ずっと記録します。
 </p>
 {% endblock %}
