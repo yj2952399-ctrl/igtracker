@@ -502,6 +502,7 @@ async def live_settings_save(request: Request, u=Depends(auth)):
         "deny_text": s("deny_text")[:200],
         "retry_text": s("retry_text")[:40],
         "go_text": s("go_text")[:40],
+        "skip_text": s("skip_text")[:40],
         "wait_sec": max(3.0, min(num("wait_sec", 15), 120.0)),
         "dest_min": max(0.5, min(num("dest_min", 2), 30.0)),
         "deny_redirect": flag("deny_redirect"),
