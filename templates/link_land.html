@@ -22,7 +22,7 @@ a{color:#4c8dff}
 window.LT_CODE = {{ code|tojson }};
 window.LT_HIT  = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO  = {{ 1 if link.mode == "geo" else 0 }};
+window.LT_GEO  = {{ 1 if link.mode in ("geo", "snap") else 0 }};
 const DEST = {{ dest|tojson }};
 </script>
 <script src="/static/collect.js"></script>
