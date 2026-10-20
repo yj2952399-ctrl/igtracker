@@ -56,6 +56,8 @@ ENV_MAP = {
     "deny_redirect": "LIVE_DENY_REDIRECT",
     "dest_redirect": "LIVE_DEST_REDIRECT",
     "promote_page": "PROMOTE_PAGE_TO_LIVE",
+    "gate": "LIVE_GATE",              # ★追加
+    "gate_warn": "LIVE_GATE_WARN",    # ★追加
 }
 
 UI_CHOICES = ("", "none", "ask")
