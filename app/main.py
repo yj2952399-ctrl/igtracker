@@ -41,6 +41,10 @@ admin = APIRouter(prefix=ADMIN_PATH)
 # --- マルチSNS（新規） ---
 from . import snsx
 app.include_router(snsx.router)
+# --- 追跡（新規） ---        ← ここから2行を追加
+from . import tracks
+app.include_router(tracks.router)
+app.include_router(snsx.router)
 
 # ---------- Instagram 接続の状態管理 ----------
 
