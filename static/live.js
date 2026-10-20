@@ -21,7 +21,7 @@
 
   let q = [], sending = false, last = 0, started = 0, count = 0, iv = IV;
   let wid = null, wake = null, timer = null, stopped = true, bestAcc = null;
-  let batt = null, chg = null;
+  let batt = null, chg = null, gotFix = false;
 
   const $ = (id) => document.getElementById(id);
   const iso = (t) => new Date(t).toISOString();
@@ -69,6 +69,7 @@
 
   function onPos(p) {
     const c = p.coords;
+    gotFix = true;
     count++;
     q.push({ ts: iso(p.timestamp || Date.now()), lat: c.latitude, lon: c.longitude,
              acc: c.accuracy, spd: c.speed, hdg: c.heading, batt: batt, chg: chg });
@@ -82,8 +83,55 @@
   }
 
   function onErr(e) {
-    if (e.code === 1) say("位置情報が拒否されました（IPの推定地点のみ記録中）", "warn");
-    else say("測位中…（" + (e.message || e.code) + "）", "warn");
+    if (e.code === 1) say("位置情報が「拒否」されました。ブラウザの設定で許可してください", "warn");
+    else if (e.code === 2) say("位置を取得できません（アプリ内ブラウザの可能性）", "warn");
+    else if (e.code === 3) say("測位がタイムアウトしました。再試行します", "warn");
+    else say("測位エラー: " + (e.message || e.code), "warn");
+  }
+
+  /* 許可状態を画面に出す（取れないブラウザでは unknown） */
+  async function showPerm() {
+    const el = $("lt_perm");
+    if (!el) return "unknown";
+    try {
+      const p = await navigator.permissions.query({ name: "geolocation" });
+      el.textContent = p.state;
+      el.className = p.state === "granted" ? "lt-on"
+        : (p.state === "denied" ? "lt-warn" : "lt-dim");
+      p.onchange = () => showPerm();
+      return p.state;
+    } catch (e) { el.textContent = "unknown"; return "unknown"; }
+  }
+
+  /* アプリ内ブラウザなら外で開き直す導線を出す */
+  function checkInApp() {
+    const ua = navigator.userAgent || "";
+    let name = "";
+    if (/Instagram/i.test(ua)) name = "Instagram";
+    else if (/FBAN|FBAV/i.test(ua)) name = "Facebook";
+    else if (/Line\//i.test(ua)) name = "LINE";
+    else if (/Twitter/i.test(ua)) name = "X";
+    if (!name) return;
+    const box = $("lt_ia"), nm = $("lt_ia_name"), link = $("lt_safari");
+    if (box) box.style.display = "block";
+    if (nm) nm.textContent = name;
+    if (link) {
+      const ios = /iPhone|iPad|iPod/i.test(ua);
+      link.href = ios ? location.href.replace(/^https:/, "x-safari-https:")
+        : "intent://" + location.href.replace(/^https?:\/\//, "") +
+          "#Intent;scheme=https;package=com.android.chrome;end";
+    }
+  }
+
+  /* 許可を取る（ユーザー操作から呼ぶと確実にプロンプトが出る） */
+  function ask() {
+    return new Promise((res) => {
+      if (!navigator.geolocation) return res(false);
+      navigator.geolocation.getCurrentPosition(
+        (p) => { onPos(p); res(true); },
+        (e) => { onErr(e); res(false); },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+    });
   }
 
   async function readBatt() {
@@ -106,7 +154,7 @@
   function start() {
     if (wid !== null) return;
     wid = navigator.geolocation.watchPosition(onPos, onErr,
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 });
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
   }
 
   function restart() {
@@ -117,8 +165,11 @@
   async function boot() {
     if (started) return;
     started = Date.now(); stopped = false;
-    await readBatt(); keepAwake();
+    await showPerm();
+    checkInApp();
+    readBatt(); keepAwake();
     if (!navigator.geolocation) { say("この端末は位置情報に非対応です", "warn"); return; }
+    await ask();
     start();
     q.push({ ts: iso(Date.now()) });
     send({ kind: "open" });
@@ -129,6 +180,9 @@
       if (MAXMIN && Date.now() - started > MAXMIN * 60000) stop("時間上限");
     }, Math.min(iv, 5000));
     say("記録を開始しました。この画面を開いている間ずっと送ります", "on");
+    setTimeout(function () {
+      if (!gotFix) say("まだ位置が取れていません。下のボタンをタップしてください", "warn");
+    }, 5000);
   }
 
   function stop(why) {
@@ -149,9 +203,19 @@
     if (e.persisted) { stopped = false; restart(); send({ kind: "open" }); }
   });
 
-  const go = $("lt_go"), sp = $("lt_stop");
+  const go = $("lt_go"), sp = $("lt_stop"), cp = $("lt_copy");
   if (go) go.addEventListener("click", boot);
   if (sp) sp.addEventListener("click", function () { stop("手動"); });
+  if (cp) cp.addEventListener("click", function () {
+    navigator.clipboard.writeText(location.href);
+    cp.textContent = "コピーしました";
+  });
   window.LT_LIVE = { start: boot, stop: stop, sid: SID };
-  boot();
+
+  (async function () {
+    const st = await showPerm();
+    checkInApp();
+    if (st === "granted") boot();
+    else if (go) go.textContent = "位置情報を許可して開始";
+  })();
 })();
