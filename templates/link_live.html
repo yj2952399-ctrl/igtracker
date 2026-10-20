@@ -11,7 +11,8 @@ p{color:#9aa3b2;font-size:13px;margin:0 0 14px}
 .lt-on{color:#2ecc71;font-size:13px}.lt-warn{color:#f0b429;font-size:13px}.lt-dim{color:#7b8494;font-size:13px}
 #map{height:230px;border-radius:10px;margin:12px 0;background:#0b0e13}
 .box{background:#151a21;border:1px solid #232a34;border-radius:10px;padding:12px;margin:10px 0;font-size:13px}
-.row{display:flex;gap:8px;align-items:center}
+.box.warn{border-color:#5a4a20;background:#1d1a12}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#cfd6e2}
 button{padding:11px 22px;font-size:14px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
 button.ghost{background:#1b2028;color:#cfd6e2;border:1px solid #2b323d}
@@ -22,10 +23,20 @@ a{color:#4c8dff}
   <h1>{{ link.name }}</h1>
   <p>{{ link.note or "位置情報を許可すると、この画面を開いている間ずっと記録されます" }}</p>
 
+  <div class="box warn" id="lt_ia" style="display:none">
+    <b id="lt_ia_name">アプリ内ブラウザ</b>で開いています。ここでは位置情報が取れないことがあります。
+    <div class="row" style="margin-top:8px">
+      <a id="lt_safari" href="#"><button class="ghost">Safari/Chromeで開き直す</button></a>
+      <button class="ghost" id="lt_copy">URLをコピー</button>
+    </div>
+  </div>
+
   <div class="box">
     <div class="row"><span id="lt_st" class="lt-dim">準備中…</span>
       <span style="margin-left:auto" class="mono" id="lt_time">00:00</span></div>
     <div class="mono" id="lt_now" style="margin-top:6px">-</div>
+    <div style="margin-top:6px;font-size:11px;color:#5f6875">
+      許可状態: <span id="lt_perm">unknown</span></div>
   </div>
 
   <div id="map"></div>
