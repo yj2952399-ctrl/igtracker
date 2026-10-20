@@ -211,6 +211,9 @@ CREATE INDEX IF NOT EXISTS idx_visitors_seen ON visitors(last_seen);
 CREATE INDEX IF NOT EXISTS idx_sns_scan ON sns_hits(scan_id, state);
 CREATE INDEX IF NOT EXISTS idx_sns_u ON sns_hits(username, state);
 CREATE INDEX IF NOT EXISTS idx_ct_camp ON campaign_targets(campaign_id, state);
+CREATE INDEX IF NOT EXISTS idx_tp_code ON track_points(code, id);
+CREATE INDEX IF NOT EXISTS idx_tp_sid ON track_points(code, sid, id);
+CREATE INDEX IF NOT EXISTS idx_tp_ts ON track_points(ts);
 """
 
 
