@@ -41,6 +41,8 @@ LIVE_DEFAULTS = {
     "deny_redirect": False,
     "dest_redirect": True,
     "promote_page": True,
+    "gate": True,          # ★追加
+    "gate_warn": True,     # ★追加
 }
 
 ENV_MAP = {
