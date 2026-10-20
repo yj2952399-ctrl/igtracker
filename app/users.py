@@ -69,7 +69,16 @@ def _c():
         _conn.commit()
         _migrate(_conn)
     return _conn
-
+def close():
+    """root.db の接続を閉じる（バックアップ復元の前に使う）。"""
+    global _conn
+    with _lock:
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+            _conn = None
 
 def _migrate(c):
     def cols(t):
