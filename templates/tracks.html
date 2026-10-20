@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% block content %}
+<h1>追跡（人物ごと）</h1>
+<p class="dim">人物ごとにURLを1本作り、DMやストーリーで踏ませます。
+「一瞬」は開いた瞬間の1点だけ、「リアルタイム」は開いている間ずっと記録します。
+作ったURLはいつでもここから開けます。</p>
+
+<form method="post" action="/tracks/add" class="card">
+  <label>人物名 <input name="person" placeholder="例: Aさん / 裏垢のあの人" required></label>
+  <label>種類
+    <select name="mode">
+      <option value="snap">一瞬のタイプ（開いた瞬間の1点だけ）</option>
+      <option value="live">リアルタイム追跡（開いている間ずっと）</option>
+    </select></label>
+  <label>送信間隔（秒・リアルタイムのみ） <input name="interval" type="number" value="15" min="5" max="600"></label>
+  <label>飛び先URL（任意） <input name="dest" placeholder="https://www.instagram.com/xxxx/"></label>
+  <label>メモ <input name="note"></label>
+  <button>この人物の追跡URLを作る</button>
+</form>
+
+<h2>登録済み {{ rows|length }} 件</h2>
+{% for person, items in groups.items() %}
+<div class="card">
+  <h3>{{ person }}</h3>
+  <table>
+  <tr><th>種類</th><th>状態</th><th>最新位置</th><th>点数</th><th>URL</th><th></th></tr>
+  {% for l in items %}
+  <tr>
+    <td>{% if l.mode == "live" %}<span class="badge">リアルタイム</span>{% else %}一瞬{% endif %}</td>
+    <td>{% if l.live %}<span class="badge">ライブ中</span>
+        {% elif l.last_ts %}{{ l.last_ts[:19] }}<br><small>最終更新</small>
+        {% else %}未使用{% endif %}</td>
+    <td>{% if l.last_lat %}<span class="mono">{{ l.last_lat|round(5) }}, {{ l.last_lon|round(5) }}</span>
+        <br><small>{{ l.last_city or "" }} {{ l.last_src or "" }}</small>
+        {% else %}-{% endif %}</td>
+    <td>{{ l.pts }}</td>
+    <td class="mono">{{ base }}/l/{{ l.code }}</td>
+    <td>
+      <a href="/track/{{ l.code }}"><button type="button">開く</button></a>
+      <a href="/link/{{ l.code }}/qr.png" target="_blank" rel="noopener"><button type="button">QR</button></a>
+      <form method="post" action="/track/{{ l.code }}/delete" style="display:inline">
+        <button>削除</button></form>
+    </td>
+  </tr>
+  {% endfor %}
+  </table>
+</div>
+{% else %}
+<p class="dim">まだありません。上のフォームから人物を登録してください。</p>
+{% endfor %}
+{% endblock %}
