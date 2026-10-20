@@ -1,0 +1,137 @@
+{% extends "base.html" %}{% block content %}
+<h1>{{ link.person or link.name }}
+  {% if link.mode == "live" %}<span class="badge">リアルタイム</span>{% else %}<span class="badge">一瞬</span>{% endif %}
+  {% if live %}<span class="badge">ライブ中</span>{% endif %}
+  {% if not link.active %}<span class="badge">停止中</span>{% endif %}
+</h1>
+<p class="mono">{{ base }}/l/{{ link.code }}</p>
+
+<div class="card">
+  <div class="row">
+    <a href="{{ base }}/l/{{ link.code }}" target="_blank" rel="noopener"><button type="button">URLを開く</button></a>
+    <a href="/link/{{ link.code }}/qr.png" target="_blank" rel="noopener"><button type="button">QR</button></a>
+    <button type="button" id="copy" data-u="{{ base }}/l/{{ link.code }}">URLをコピー</button>
+    <form method="post" action="/track/{{ link.code }}/clear" style="display:inline">
+      <button>位置履歴を消す</button></form>
+    <form method="post" action="/track/{{ link.code }}/delete" style="display:inline">
+      <button>削除</button></form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="grid2">
+    <div><div class="k">状態</div><div class="v" id="s_state">{{ "ライブ中" if live else ("最終 " + (link.last_ts or "-")[:19]) }}</div></div>
+    <div><div class="k">現在地</div><div class="v mono" id="s_now">{{ (link.last_lat|round(5) ~ ", " ~ link.last_lon|round(5)) if link.last_lat else "-" }}</div></div>
+    <div><div class="k">精度</div><div class="v" id="s_acc">{{ (link.last_acc|round(0) ~ " m") if link.last_acc else "-" }}</div></div>
+    <div><div class="k">点数</div><div class="v" id="s_n">{{ n }}</div></div>
+    <div><div class="k">移動距離</div><div class="v" id="s_km">-</div></div>
+    <div><div class="k">セッション</div><div class="v">{{ sessions|length }}</div></div>
+    <div><div class="k">推定市区町村</div><div class="v" id="s_city">{{ link.last_city or "-" }}</div></div>
+    <div><div class="k">電池</div><div class="v" id="s_batt">{{ (link.last_batt|round(2)) if link.last_batt is not none else "-" }}</div></div>
+    <div><div class="k">送信間隔</div><div class="v">{{ link.interval }} 秒</div></div>
+  </div>
+  <label style="margin-top:10px"><input type="checkbox" id="follow" checked> 最新位置に地図を追従する</label>
+</div>
+
+<h2>地図</h2>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<h2>設定</h2>
+<form method="post" action="/track/{{ link.code }}/update" class="card">
+  <label>人物名 <input name="person" value="{{ link.person or link.name }}"></label>
+  <label>種類
+    <select name="mode">
+      <option value="snap" {{ "selected" if link.mode == "snap" }}>一瞬のタイプ</option>
+      <option value="live" {{ "selected" if link.mode == "live" }}>リアルタイム追跡</option>
+    </select></label>
+  <label>送信間隔（秒） <input name="interval" type="number" value="{{ link.interval }}" min="5" max="600"></label>
+  <label>メモ <input name="note" value="{{ link.note or '' }}"></label>
+  <label>状態
+    <select name="active">
+      <option value="1" {{ "selected" if link.active }}>有効</option>
+      <option value="0" {{ "selected" if not link.active }}>停止</option>
+    </select></label>
+  <button>保存</button>
+</form>
+
+<h2>軌跡（{{ n }} 点）</h2>
+<table id="plog">
+<tr><th>時刻</th><th>座標</th><th>精度</th><th>種別</th><th>推定地域</th><th>IP</th><th>電池</th></tr>
+{% for p in pts|reverse %}
+<tr>
+  <td>{{ (p.ts or "")[:19] }}</td>
+  <td class="mono">{{ p.lat|round(5) }}, {{ p.lon|round(5) }}</td>
+  <td>{{ p.acc|round(0) if p.acc else "-" }}m</td>
+  <td>{{ "GPS" if p.src == "gps" else "IP" }}</td>
+  <td>{{ p.city or "" }}</td>
+  <td class="mono">{{ p.ip }}</td>
+  <td>{{ p.batt if p.batt is not none else "-" }}</td>
+</tr>
+{% endfor %}
+</table>
+
+<script>
+const PTS = {{ pts_json|safe }};
+const CODE = {{ link.code|tojson }};
+const MODE = {{ link.mode|tojson }};
+const m = L.map('map').setView([36.2,138.2],5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {attribution:'&copy; OpenStreetMap'}).addTo(m);
+const line = L.polyline([], {color:'#4c8dff', weight:4, opacity:.85}).addTo(m);
+const me = L.circleMarker([36.2,138.2], {radius:9, color:'#2ecc71',
+  fillColor:'#2ecc71', fillOpacity:.9}).addTo(m);
+const follow = document.getElementById('follow');
+
+function hav(a,b){
+  const R=6371000, r=Math.PI/180;
+  const dLat=(b[0]-a[0])*r, dLon=(b[1]-a[1])*r;
+  const s=Math.sin(dLat/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+let lastId = 0, dist = 0, count = 0;
+function add(p){
+  if (p.lat === null || p.lat === undefined) return;
+  const c = [p.lat, p.lon];
+  const cur = line.getLatLngs();
+  if (count) dist += hav(c, [cur[cur.length-1].lat, cur[cur.length-1].lng]);
+  line.addLatLng(c); me.setLatLng(c); count++;
+  document.getElementById('s_n').textContent = count;
+  document.getElementById('s_km').textContent =
+    dist > 1000 ? (dist/1000).toFixed(2)+' km' : Math.round(dist)+' m';
+  if (follow.checked) m.setView(c, Math.max(m.getZoom(), 15));
+  if (p.id > lastId) lastId = p.id;
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td>'+(p.ts||'').slice(0,19)+'</td><td class="mono">'+
+    p.lat.toFixed(5)+', '+p.lon.toFixed(5)+'</td><td>'+
+    (p.acc?Math.round(p.acc)+'m':'-')+'</td><td>'+(p.src==='gps'?'GPS':'IP')+
+    '</td><td>'+(p.city||'')+'</td><td class="mono">'+(p.ip||'')+'</td><td>-</td>';
+  const tb = document.getElementById('plog');
+  tb.insertBefore(tr, tb.children[1] || null);
+}
+PTS.forEach(add);
+if (count) m.fitBounds(line.getBounds(), {padding:[30,30]});
+document.getElementById('copy').addEventListener('click', function(){
+  navigator.clipboard.writeText(this.dataset.u);
+  this.textContent = 'コピーしました';
+});
+
+async function poll(){
+  try {
+    const j = await (await fetch('/api/track/'+CODE+'?since='+lastId)).json();
+    (j.points||[]).forEach(add);
+    if (j.last && j.last.ts) {
+      document.getElementById('s_state').textContent =
+        j.live ? 'ライブ中' : '最終 '+String(j.last.ts).slice(0,19);
+      if (j.last.lat !== null) document.getElementById('s_now').textContent =
+        j.last.lat.toFixed(5)+', '+j.last.lon.toFixed(5);
+      document.getElementById('s_acc').textContent =
+        j.last.acc ? Math.round(j.last.acc)+' m' : '-';
+      document.getElementById('s_city').textContent = j.last.city || '-';
+    }
+  } catch(e){}
+}
+setInterval(poll, MODE === 'live' ? 5000 : 15000);
+</script>
+{% endblock %}
