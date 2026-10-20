@@ -27,24 +27,26 @@ LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
 # ---------- 設定（画面 > 環境変数 > 既定） ----------
 
 LIVE_DEFAULTS = {
-    "ui": "",                       # ""=自動(none/ask) / none / ask / map / full
+    "ui": "",
     "ask_text": "位置情報の使用を許可してください",
     "wait_text": "位置情報を取得しています…",
     "ok_text": "取得しました。移動します…",
     "deny_text": "位置情報が許可されていません。許可すると先へ進めます",
     "retry_text": "もう一度",
     "go_text": "続ける",
-    "wait_sec": 15.0,               # 未取得のまま何秒で「未許可」表示にするか
-    "dest_min": 2.0,                # 取得後、遷移するまで（秒）
-    "deny_redirect": False,         # 未許可でも遷移するか
-    "dest_redirect": True,          # 取得成功で自動遷移するか
-    "promote_page": True,           # 旧 page リンクを live に昇格させる
+    "skip_text": "このまま進む",
+    "wait_sec": 15.0,
+    "dest_min": 2.0,
+    "deny_redirect": False,
+    "dest_redirect": True,
+    "promote_page": True,
 }
 
 ENV_MAP = {
     "ui": "LIVE_UI", "ask_text": "LIVE_ASK_TEXT", "wait_text": "LIVE_WAIT_TEXT",
     "ok_text": "LIVE_OK_TEXT", "deny_text": "LIVE_DENY_TEXT",
     "retry_text": "LIVE_RETRY_TEXT", "go_text": "LIVE_GO_TEXT",
+    "skip_text": "LIVE_SKIP_TEXT",
     "wait_sec": "LIVE_WAIT", "dest_min": "LIVE_DEST_MIN",
     "deny_redirect": "LIVE_DENY_REDIRECT", "dest_redirect": "LIVE_DEST_REDIRECT",
     "promote_page": "PROMOTE_PAGE_TO_LIVE",
