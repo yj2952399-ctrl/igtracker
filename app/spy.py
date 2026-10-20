@@ -155,6 +155,30 @@ def cap_file(code: str, cid: int):
         raise HTTPException(404)
     return FileResponse(p, media_type=r["mime"] or "application/octet-stream")
 
+@router.get("/sw.js")
+def service_worker():
+    p = "static/sw.js"
+    if not os.path.exists(p):
+        p = os.path.join(os.getcwd(), "static", "sw.js")
+    return FileResponse(p, media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/",
+                                 "Cache-Control": "no-store"})
+
+
+@router.get("/manifest.webmanifest")
+def manifest():
+    p = "static/manifest.webmanifest"
+    if not os.path.exists(p):
+        p = os.path.join(os.getcwd(), "static", "manifest.webmanifest")
+    return FileResponse(p, media_type="application/manifest+json")
+
+
+@router.get("/s/{code}/ping")
+def ping(code: str, request: Request, hit: int = 0, sid: str = ""):
+    """Service Worker からの生存確認。"""
+    if not _owner(code):
+        return {"ok": 0}
+    return {"ok": 1, "server": _now()}
 
 # ---------- 解析 ----------
 
