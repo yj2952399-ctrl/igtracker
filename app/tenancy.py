@@ -34,6 +34,28 @@ def db_for(user: str) -> DB:
         return inst
 
 
+def close(user: str):
+    """そのテナントの接続を閉じる（復元前に必ず呼ぶ）。"""
+    with _lock:
+        inst = _dbs.pop(safe_name(user), None)
+    if inst is not None:
+        try:
+            inst.close()
+        except Exception:
+            pass
+
+
+def close_all():
+    with _lock:
+        items = list(_dbs.values())
+        _dbs.clear()
+    for inst in items:
+        try:
+            inst.close()
+        except Exception:
+            pass
+
+
 def set_current(user):
     _current.set(safe_name(user) if user else None)
 
