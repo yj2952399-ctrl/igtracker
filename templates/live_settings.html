@@ -1,68 +1,98 @@
-{% extends "base.html" %}{% block content %}
-<h1>来訪者ページの文言と遷移の設定</h1>
-<p class="dim">
-  来訪者に見える文言と、遷移の条件だけをここで決めます。保存先はこのアカウントの設定ファイルなので、
-  再デプロイでも消えません（GitHubバックアップにも入ります）。<br>
-  優先順位は「ここで保存した値 ＞ 環境変数 ＞ 既定」。
-</p>
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>追跡の表示設定</title>
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:18px}
+h1{font-size:18px;margin:0 0 4px}
+p.sub{color:#8b93a7;font-size:12px;margin:0 0 16px}
+.card{background:#171a21;border:1px solid #232734;border-radius:12px;padding:16px;margin-bottom:14px}
+label{display:block;font-size:13px;color:#c7cddb;margin:12px 0 4px}
+input[type=text],input[type=number],select,textarea{width:100%;box-sizing:border-box;
+  background:#0f1115;border:1px solid #2b3346;border-radius:8px;color:#e6e9ef;padding:9px 10px;font-size:14px}
+textarea{min-height:70px;resize:vertical}
+.chk{display:flex;align-items:flex-start;gap:9px;margin:12px 0;font-size:13px;color:#c7cddb;line-height:1.6}
+.chk input{margin-top:3px;flex:0 0 auto;width:17px;height:17px}
+button{padding:11px 24px;border:0;border-radius:999px;background:#4c8dff;color:#fff;font-size:14px;font-weight:600}
+button.ghost{background:#2b3346;color:#c7cddb;font-weight:400}
+.msg{background:#12301c;color:#7ee08a;padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
+.err{background:#3a1b1b;color:#ff9b9b;padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
+.env{font-size:11px;color:#6b7386;margin-top:4px}
+.hint{font-size:11.5px;color:#8b93a7;line-height:1.7;margin:6px 0 0}
+a{color:#4c8dff}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+</style></head><body><div class="wrap">
+<h1>追跡の表示設定</h1>
+<p class="sub">来訪者に見える文言と、許可を求めるタイミングを決めます。 ／
+  <a href="/tracks">追跡一覧</a> ・ <a href="/">ホーム</a></p>
 
-{% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
-{% if err %}<p class="warn">{{ err }}</p>{% endif %}
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+{% if err %}<div class="err">{{ err }}</div>{% endif %}
 
-<form method="post" action="/livetrack" class="card">
-  <h2>表示</h2>
-  <label>来訪者側に何を出すか
+<form method="post" action="/livetrack">
+
+  <div class="card">
+    <strong>許可を求めるタイミング</strong>
+    <label class="chk">
+      <input type="checkbox" name="gate" value="1" {% if L.gate %}checked{% endif %}>
+      <span>開いた直後に「要件＋続ける」を表示し、押してから位置情報・カメラ・マイクの許可を求める<br>
+      <span class="hint">OFFにすると今までどおり読み込み直後に許可を要求します（iOSでプロンプトが競合しやすくなります）</span></span>
+    </label>
+    <label class="chk">
+      <input type="checkbox" name="gate_warn" value="1" {% if L.gate_warn %}checked{% endif %}>
+      <span>要件の下に「4G/5G回線ではIPの位置が不正確」の注意書きを出す</span>
+    </label>
+    <label>「続ける」ボタンの文言</label>
+    <input type="text" name="go_text" value="{{ L.go_text }}">
+    {% if env_over.get('go_text') %}<div class="env">環境変数 LIVE_GO_TEXT が優先されています</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <strong>案内の出し方</strong>
+    <label>モード</label>
     <select name="ui">
-      {% for v in ui_choices %}
-      <option value="{{ v }}" {{ "selected" if L.ui == v }}>{{ ui_label[v] }}</option>
+      {% for c in ui_choices %}
+      <option value="{{ c }}" {% if L.ui == c %}selected{% endif %}>{{ ui_label[c] }}</option>
       {% endfor %}
     </select>
-  </label>
-  {% if env_over.ui %}<p class="tiny">環境変数 LIVE_UI={{ env_over.ui }} が入っています</p>{% endif %}
-
-  <label>案内の1行 <input name="ask_text" value="{{ L.ask_text }}"></label>
-  <label>取得できなかったときの1行 <input name="deny_text" value="{{ L.deny_text }}"></label>
-  <label>失敗時のボタン文言 <input name="retry_text" value="{{ L.retry_text }}"></label>
-  <label>一瞬タイプの最初のボタン <input name="go_text" value="{{ L.go_text }}"></label>
-
-  <h2>動き</h2>
-  <label>何秒たっても取れなければ「未取得」表示に切り替える
-    <input name="wait_sec" type="number" step="1" min="3" max="120" value="{{ L.wait_sec|int }}"></label>
-  <label>取得してから遷移するまで（秒）
-    <input name="dest_min" type="number" step="0.5" min="0.5" max="30" value="{{ L.dest_min }}"></label>
-
-  <label class="chk"><input type="checkbox" name="dest_redirect" {{ "checked" if L.dest_redirect }}>
-    位置情報が取れたら飛び先へ自動で移動する</label>
-  <label class="chk"><input type="checkbox" name="deny_redirect" {{ "checked" if L.deny_redirect }}>
-    取れなくても移動する（外すと「許可するまで進ませない」）</label>
-  <label class="chk"><input type="checkbox" name="promote_page" {{ "checked" if L.promote_page }}>
-    昔「ページを挟む」で作ってしまったリンクをリアル追跡として扱う</label>
-
-  <div class="row" style="margin-top:14px">
-    <button>保存</button>
+    <label>許可をお願いする文言（要件の下に出ます）</label>
+    <input type="text" name="ask_text" value="{{ L.ask_text }}">
+    {% if env_over.get('ask_text') %}<div class="env">環境変数 LIVE_ASK_TEXT が優先されています</div>{% endif %}
+    <label>拒否されたときの文言</label>
+    <textarea name="deny_text">{{ L.deny_text }}</textarea>
+    <label>再試行ボタンの文言</label>
+    <input type="text" name="retry_text" value="{{ L.retry_text }}">
   </div>
+
+  <div class="card">
+    <strong>挙動</strong>
+    <div class="row">
+      <div>
+        <label>未取得のまま待つ秒数（3〜120）</label>
+        <input type="number" name="wait_sec" step="1" min="3" max="120" value="{{ L.wait_sec|int }}">
+      </div>
+      <div>
+        <label>測位後に遷移するまでの秒数（0.5〜30）</label>
+        <input type="number" name="dest_min" step="0.5" min="0.5" max="30" value="{{ L.dest_min }}">
+      </div>
+    </div>
+    <label class="chk">
+      <input type="checkbox" name="dest_redirect" value="1" {% if L.dest_redirect %}checked{% endif %}>
+      <span>測位が取れたら飛び先へ移動する</span>
+    </label>
+    <label class="chk">
+      <input type="checkbox" name="deny_redirect" value="1" {% if L.deny_redirect %}checked{% endif %}>
+      <span>未取得・拒否のときも飛び先へ移動する</span>
+    </label>
+    <label class="chk">
+      <input type="checkbox" name="promote_page" value="1" {% if L.promote_page %}checked{% endif %}>
+      <span>page として作ったリンクを初回にライブ追跡へ昇格する</span>
+    </label>
+  </div>
+
+  <button type="submit">保存する</button>
+  <button class="ghost" type="submit" formaction="/livetrack/reset"
+          onclick="return confirm('既定に戻しますか？')">既定に戻す</button>
 </form>
-
-<form method="post" action="/livetrack/reset" style="margin-top:10px">
-  <button type="button" onclick="this.form.submit()">既定に戻す</button>
-</form>
-
-<h2>いまの実効値</h2>
-<table>
-<tr><th>項目</th><th>値</th><th>由来</th></tr>
-{% for k, v in L.items() %}
-<tr>
-  <td>{{ k }}</td>
-  <td class="mono">{{ v }}</td>
-  <td>{% if env_over.get(k) %}<span class="badge">環境変数</span>
-      {% elif saved.get(k) is not none %}画面で保存
-      {% else %}既定{% endif %}</td>
-</tr>
-{% endfor %}
-</table>
-
-<p class="tiny">
-  メモ：来訪者側には マップ／開始／停止 を出しません。取得できたら文言は消え、そのまま静かに飛び先へ移動します。<br>
-  取れなかったときだけ「もう一度」ボタンが出ます。飛び先が空のリンクは移動せず、開いている間ずっと記録します。
-</p>
-{% endblock %}
+</div></body></html>
