@@ -288,6 +288,7 @@ def link_hit(code: str, request: Request):
                   dest=link["dest"] or "", nonce=nonce,
                   go_text=L["go_text"], wait_text=L["wait_text"], ok_text=L["ok_text"],
                   deny_text=L["deny_text"], retry_text=L["retry_text"],
+                  skip_text=L["skip_text"],
                   deny_redirect=L["deny_redirect"], dest_min=L["dest_min"])
 
 
