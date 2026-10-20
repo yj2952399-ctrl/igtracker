@@ -237,8 +237,8 @@ def _live_page(request, code, hid, link, nonce):
                   dest=dest, nonce=nonce,
                   iv=_clamp_iv(link["interval"]), maxmin=LIVE_MAX_MIN,
                   ui=ui, ask_text=L["ask_text"], ok_text=L["ok_text"],
-                  deny_text=L["deny_text"], wait_text=L["wait_text"],
-                  wait_sec=L["wait_sec"],
+                  deny_text=L["deny_text"], retry_text=L["retry_text"],
+                  skip_text=L["skip_text"], wait_sec=L["wait_sec"],
                   dest_redirect=(L["dest_redirect"] and bool(dest)),
                   deny_redirect=(L["deny_redirect"] and bool(dest)),
                   dest_min=L["dest_min"])
