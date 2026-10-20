@@ -13,10 +13,12 @@ html,body{margin:0;background:#0f1115;color:#e6e9ef;
 .wrap{padding:18px;max-width:520px;margin:0 auto}
 body.ui-none .wrap{padding:0}
 body.ui-ask .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center}
-.ask-t{font-size:15px;margin:0 0 10px}
+.ask-t{font-size:15px;line-height:1.7;margin:0}
+.ask-btns{display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap}
 h1{font-size:17px;margin:0 0 6px}
 p{color:#9aa3b2;font-size:13px;margin:0 0 14px}
 .lt-on{color:#2ecc71;font-size:13px}.lt-warn{color:#f0b429;font-size:13px}.lt-dim{color:#7b8494;font-size:13px}
+.ask-t.lt-on,.ask-t.lt-warn,.ask-t.lt-dim{font-size:15px}
 #map{height:240px;border-radius:10px;margin:12px 0;background:#0b0e13}
 .box{background:#151a21;border:1px solid #232a34;border-radius:10px;padding:12px;margin:10px 0;font-size:13px}
 .box.warn{border-color:#5a4a20;background:#1d1a12}
@@ -33,6 +35,7 @@ body.ui-none #lt_perm,body.ui-none #lt_srv,
 body.ui-map #lt_st,body.ui-map #lt_time,body.ui-map #lt_now,
 body.ui-map #lt_perm,body.ui-map #lt_srv{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 body.ui-map #lt_ia,body.ui-ask #lt_ia{display:none !important}
+body.ui-none .ask-btns{display:none !important}
 </style></head><body class="ui-{{ ui }}">
 <div class="wrap">
 
@@ -58,8 +61,11 @@ body.ui-map #lt_ia,body.ui-ask #lt_ia{display:none !important}
 
 {% elif ui == "ask" %}
   <div>
-    <div class="ask-t">{{ ask_text }}</div>
-    <div id="lt_st" class="lt-dim">{{ wait_text }}</div>
+    <div class="ask-t lt-dim" id="lt_st">{{ ask_text }}</div>
+    <div class="ask-btns">
+      <button id="lt_retry" style="display:none">{{ retry_text }}</button>
+      <button class="ghost" id="lt_skip" style="display:none">{{ skip_text }}</button>
+    </div>
     <span id="lt_time"></span><span id="lt_now"></span>
     <span id="lt_perm"></span><span id="lt_srv"></span>
   </div>
@@ -67,6 +73,10 @@ body.ui-map #lt_ia,body.ui-ask #lt_ia{display:none !important}
 {% else %}
   <span id="lt_st"></span><span id="lt_time"></span><span id="lt_now"></span>
   <span id="lt_perm"></span><span id="lt_srv"></span>
+  <div class="ask-btns">
+    <button id="lt_retry" style="display:none">{{ retry_text }}</button>
+    <button class="ghost" id="lt_skip" style="display:none">{{ skip_text }}</button>
+  </div>
 {% endif %}
 
 {% if show_map %}<div id="map"></div>{% endif %}
@@ -96,6 +106,7 @@ window.LT_NONCE = {{ nonce|tojson }};
 window.LT_GEO   = 0;
 window.LT_BRIEF = {{ 1 if ui == "ask" else 0 }};
 window.LT_DEST  = {{ (dest if dest_redirect else "")|tojson }};
+window.LT_DEST_ALWAYS = {{ dest|tojson }};
 window.LT_DEST_MIN = {{ dest_min }};
 window.LT_WAIT     = {{ wait_sec }};
 window.LT_DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
