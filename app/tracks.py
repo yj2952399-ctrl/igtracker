@@ -555,7 +555,10 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("snap"
                interval: int = Form(15), dest: str = Form(""), note: str = Form(""),
                u=Depends(auth)):
     person = (person or "").strip()[:40] or "名無し"
-    mode = mode if mode in ("snap", "live") else "snap"
+    # 直し：全モード受けに
+    VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify", "redirect")
+    ...
+    mode = mode if mode in VALID_MODES else "page"
     code = _new_code()
     db.add_track(code, person, mode=mode, interval=_clamp_iv(interval),
                  dest=(dest or "").strip(), note=(note or "").strip()[:200])
