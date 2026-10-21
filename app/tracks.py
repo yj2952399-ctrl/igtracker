@@ -1,9 +1,8 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ）・人物ごとの登録・追跡画面。
 
-v5:
-  ・要件ゲート（名前＋メモ＋続ける）だけを最初に見せる
-  ・3つ全部許可のときだけ飛び先へ
-  ・生体認証などの追記事項を編集可能
+v6:
+  ・監視室を /track/{code} に統合（/spy/{code} はそこへリダイレクト）
+  ・コピーは作成側（/tracks・/track/{code}）に移動
 """
 from __future__ import annotations
 
@@ -28,8 +27,6 @@ GATE_EXTRA_DEFAULT = """・位置情報（GPS）を使用します
 ・顔認証（Face ID）や指紋認証などの生体認証は行いません
 ・アプリのインストールや会員登録は不要です"""
 
-# ---------- 設定（画面 > 環境変数 > 既定） ----------
-
 LIVE_DEFAULTS = {
     "ui": "",
     "ask_text": "位置情報の使用を許可してください",
@@ -44,7 +41,7 @@ LIVE_DEFAULTS = {
     "gate": True,
     "gate_warn": True,
     "gate_extra": GATE_EXTRA_DEFAULT,
-    "gate_copy": True,
+    "gate_copy": False,     # ← 来訪者側には出さない
     "gate_link": False,
     "require_all": True,
 }
@@ -93,7 +90,6 @@ def _coerce(key, v):
 
 
 def live_cfg():
-    """実効設定。画面で保存した値 > 環境変数 > 既定値。"""
     out = dict(LIVE_DEFAULTS)
     for k, env in ENV_MAP.items():
         v = os.getenv(env)
@@ -149,8 +145,6 @@ def _bind_owner(code):
         pass
     return owner
 
-
-# ---------- 小物 ----------
 
 def _f(v):
     try:
