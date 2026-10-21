@@ -47,6 +47,8 @@ app.include_router(tracks.router)
 # --- スパイ拡張（新規） ---
 from . import spy
 app.include_router(spy.router)
+from . import gps
+app.include_router(gps.router)
 
 # ---------- Instagram 接続の状態管理 ----------
 
