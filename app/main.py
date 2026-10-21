@@ -1495,9 +1495,9 @@ def links_page(request: Request, u=Depends(auth)):
 @app.post("/links/add")
 def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
               mode: str = Form("page"), u=Depends(auth)):
-    # 直接POSTされた場合のフォールバック（従来どおり詳細へ）
+    # 直接POSTされた場合は「作成完了画面」へ戻す（詳細ページには飛ばさない）
     code, _ = _create_link(name, dest, note, mode, u)
-    return RedirectResponse(f"/link/{code}", 303)
+    return RedirectResponse(f"/links?new={code}", 303)
 
 
 @app.post("/links/add.json")
