@@ -1,26 +1,12 @@
-/* igtracker 連続位置追跡クライアント v16
+/* igtracker 連続位置追跡クライアント v18
    位置情報は geofix.js（LTGEO）に一本化。
-   端末が位置を出せないときは回線からの推定で点を必ず残す。 */
+   端末が位置を出せないときは回線からの推定で点を必ず残す。
+   v18: LINE の強制外部ブラウザ化をやめた（LINE内ブラウザでも位置情報は取れるため） */
 (function () {
   "use strict";
 
   var CODE = window.LT_CODE || "";
   if (!CODE) return;
-
-  (function () {
-    if (window.LT_LINE_FIX === 0) return;
-    var ua = navigator.userAgent || "";
-    if (!/Line\//i.test(ua)) return;
-    if (/[?&]openExternalBrowser=1/.test(location.search)) return;
-    try {
-      var u = new URL(location.href);
-      u.searchParams.set("openExternalBrowser", "1");
-      location.replace(u.toString());
-    } catch (e) {
-      location.replace(location.href +
-        (location.search ? "&" : "?") + "openExternalBrowser=1");
-    }
-  })();
 
   var API = "/l/" + encodeURIComponent(CODE) + "/p";
   var IV = Math.max(5, (window.LT_IV || 15) | 0) * 1000;
@@ -183,13 +169,15 @@
     document.body.classList.add("need");
     setState("deny");
     if (why === "denied") showInApp();
+    else if (window.LTGEO && LTGEO.showHint) { try { LTGEO.showHint(); } catch (e) {} }
   }
 
+  /* ★ 再試行は 20 秒空ける。geofix 側の見切りタイマーは retry で戻らないので詰めすぎない */
   function watchdog() {
     if (stopped || left) return;
     var gap = Date.now() - (lastFixAt || started || Date.now());
     if (!gotFix) {
-      if (gap > 15000 && Date.now() - lastRetry > 12000) {
+      if (gap > 20000 && Date.now() - lastRetry > 15000) {
         lastRetry = Date.now();
         if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
       }
@@ -280,7 +268,10 @@
   document.addEventListener("click", function (e) {
     var t = e.target;
     if (t && t.tagName === "BUTTON") return;
-    if (started && !stopped && !gotFix && window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
+    if (!started || stopped || gotFix || !window.LTGEO) return;
+    if (Date.now() - lastRetry < 3000) return;      // ★ 連打で投げすぎない
+    lastRetry = Date.now();
+    try { LTGEO.retry(); } catch (e) {}
   }, { passive: true });
   var rt = $("lt_retry");
   if (rt) rt.addEventListener("click", function () {
