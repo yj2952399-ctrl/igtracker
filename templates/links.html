@@ -3,7 +3,7 @@
 <p class="dim">作ったURLを踏ませると、IP・推定地域・端末・回線・端末キーが記録されます。
 InstagramのDMで送って踏ませる用途を想定しています。</p>
 
-<form method="post" action="/links/add" class="card">
+<form method="post" action="/links/add" id="addform" class="card">
   <label>名前 <input name="name" placeholder="例: 裏垢Aに送る"></label>
   <label>飛び先URL <input name="dest" placeholder="https://www.instagram.com/xxxx/"></label>
   <label>メモ <input name="note"></label>
@@ -20,10 +20,12 @@ InstagramのDMで送って踏ませる用途を想定しています。</p>
   <button>リンクを作成</button>
 </form>
 
+<div id="addresult" class="card" hidden></div>
+
 <p><a href="/link/me" target="_blank">自分のIPで動作確認する</a></p>
 <p><a href="/livetrack"><button type="button">表示・文言の設定</button></a></p>
 <h2>作成済み {{ links|length }} 件</h2>
-<table><tr><th>名前</th><th>URL</th><th>飛び先</th><th>モード</th><th>ヒット</th><th>状態</th><th></th></tr>
+<table id="linktable"><tr><th>名前</th><th>URL</th><th>飛び先</th><th>モード</th><th>ヒット</th><th>状態</th><th></th></tr>
 {% for l in links %}
 <tr>
   <td><a href="/link/{{ l.code }}">{{ l.name }}</a></td>
@@ -38,4 +40,81 @@ InstagramのDMで送って踏ませる用途を想定しています。</p>
   </td>
 </tr>
 {% endfor %}</table>
+
+<script>
+(function () {
+  const f     = document.getElementById('addform');
+  const box   = document.getElementById('addresult');
+  const table = document.getElementById('linktable');
+  const tbody = table.querySelector('tbody') || table;
+
+  // 作成：同じページ内で完結
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector('button');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/links/add.json', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+        body: new FormData(f),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const d = await res.json();
+
+      // 結果をその場に表示（URL＋コピー）
+      box.hidden = false;
+      box.innerHTML =
+        '作成しました: <a class="mono" href="' + d.url + '" target="_blank">' + d.url + '</a> ' +
+        '<button type="button" class="mini" id="copyurl">コピー</button> ' +
+        '<a class="mini" href="/link/' + d.code + '">詳細</a>';
+      box.querySelector('#copyurl').addEventListener('click', (ev) => {
+        navigator.clipboard.writeText(d.url);
+        ev.target.textContent = 'コピー済み';
+      });
+
+      // 一覧の先頭に1行追加（リロードなし）
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><a href="/link/' + d.code + '">' + d.name + '</a></td>' +
+        '<td class="mono">' + d.url + '</td>' +
+        '<td class="mono">' + (d.dest || '').slice(0, 40) + '</td>' +
+        '<td>' + d.mode + '</td><td>0</td><td>有効</td>' +
+        '<td>' +
+          '<form method="post" action="/link/' + d.code + '/toggle"><button>切替</button></form>' +
+          '<form method="post" action="/link/' + d.code + '/delete"><button>削除</button></form>' +
+        '</td>';
+      tbody.insertBefore(tr, tbody.firstChild);
+      f.reset();
+    } catch (err) {
+      box.hidden = false;
+      box.textContent = '作成に失敗しました: ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // 切替・削除もページ遷移なしで処理（後から増えた行にも効くよう委譲）
+  tbody.addEventListener('submit', async (e) => {
+    const form = e.target.closest('form');
+    if (!form) return;
+    const action = form.getAttribute('action') || '';
+    if (!/\/toggle$|\/delete$/.test(action)) return;
+    e.preventDefault();
+
+    const res = await fetch(action, { method: 'POST' });
+    if (!res.ok) return;
+
+    const tr = form.closest('tr');
+    if (/\/delete$/.test(action)) {
+      tr.remove();
+    } else {
+      const cell = tr.children[5];
+      cell.innerHTML = cell.textContent.includes('停止')
+        ? '有効'
+        : '<span class="badge">停止中</span>';
+    }
+  });
+})();
+</script>
 {% endblock %}
