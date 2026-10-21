@@ -129,6 +129,7 @@ window.LT_GEO   = 0;
 
   function fail() {
     if (got) return;
+    try { LT.send({ ip_point: 1 }); } catch (e) {}   // ← 追加（回線推定で1点残す）
     stopWatch();
     if (dog) { clearInterval(dog); dog = null; }
     txt(DENY_TEXT, true);
