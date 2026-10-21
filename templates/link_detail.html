@@ -1,44 +1,48 @@
-<!doctype html>
-<html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ link.name }} — リンク詳細</title>
+{% extends "base.html" %}
+{% block title %}{{ link.name }} — リンク詳細{% endblock %}
+
+{% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
-.wrap{max-width:1080px;margin:0 auto;padding:16px}
+.wrap{max-width:1080px;margin:0 auto}
 h1{font-size:18px;margin:0 0 6px}
 h3{font-size:13px;margin:20px 0 6px;color:#c7cddb}
 code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:9px;margin:12px 0}
-.card{background:#171a21;border-radius:10px;padding:10px}
+.grid .card{background:#171a21;border-radius:10px;padding:10px;border:0;margin:0}
 .k{font-size:11px;color:#8b93a7}
 .v{font-size:17px;font-weight:700;margin-top:2px}
 #map{height:340px;border-radius:12px;overflow:hidden;margin-top:8px}
 #ipwarn{display:none;margin:10px 0;padding:9px 12px;border-radius:10px;
   background:#2a2113;color:#f0b429;font-size:12px;line-height:1.6}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th,td{border-bottom:1px solid #232734;padding:5px 4px;text-align:left;vertical-align:top}
-th{color:#8b93a7;font-weight:500;white-space:nowrap}
+.wrap table{width:100%;border-collapse:collapse;font-size:12px;background:transparent;
+  border:0;border-radius:0}
+.wrap th,.wrap td{border-bottom:1px solid #232734;padding:5px 4px;text-align:left;
+  vertical-align:top;background:transparent;width:auto;white-space:normal}
+.wrap th{color:#8b93a7;font-weight:500;white-space:nowrap}
 .bot{color:#8b93a7;font-size:11px}
 .gps{color:#7ee08a}.ip{color:#f0b429}
-a{color:#4c8dff}
 .btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:12px;border:0;cursor:pointer}
 .btn.p{background:#4c8dff;color:#fff}
 .flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .q{background:#171a21;border-radius:8px;padding:8px 10px;font-size:12px;margin:5px 0}
 .q b{color:#7ee08a}
-</style></head><body><div class="wrap">
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="wrap">
 <h1>{{ link.name }} <code class="c">{{ link.code }}</code></h1>
 <div class="flex" style="margin-bottom:10px">
   <span class="bot">{{ link.mode }} / {{ '有効' if link.active else '停止中' }} / hit {{ link.hit_count }}</span>
   <a class="btn" href="{{ base }}/l/{{ link.code }}" target="_blank">開く</a>
-  <a class="btn" href="{{ base }}/spy/{{ link.code }}">監視室</a>
-  <a class="btn" href="{{ base }}/track/{{ link.code }}">軌跡</a>
+  <a class="btn" href="{{ base }}/track/{{ link.code }}">追跡画面</a>
   <a class="btn" href="{{ base }}/link/{{ link.code }}/qr.png" target="_blank">QR</a>
   <a class="btn" href="{{ base }}/link/{{ link.code }}/questions">クイズ</a>
   <a class="btn" href="{{ base }}/link/{{ link.code }}?bots={{ '' if bots else '1' }}">
     {{ 'ボットを隠す' if bots else 'ボットも表示' }}</a>
+  <a class="btn" href="{{ base }}/links">一覧へ戻る</a>
 </div>
 
 {% if link.note %}<div class="q" style="white-space:pre-wrap">要件メモ：{{ link.note }}</div>{% endif %}
@@ -136,7 +140,10 @@ a{color:#4c8dff}
 {% else %}
 <div class="bot">まだありません</div>
 {% endfor %}
+</div>
+{% endblock %}
 
+{% block scripts %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 (function () {
@@ -165,4 +172,4 @@ a{color:#4c8dff}
   }
 })();
 </script>
-</div></body></html>
+{% endblock %}
