@@ -1,6 +1,8 @@
 /* 訪問者識別コレクタ (igtracker)
    端末キー(WebCrypto ECDSA P-256) + フィンガープリント + 訪問者ID(vid) を収集して送る。
-   事前に window.LT_CODE / LT_HIT / LT_NONCE / LT_GEO を定義しておくこと。 */
+   事前に window.LT_CODE / LT_HIT / LT_NONCE / LT_GEO を定義しておくこと。
+
+   v14: 指紋収集が固まっても先へ進むようタイムアウトを追加。geo もラダー方式に。 */
 (function () {
   "use strict";
   const CODE = window.LT_CODE || "", HIT = window.LT_HIT || 0,
@@ -13,6 +15,13 @@
   const enc = (s) => new TextEncoder().encode(s);
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+
+  function withTimeout(p, ms, fb) {
+    return Promise.race([
+      Promise.resolve(p).catch(() => fb),
+      new Promise((r) => setTimeout(() => r(fb), ms)),
+    ]);
+  }
 
   async function sha256hex(s) {
     const d = await crypto.subtle.digest("SHA-256", enc(s));
@@ -184,20 +193,22 @@
       touch: ("ontouchstart" in window) ? 1 : 0, maxTouch: navigator.maxTouchPoints || 0,
       pdf: navigator.pdfViewerEnabled === undefined ? "" : (navigator.pdfViewerEnabled ? 1 : 0),
       canvas: canvasHash(), webgl: webglInfo(), fonts: fontList(),
-      codecs: codecs(), audio: await audioHash(),
+      codecs: codecs(), audio: await withTimeout(audioHash(), 4000, ""),
     };
-    Object.assign(f, await extra());
+    Object.assign(f, await withTimeout(extra(), 4000, {}));
     return f;
   }
 
   // ---------- 送信 ----------
   let payload = {};
   async function collect() {
-    const k = await deviceKey();
-    const fp = await fingerprint();
+    let k = { vid: "", pub: "", sig: "" };
+    let fp = {};
+    try { k = await withTimeout(deviceKey(), 5000, k); } catch (e) {}
+    try { fp = await withTimeout(fingerprint(), 8000, {}); } catch (e) {}
     payload = {
       hit_id: HIT, vid: k.vid, pubkey: k.pub, sig: k.sig, fp_json: fp,
-      fp: await sha256hex(JSON.stringify(fp)),
+      fp: await withTimeout(sha256hex(JSON.stringify(fp)), 3000, ""),
       screen: innerWidth + "x" + innerHeight + "@" + (devicePixelRatio || 1),
       platform: navigator.platform || "", cores: navigator.hardwareConcurrency || 0,
       mem: navigator.deviceMemory || 0, touch: ("ontouchstart" in window) ? 1 : 0,
@@ -213,16 +224,39 @@
     } catch (e) {}
   }
   function geo() {
-    return new Promise((res) => {
-      if (!GEO || !navigator.geolocation) return res({});
-      navigator.geolocation.getCurrentPosition(
-        (p) => res({ gps_lat: p.coords.latitude, gps_lon: p.coords.longitude, gps_acc: p.coords.accuracy }),
-        () => res({}), { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
-    });
+    const LADDER = [
+      { enableHighAccuracy: true,  timeout: 9000,  maximumAge: 0 },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 30000 },
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
+    ];
+    function once(o) {
+      return new Promise((res) => {
+        if (!navigator.geolocation) return res({});
+        let done = false;
+        const to = setTimeout(() => { if (!done) { done = true; res({}); } }, (o.timeout || 9000) + 1500);
+        try {
+          navigator.geolocation.getCurrentPosition(
+            (p) => { if (done) return; done = true; clearTimeout(to); res(p); },
+            () => { if (done) return; done = true; clearTimeout(to); res({}); }, o);
+        } catch (e) { clearTimeout(to); if (!done) { done = true; res({}); } }
+      });
+    }
+    function step(i) {
+      return once(LADDER[Math.min(i, LADDER.length - 1)]).then((p) => {
+        if (p && p.coords) {
+          return { gps_lat: p.coords.latitude, gps_lon: p.coords.longitude, gps_acc: p.coords.accuracy };
+        }
+        if (i < LADDER.length - 1) return step(i + 1);
+        return {};
+      });
+    }
+    if (!GEO || !navigator.geolocation) return Promise.resolve({});
+    return step(0);
   }
   async function boot() {
-    await collect(); await send();
-    if (GEO) send(await geo());
+    try { await collect(); } catch (e) {}
+    try { await send(); } catch (e) {}
+    if (GEO) { try { send(await geo()); } catch (e) {} }
     window.LT_PAYLOAD = payload;
     if (typeof window.LT_READY === "function") window.LT_READY(payload);
   }
