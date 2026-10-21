@@ -259,7 +259,7 @@ body.hidemap #map{display:none}
 
   function refreshCam() {
     if (!camEl) return;
-    camEl.src = '/s/' + encodeURIComponent(CODE) + '/video/last.webm?t=' + Date.now();
+    camEl.src = '/s/' + encodeURIComponent(CODE) + '/video/last?t=' + Date.now();   // ← .webm を外す
     var p = camEl.play(); if (p && p.catch) p.catch(function () {});
     fetch('/s/' + encodeURIComponent(CODE) + '/vseg.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
