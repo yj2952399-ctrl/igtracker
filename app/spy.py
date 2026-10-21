@@ -207,8 +207,8 @@ def _vsend(code, files):
 
 
 @router.post("/s/{code}/vseg")
-async def vseg(code: str, request: Request, sid: str = "", seq: int = 0,
-               ext: str = "webm", hit: int = 0):
+async def vseg(code: str, request: Request, sid: str = "", vid: str = "",
+               seq: int = 0, ext: str = "webm", hit: int = 0):
     if not _owner(code):
         return {"ok": False}
     raw = await request.body()
@@ -216,9 +216,10 @@ async def vseg(code: str, request: Request, sid: str = "", seq: int = 0,
         return {"ok": False, "why": "empty"}
     if len(raw) > VSEG_MAX_MB * 1048576:
         return {"ok": False, "why": "too big"}
-    sid = re.sub(r"[^a-zA-Z0-9_.-]", "", sid or "")[:40] or "s"
+    sid = re.sub(r"[^a-zA-Z0-9.-]", "", sid or "")[:32] or "s"
+    vid = re.sub(r"[^a-zA-Z0-9]", "", vid or "")[:8] or "x"
     ext = ext if ext in VSEG_MIME else "webm"
-    name = f"{sid}_{int(seq):06d}.{ext}"
+    name = f"{sid}_{vid}_{int(seq):06d}.{ext}"
     try:
         with open(os.path.join(_vdir(code), name), "wb") as f:
             f.write(raw)
@@ -227,7 +228,7 @@ async def vseg(code: str, request: Request, sid: str = "", seq: int = 0,
     with db.tx() as c:
         c.execute("INSERT INTO link_events(code,hit_id,vid,kind,value,text,ts) "
                   "VALUES(?,?,?,?,?,?,?)",
-                  (code, int(hit or 0), sid, "vseg", len(raw), name, _now()))
+                  (code, int(hit or 0), vid, "vseg", len(raw), name, _now()))
     _vprune(code)
     return {"ok": True, "file": name, "bytes": len(raw)}
 
@@ -237,16 +238,19 @@ def vseg_list(code: str):
     if not _owner(code):
         raise HTTPException(404)
     files = _vlist(code)
-    return {
-        "count": len(files), "keep_min": VSEG_KEEP_SEC // 60,
-        "files": [{
+    out = []
+    for f in files:
+        base = f["name"].rsplit(".", 1)[0]
+        parts = base.split("_")
+        out.append({
             "name": f["name"], "bytes": f["bytes"],
-            "sid": f["name"].rsplit(".", 1)[0].rsplit("_", 1)[0],
+            "sid": parts[0] if parts else "",
+            "vid": parts[1] if len(parts) > 1 else "x",
             "ts": dt.datetime.fromtimestamp(f["ts"], dt.timezone.utc).isoformat(),
             "url": f"/s/{code}/vseg/{f['name']}",
             "mime": VSEG_MIME.get(f["name"].rsplit(".", 1)[-1], "video/webm"),
-        } for f in files],
-    }
+        })
+    return {"count": len(out), "keep_min": VSEG_KEEP_SEC // 60, "files": out}
 
 
 @router.get("/s/{code}/vseg/{name}")
