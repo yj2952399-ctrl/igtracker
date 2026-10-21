@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}作成しました — {{ link.name }}{% endblock %}
+
+{% block head %}
+<style>
+.done{background:#14251a;border:1px solid #2e6b45;border-radius:10px;padding:16px;margin:14px 0}
+.done h1{margin:0 0 6px;font-size:18px;color:#7ee08a}
+.done .url{font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all;
+  background:#0f1115;border:1px solid #262b36;border-radius:8px;padding:12px;margin:10px 0}
+.done .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+a.mini{display:inline-block;padding:7px 14px;border-radius:6px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:12px}
+.qr{background:#fff;padding:8px;border-radius:8px;display:inline-block;margin-top:12px}
+.qr img{display:block;width:180px;height:180px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="done">
+  <h1>✅ リンクを作成しました</h1>
+  <div class="dim">名前：{{ link.name }} / モード：{{ link.mode }}
+    {% if link.dest %} / 飛び先：<span class="mono">{{ link.dest }}</span>{% endif %}</div>
+
+  <div class="url" id="u">{{ url }}</div>
+
+  <div class="row">
+    <button type="button" id="copy">URLをコピー</button>
+    <a class="mini" href="{{ url }}" target="_blank">開いてみる</a>
+    <a class="mini" href="/link/{{ link.code }}">詳細ページへ</a>
+    <a class="mini" href="/track/{{ link.code }}">追跡画面へ</a>
+    <a class="mini" href="/link/{{ link.code }}/qr.png" target="_blank">QRを別タブで</a>
+    <a class="mini" href="/links">一覧へ戻る</a>
+    <a class="mini" href="/links">続けてもう1つ作る</a>
+  </div>
+
+  <div class="qr"><img src="/link/{{ link.code }}/qr.png" alt="QR"></div>
+  <p class="dim" style="margin-top:12px">
+    このリンクを踏ませると記録が始まります。詳細・追跡は上のボタンからいつでも開けます。</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var b = document.getElementById('copy'), u = document.getElementById('u');
+  if (!b) return;
+  b.addEventListener('click', function () {
+    function done() {
+      b.textContent = 'コピーしました';
+      setTimeout(function () { b.textContent = 'URLをコピー'; }, 1600);
+    }
+    function fb() {
+      try {
+        var t = document.createElement('textarea');
+        t.value = u.textContent; t.style.cssText = 'position:fixed;left:-9999px';
+        document.body.appendChild(t); t.select();
+        document.execCommand('copy'); t.remove(); done();
+      } catch (e) {}
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(u.textContent).then(done).catch(fb);
+      } else fb();
+    } catch (e) { fb(); }
+  });
+})();
+</script>
+{% endblock %}
