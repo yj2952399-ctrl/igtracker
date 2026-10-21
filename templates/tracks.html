@@ -1,145 +1,115 @@
-<!doctype html>
-<html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>追跡リンク一覧</title>
+{% extends "base.html" %}
+{% block title %}監視室 — 追跡リンク一覧{% endblock %}
+
+{% block head %}
 <style>
-body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
-.wrap{max-width:940px;margin:0 auto;padding:16px}
-h1{font-size:18px;margin:0 0 4px}
-h3{font-size:13px;margin:20px 0 6px;color:#c7cddb}
-.sub{color:#8b93a7;font-size:11.5px;margin:0 0 14px}
-.nav{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px}
-.nav a{display:inline-block;padding:7px 13px;border-radius:8px;background:#2b3346;
-  color:#c7cddb;text-decoration:none;font-size:12px}
-.nav a.back{background:#3a2b46;color:#e0c7ff}
-.box{background:#171a21;border:1px solid #232734;border-radius:12px;padding:14px;margin-bottom:14px}
-label{display:block;font-size:12px;color:#c7cddb;margin:10px 0 4px}
-input[type=text],select,textarea{width:100%;box-sizing:border-box;background:#0f1115;
-  border:1px solid #2b3346;border-radius:8px;color:#e6e9ef;padding:8px 10px;font-size:13px}
-textarea{min-height:90px;resize:vertical;line-height:1.7}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-button{padding:9px 18px;border:0;border-radius:8px;background:#2b3346;color:#e6e9ef;
-  font-size:12.5px;cursor:pointer;font-family:inherit}
-button.p{background:#4c8dff;color:#fff}
-button.d{background:#3a1b1b;color:#ff9b9b}
-button.sm{padding:5px 10px;font-size:11.5px}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
-th,td{border-bottom:1px solid #232734;padding:7px 5px;text-align:left;vertical-align:middle}
-th{color:#8b93a7;font-weight:500;white-space:nowrap}
-a{color:#4c8dff}
-.badge{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:5px;
-  background:#232734;color:#8b93a7;margin-left:5px}
-.badge.on{background:#12301c;color:#7ee08a}
-.flex{display:flex;gap:6px;flex-wrap:wrap}
-.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8b93a7}
-.gname{font-size:12px;color:#7ee08a;margin:16px 0 4px}
-</style></head><body><div class="wrap">
-<h1>追跡リンク</h1>
-<p class="sub">名前とメモが、リンクを開いた人に見える「要件」になります。</p>
-<div class="nav">
-  <a class="back" href="/">裏垢トラッカー</a>
-  <a href="/livetrack">表示設定</a>
-  <a href="/links">通常リンク</a>
-</div>
+.tr-row{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:10px;margin:8px 0}
+.tr-row .hd{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tr-row .nm{font-weight:700}
+.tr-row .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#8b93a7}
+.tr-row .dim{font-size:12px;color:#8b93a7}
+.tr-row .live{color:#7ee08a;font-weight:700;font-size:12px}
+.tr-row .warn{color:#f0b429;font-size:12px}
+.tr-row .share{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.tr-row input.url{flex:1;min-width:200px;padding:6px 8px;background:#11141a;color:#9aa3b2;
+  border:1px solid #262b36;border-radius:6px;font-size:12px;
+  font-family:ui-monospace,Menlo,monospace}
+.tr-row .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.tr-row .acts a,.tr-row .acts button{padding:6px 12px;border-radius:8px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer}
+.tr-row .acts .send{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
+.tr-row .acts form{margin:0}
+.tr-row .acts .del{background:#3a2a2a;border-color:#5a3f3f;color:#f0b429}
+.note{font-size:12px;color:#8b93a7;line-height:1.8}
+.note b{color:#e6e9ef}
+</style>
+{% endblock %}
 
-<div class="box">
-  <strong style="font-size:13px">新規作成</strong>
-  <form method="post" action="/tracks/add">
-    <label>名前（要件の見出し・相手に見えます）</label>
-    <input type="text" name="person" placeholder="例: 田中さん" required>
-    <label>メモ（要件本文・相手に見えます。改行OK）</label>
-    <textarea name="note" placeholder="例: 下の「続ける」を押すと、位置情報・カメラ・マイクの順に許可を聞きます。"></textarea>
-    <div class="row2">
-      <div>
-        <label>モード</label>
-        <select name="mode">
-          <option value="live" selected>live（連続追跡）</option>
-          <option value="snap">snap（1回だけ測位）</option>
-          <option value="page">page（ランディング）</option>
-          <option value="quiz">quiz（クイズ）</option>
-          <option value="identify">identify（自己申告）</option>
-          <option value="redirect">redirect（即転送）</option>
-        </select>
-      </div>
-      <div>
-        <label>取得間隔（秒）</label>
-        <input type="text" name="interval" value="15">
-      </div>
-    </div>
-    <label>飛び先URL（空なら移動しません）</label>
-    <input type="text" name="dest" placeholder="https://example.com/">
-    <div class="flex" style="margin-top:12px">
-      <button class="p" type="submit">作成して追跡画面へ</button>
-    </div>
-  </form>
-</div>
+{% block content %}
+<h1>監視室</h1>
+<p class="note">
+  ここは<b>あなた（見る側）</b>の画面です。相手に送るのは
+  <span class="mono">{{ base }}/l/コード</span> のほう。
+  <span class="mono">{{ base }}/track/コード</span>（この監視室）は要ログインなので、
+  そのまま送ると相手はログイン画面に行き着きます。
+</p>
 
-{% for gname, items in groups.items() %}
-<div class="gname">{{ gname }}（{{ items|length }}）</div>
-<table>
-  <tr><th>名前</th><th>状態</th><th>取得点</th><th>最終</th><th>操作</th></tr>
-  {% for r in items %}
-  <tr>
-    <td>
-      <a href="/track/{{ r.code }}">{{ r.name }}</a>
-      <div class="mono">{{ r.code }}</div>
-    </td>
-    <td>
-      <span class="badge">{{ r.mode }}</span>
-      {% if r.live %}<span class="badge on">LIVE</span>{% endif %}
-      {% if not r.active %}<span class="badge">停止中</span>{% endif %}
-      {% if r.last_src %}<span class="badge">{{ r.last_src }}</span>{% endif %}
-    </td>
-    <td>{{ r.pts }}</td>
-    <td class="mono">{{ (r.last_ts or '')[:16] }}<br>{{ r.last_city or '' }}</td>
-    <td>
-      <div class="flex">
-        <button class="sm cp" data-url="/l/{{ r.code }}">コピー</button>
-        <a class="sm" href="/l/{{ r.code }}" target="_blank"
-           style="padding:5px 10px;font-size:11.5px;border-radius:8px;background:#2b3346;
-                  color:#c7cddb;text-decoration:none">開く</a>
-        <a class="sm" href="/track/{{ r.code }}"
-           style="padding:5px 10px;font-size:11.5px;border-radius:8px;background:#2b3346;
-                  color:#c7cddb;text-decoration:none">監視室</a>
-        <form method="post" action="/track/{{ r.code }}/delete"
-              onsubmit="return confirm('削除しますか？')">
-          <button class="sm d" type="submit">削除</button></form>
-      </div>
-    </td>
-  </tr>
+<h3>新規作成</h3>
+<form method="post" action="/tracks/add" class="card">
+  <label>名前 <input name="person" placeholder="相手の名前" required></label>
+  <label>モード
+    <select name="mode">
+      {% for m, label in modes %}
+      <option value="{{ m }}" {% if m == 'geo' %}selected{% endif %}>{{ label }}（{{ m }}）</option>
+      {% endfor %}
+    </select></label>
+  <label>間隔(秒) <input name="interval" type="number" value="15" min="5" max="600"></label>
+  <label>飛び先 <input name="dest" placeholder="https://... （任意）"></label>
+  <label>メモ <input name="note"></label>
+  <button type="submit">作成してリンクを取得</button>
+</form>
+<p class="note">作成すると監視室に移動し、上に「相手に送るURL」が出ます。それをコピーしてDMで送ってください。</p>
+
+{% if rows %}
+  {% for g, rs in groups.items() %}
+  <h3>{{ g }}（{{ rs|length }}件）</h3>
+  {% for r in rs %}
+  <div class="tr-row">
+    <div class="hd">
+      <span class="nm">{{ r.get('person') or r.get('name') or '名無し' }}</span>
+      <span class="mono">{{ r.code }}</span>
+      <span class="dim">{{ r.get('mode_label') or r.get('mode') }} / {{ r.get('interval') }}秒 / {{ r.get('pts') }}点</span>
+      {% if r.get('live') %}<span class="live">● リアルタイム中</span>{% endif %}
+      {% if not r.get('active') %}<span class="warn">停止中</span>{% endif %}
+      {% if r.get('dest_bad') %}<span class="warn">⚠ 飛び先が監視室（要ログイン）</span>{% endif %}
+    </div>
+
+    <div class="share">
+      <input class="url" readonly value="{{ r.get('share') }}" onclick="this.select()">
+      <button class="acts-send" type="button" data-url="{{ r.get('share') }}">送るURLをコピー</button>
+    </div>
+
+    <div class="acts">
+      <a class="send" href="{{ r.get('share') }}" target="_blank">開く（相手の画面）</a>
+      <a href="{{ r.get('watch') }}">監視室</a>
+      <form method="post" action="/track/{{ r.code }}/clear"
+            onsubmit="return confirm('点を消しますか？')"><button type="submit">点を消す</button></form>
+      <form method="post" action="/track/{{ r.code }}/delete"
+            onsubmit="return confirm('削除しますか？')"><button class="del" type="submit">削除</button></form>
+    </div>
+
+    {% if r.get('note') %}<div class="dim" style="margin-top:6px">{{ r.get('note') }}</div>{% endif %}
+    <div class="dim" style="margin-top:4px">最終 {{ (r.get('last_ts') or '')[:19] }}
+      {% if r.get('last_city') %} / {{ r.get('last_city') }}{% endif %}</div>
+  </div>
   {% endfor %}
-</table>
+  {% endfor %}
 {% else %}
-<p class="sub">まだリンクがありません。上のフォームから作成してください。</p>
-{% endfor %}
+  <p class="dim">まだ追跡リンクがありません。</p>
+{% endif %}
+{% endblock %}
 
+{% block scripts %}
 <script>
 (function () {
-  function copy(text, btn) {
-    function done() {
-      var old = btn.textContent;
-      btn.textContent = "コピー済";
-      setTimeout(function () { btn.textContent = old; }, 1400);
-    }
-    function fallback() {
+  document.querySelectorAll('.acts-send').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var u = b.getAttribute('data-url') || '';
+      function done() { b.textContent = 'コピーしました'; setTimeout(function () { b.textContent = '送るURLをコピー'; }, 1500); }
+      function fb() {
+        try {
+          var t = document.createElement('textarea');
+          t.value = u; t.style.cssText = 'position:fixed;left:-9999px';
+          document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done();
+        } catch (e) {}
+      }
       try {
-        var t = document.createElement("textarea");
-        t.value = text; t.style.cssText = "position:fixed;left:-9999px";
-        document.body.appendChild(t); t.select(); document.execCommand("copy");
-        t.remove(); done();
-      } catch (e) {}
-    }
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(fallback);
-      } else fallback();
-    } catch (e) { fallback(); }
-  }
-  Array.prototype.forEach.call(document.querySelectorAll("button.cp"), function (b) {
-    b.addEventListener("click", function () {
-      copy(location.origin + b.getAttribute("data-url"), b);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(u).then(done).catch(fb);
+        } else fb();
+      } catch (e) { fb(); }
     });
   });
 })();
 </script>
-</div></body></html>
+{% endblock %}
