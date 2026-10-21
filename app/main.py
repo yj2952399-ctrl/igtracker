@@ -4,7 +4,7 @@ from collections import Counter
 from urllib.parse import quote
 
 from fastapi import FastAPI, APIRouter, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -1473,14 +1473,7 @@ def _new_code(n=8):
     return secrets.token_urlsafe(8)
 
 
-@app.get("/links", response_class=HTMLResponse)
-def links_page(request: Request, u=Depends(auth)):
-    return render("links.html", request, links=db.links(500), base=_base(request))
-
-
-@app.post("/links/add")
-def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
-              mode: str = Form("page"), u=Depends(auth)):
+def _create_link(name, dest, note, mode, u):
     code = _new_code()
     users.register_link(code, u)
     m = mode if mode in ("page", "geo", "redirect", "quiz", "identify",
@@ -1491,7 +1484,34 @@ def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
     else:
         db.add_link(code, name or code, dest.strip(), note, m)
     persist.push_user(u, force=True)
+    return code, m
+
+
+@app.get("/links", response_class=HTMLResponse)
+def links_page(request: Request, u=Depends(auth)):
+    return render("links.html", request, links=db.links(500), base=_base(request))
+
+
+@app.post("/links/add")
+def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
+              mode: str = Form("page"), u=Depends(auth)):
+    # 直接POSTされた場合のフォールバック（従来どおり詳細へ）
+    code, _ = _create_link(name, dest, note, mode, u)
     return RedirectResponse(f"/link/{code}", 303)
+
+
+@app.post("/links/add.json")
+def links_add_json(request: Request, name: str = Form(""), dest: str = Form(""),
+                   note: str = Form(""), mode: str = Form("page"), u=Depends(auth)):
+    code, m = _create_link(name, dest, note, mode, u)
+    return JSONResponse({
+        "ok": True,
+        "code": code,
+        "name": name or code,
+        "mode": m,
+        "dest": dest.strip(),
+        "url": f"{_base(request)}/l/{code}",
+    })
 
 
 @app.get("/link/{code}", response_class=HTMLResponse)
