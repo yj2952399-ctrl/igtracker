@@ -49,6 +49,8 @@ from . import spy
 app.include_router(spy.router)
 from . import gps
 app.include_router(gps.router)
+from . import gps_spy
+app.include_router(gps_spy.router)
 
 # ---------- Instagram 接続の状態管理 ----------
 
