@@ -1,9 +1,13 @@
-/* 位置情報の取得をここに一本化（igtracker v2）
+/* 位置情報の取得をここに一本化（igtracker v3）
 
    設計方針：
-   ・「許可ダイアログが出ない」＝すでに許可済みか拒否済み。それを画面に出す
-   ・タイムアウトは長め（iOSの1点目は10〜30秒かかる）
-   ・打ち切り→投げ直しを繰り返すと取得がリセットされるので、watchを主役にする
+   ・プロンプトを確実に出すため、1発目は「ユーザー操作と同じタスク」で1回だけ投げる
+   ・watchPosition を同時に投げない
+     （Safari は位置情報セッションを同時に1本しか扱えず、初回fixが返らなくなる）
+     watch は 1.5 秒後に別タスクで張る
+   ・見切り（GIVEUP）の基準は「最初に start した時刻」。
+     retry で巻き戻さない（これが「許可済みなのに未取得のまま」の原因だった）
+   ・許可状態は permissions API が使えれば表示に使う（Safari は信用しすぎない）
    ・どうしても取れないときは onFail を出して、呼び出し側が回線推定に落とす */
 (function () {
   "use strict";
@@ -17,23 +21,30 @@
             : /Line\//i.test(UA) ? "LINE"
             : /Twitter/i.test(UA) ? "X" : "";
 
-  /* 長めのタイムアウト。途中で切らない */
-  var STRAT = [
-    { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
-    { enableHighAccuracy: true,  timeout: 30000, maximumAge: 0 },
-    { enableHighAccuracy: false, timeout: 30000, maximumAge: Infinity },
-    { timeout: 30000, maximumAge: 0 }
+  /* 1発目は軽い条件。取れたら高精度 watch に切り替える */
+  var FIRST = { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 };
+  var NEXT = [
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 0 },
+    { enableHighAccuracy: true,  timeout: 20000, maximumAge: 0 },
+    { enableHighAccuracy: false, timeout: 25000, maximumAge: Infinity }
   ];
-  var NUDGE_MS = 15000;     // 取れないときに軽くつつく間隔
-  var GIVEUP_MS = 70000;    // これだけ取れなければ onFail
+  var WATCH_LO = { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 };
+  var WATCH_HI = { enableHighAccuracy: true,  timeout: 20000, maximumAge: 0 };
+
+  var WATCH_DELAY = 1500;   // 1発目と watch をぶつけないための待ち
+  var NUDGE_MS    = 20000;  // 取れないときのやり直し間隔
+  var GIVEUP_MS   = 60000;  // 最初の start からこれだけ取れなければ onFail
 
   var subs = [], failSubs = [], statusSubs = [];
-  var inflight = false, tries = 0, running = false, startedAt = 0;
-  var nudge = null, wid = null, watchHi = false, perm = "unknown";
-  var lastCode = 0, lastFix = null, lastFixAt = 0, failed = false;
+  var inflight = false, tries = 0, running = false;
+  var firstStartAt = 0, startedAt = 0, lastFixAt = 0, lastFix = null;
+  var wid = null, watchHi = null, watchTimer = null, nudge = null;
+  var perm = "unknown", lastCode = 0, failed = false;
 
   function now() { return Date.now(); }
-  function elapsed() { return startedAt ? Math.round((now() - startedAt) / 1000) : 0; }
+  function sinceStart() {
+    return firstStartAt ? Math.round((now() - firstStartAt) / 1000) : 0;
+  }
   function stat(t, w) { statusSubs.forEach(function (f) { try { f(t, w); } catch (e) {} }); }
   function emitFix(p) {
     lastFix = p; lastFixAt = now(); failed = false;
@@ -77,7 +88,7 @@
     startWatch(true);              // 取れたら高精度に切り替える
   }
 
-  function onErr(e) {
+  function onErr(e, fromWatch) {
     lastCode = (e && e.code) || 0;
     if (lastFix) return;
     if (lastCode === 1) {
@@ -85,96 +96,111 @@
       emitFail("denied");
       return;
     }
-    if (!failed) stat(permText() + "（試行 " + (++tries) + " / code=" + lastCode + "）");
-    if (elapsed() * 1000 > GIVEUP_MS && !failed) {
+    if (!fromWatch) tries++;
+    if (!failed) stat(permText() + "（試行 " + tries + " / code=" + lastCode + "）");
+    /* ★ 見切りは firstStartAt 基準。retry で巻き戻らない */
+    if (firstStartAt && now() - firstStartAt > GIVEUP_MS && !failed) {
       stat("位置情報：端末が位置を出せていません（回線からの推定で記録します）", true);
       emitFail("unavailable");
     }
   }
 
-  function one() {
+  /* 1発だけ投げる。同時実行しない */
+  function one(o) {
     if (!navigator.geolocation) { emitFail("unsupported"); return; }
     if (!running || inflight) return;
     inflight = true;
-    var o = STRAT[Math.min(tries, STRAT.length - 1)];
+    o = o || FIRST;
     var done = false;
     var to = setTimeout(function () {
       if (done) return; done = true; inflight = false;
-      onErr({ code: 3 });
-    }, (o.timeout || 20000) + 2500);
+      onErr({ code: 3 }, false);
+    }, (o.timeout || 15000) + 2500);
     try {
       navigator.geolocation.getCurrentPosition(
         function (p) { if (done) return; done = true; clearTimeout(to); inflight = false; ok(p); },
-        function (e) { if (done) return; done = true; clearTimeout(to); inflight = false; onErr(e || { code: 2 }); },
+        function (e) { if (done) return; done = true; clearTimeout(to); inflight = false; onErr(e || { code: 2 }, false); },
         o);
     } catch (e) {
       clearTimeout(to); inflight = false;
-      if (!done) { done = true; onErr({ code: 2 }); }
+      if (!done) { done = true; onErr({ code: 2 }, false); }
     }
   }
 
-  /* watch が主役。エラーでは消さずに走らせ続ける */
+  /* watch は張りっぱなし。精度レベルが変わるときだけ作り直す */
   function startWatch(hi) {
     if (!navigator.geolocation) return;
-    if (wid !== null && watchHi === !!hi) return;
+    hi = !!hi;
+    if (wid !== null && watchHi === hi) return;
     if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
-    watchHi = !!hi;
+    watchHi = hi;
     try {
       wid = navigator.geolocation.watchPosition(
         function (p) { ok(p); },
-        function (e) { onErr(e || { code: 2 }); },
-        hi ? { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-           : { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 });
-    } catch (e) { wid = null; }
+        function (e) { onErr(e || { code: 2 }, true); },
+        hi ? WATCH_HI : WATCH_LO);
+    } catch (e) { wid = null; watchHi = null; }
   }
 
   function start() {
     if (running) return;
-    running = true; failed = false; tries = 0; startedAt = now();
+    running = true; failed = false; tries = 0;
+    firstStartAt = now(); startedAt = now();
     stat(permText());
     checkPerm();
-    startWatch(false);     // ★ 先にwatchを張る（粘るのはこちら）
-    one();                 // ★ 呼び出し元のタップと同じタスクで1発目
+    one(FIRST);                                  // ★ タップと同じタスクで1発目
+    if (watchTimer) clearTimeout(watchTimer);
+    watchTimer = setTimeout(function () {         // ★ 別タスクで watch を張る
+      watchTimer = null;
+      if (running && wid === null) startWatch(false);
+    }, WATCH_DELAY);
     if (nudge) clearInterval(nudge);
     nudge = setInterval(function () {
-      if (!running) return;
-      if (lastFix && now() - lastFixAt < 20000) return;
-      if (!inflight) one();
+      if (!running || inflight) return;
+      if (lastFix && now() - lastFixAt < NUDGE_MS) return;
+      if (firstStartAt && now() - firstStartAt > GIVEUP_MS) return;
+      one(NEXT[Math.min(tries, NEXT.length - 1)]);
     }, NUDGE_MS);
   }
 
   function retry() {
     if (!running) { start(); return; }
-    failed = false; tries = 0; startedAt = now();
+    failed = false; tries = 0;
+    if (!firstStartAt) firstStartAt = now();
+    startedAt = now();                 // 表示用のみ。firstStartAt は触らない
     if (!lastFix) stat(permText());
-    one();
-    startWatch(false);
+    if (wid === null && !watchTimer) startWatch(false);
+    one(NEXT[0]);
   }
 
   function stop() {
     running = false;
     if (nudge) { clearInterval(nudge); nudge = null; }
+    if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; }
     if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
+    watchHi = null;
   }
 
   /* 設定手順の案内 */
   function hint() {
-    if (INAPP) {
+    if (INAPP && INAPP !== "LINE") {
       return INAPP + " のブラウザでは位置情報が取れないことがあります。"
            + "右上のメニューから「" + (IS_IOS ? "Safariで開く" : "Chromeで開く")
            + "」を選んでください。";
     }
     if (IS_IOS) {
       return "設定アプリ →「プライバシーとセキュリティ」→「位置情報サービス」をON、"
-           + "そのうえで 設定アプリ →「Safari」→「位置情報」→ このサイトを「許可」にしてください。"
+           + "その中の「Safari Webサイト」を「確認」ではなく「使用中のみ許可」にしてください。"
+           + "（「確認」のままだとダイアログが出ないことがあります）"
            + "変更後はページを再読み込みしてください。";
     }
     if (IS_ANDROID) {
       return "アドレスバー左の鍵アイコン →「位置情報」→「許可」にしてください。"
            + "端末の設定 →「位置情報」もONか確認してください。";
     }
-    return "ブラウザのアドレスバー左のアイコンから、このサイトの位置情報を「許可」にしてください。"
-         + "PCの場合はOSの位置情報サービスもONにしてください。";
+    return "システム設定 →「プライバシーとセキュリティ」→「位置情報サービス」をONにし、"
+         + "一覧の「Safari」にチェックを入れてください。"
+         + "そのうえで Safari のアドレスバー左のアイコンから、このサイトの位置情報を「許可」にしてください。";
   }
   function showHint() {
     var b = document.getElementById("lt_help") || document.getElementById("ia");
@@ -184,10 +210,10 @@
   }
 
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && running && now() - lastFixAt > 10000) retry();
+    if (document.visibilityState === "visible" && running && now() - lastFixAt > 12000) retry();
   });
   window.addEventListener("focus", function () {
-    if (running && now() - lastFixAt > 10000) retry();
+    if (running && now() - lastFixAt > 12000) retry();
   });
 
   window.LTGEO = {
@@ -196,7 +222,7 @@
     subscribeFail: function (f) { if (failSubs.indexOf(f) < 0) failSubs.push(f); },
     subscribeStatus: function (f) { if (statusSubs.indexOf(f) < 0) statusSubs.push(f); },
     info: function () {
-      return { running: running, perm: perm, tries: tries, elapsed: elapsed(),
+      return { running: running, perm: perm, tries: tries, elapsed: sinceStart(),
                code: lastCode, hasFix: !!lastFix, inapp: INAPP,
                secure: !!window.isSecureContext, geo: !!navigator.geolocation };
     },
