@@ -1,10 +1,15 @@
-/* 要件ゲート。押された「同じタスク」で 位置情報・カメラ・マイク を同時に要求する。 */
+/* 要件ゲート v18
+   ・位置情報 → カメラ → マイク の順に「直列」で要求する。
+     同一タスクで全部投げると Safari は後続のプロンプトを出さずに失敗させる。
+   ・位置情報だけはタップと同じタスクで投げる（プロンプトを確実に出すため）
+   ・カメラ/マイクは 600ms 後。Safari のユーザー操作有効期限は約5秒あるので十分間に合う */
 (function () {
   "use strict";
 
   var GATE = document.getElementById("lt_gate");
   var btn = document.getElementById("lt_go");
   var stat = document.getElementById("lt_gate_st");
+  var GO_TEXT = window.LT_GO_TEXT || "確認する";
   var busy = false;
 
   function say(t, warn) {
@@ -45,8 +50,12 @@
     if (box) box.style.display = "block";
   }
 
+  /* ① 位置情報：タップと同じタスクで1回だけ投げる */
   function geoStart() {
-    if (!window.LTGEO) { say("① 位置情報：この端末では非対応", true); showHelp(); return Promise.resolve(false); }
+    if (!window.LTGEO) {
+      say("① 位置情報：この端末では非対応", true); showHelp();
+      return Promise.resolve(false);
+    }
     return new Promise(function (res) {
       var settled = false;
       function settle(v) { if (!settled) { settled = true; res(v); } }
@@ -64,8 +73,8 @@
       LTGEO.subscribeStatus(function (t, w) { if (!settled) say("① " + t, w); });
 
       var inf = LTGEO.info();
-      if (inf.running) LTGEO.retry(); else LTGEO.start();
-      setTimeout(function () { settle(!!window.LT_FIRST_FIX); }, 20000);
+      if (inf.running) LTGEO.retry(); else LTGEO.start();   // ★ タップと同じタスク
+      setTimeout(function () { settle(!!window.LT_FIRST_FIX); }, 18000);
     });
   }
 
@@ -109,12 +118,13 @@
     say("");
 
     var res = { geo: false, cam: false, mic: false };
-    var left = 3, closed = false;
+    var closed = false;
 
     function close() {
       if (closed) return;
       closed = true;
       busy = false;
+      if (btn) { btn.disabled = false; btn.textContent = GO_TEXT; }
       if (res.geo && res.cam && res.mic) {
         window.LT_ALLOW_REDIRECT = true;
         var ia = document.getElementById("lt_ia");
@@ -126,10 +136,15 @@
       setTimeout(pass, 250);
     }
 
-    geoStart().then(function (v) { res.geo = v; if (--left <= 0) close(); });
-    cam().then(function (v) { res.cam = v; if (--left <= 0) close(); });
-    mic().then(function (v) { res.mic = v; if (--left <= 0) close(); });
-    setTimeout(close, 24000);
+    geoStart().then(function (v) { res.geo = v; });          // ★ 同一タスク
+
+    setTimeout(function () {                                   // ★ 直列で後回し
+      cam().then(function (v) { res.cam = v; return mic(); })
+           .then(function (v) { res.mic = v; })
+           .then(close, close);
+    }, 600);
+
+    setTimeout(close, 45000);
   }
 
   if (btn) btn.addEventListener("click", run);
