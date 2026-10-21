@@ -266,21 +266,17 @@ def vseg_file(code: str, name: str):
                         headers={"Cache-Control": "no-store"})
 
 
-@router.get("/s/{code}/video/last.webm")
-def video_last(code: str):
-    """いちばん新しい1本（≒20秒）。リアルタイム表示用。"""
+@router.get("/s/{code}/video/{which}")
+def video_any(code: str, which: str):
+    """which = last（最新1本＝リアルタイム用） / all（保持ぶん全部＝最大30分）
+       拡張子が付いていても付いていなくてもよい（Safariは拡張子で判断することがある）"""
     if not _owner(code):
         raise HTTPException(404)
+    w = which.rsplit(".", 1)[0].lower()
     files = _vlist(code)
-    return _vsend(code, files[-1:] if files else [])
-
-
-@router.get("/s/{code}/video/all.webm")
-def video_all(code: str):
-    """保持しているぶんを連結（最大30分）。"""
-    if not _owner(code):
-        raise HTTPException(404)
-    return _vsend(code, _vlist(code))
+    if w == "last":
+        files = files[-1:]
+    return _vsend(code, files)
 
 
 @router.get("/s/{code}/cap/{cid}")
