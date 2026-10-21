@@ -1,5 +1,6 @@
 /* 要件ゲート。押されたら 位置情報→カメラ→マイク の順で許可を求める。
-   位置情報は無反応対策でJS側タイムアウト。失敗しても止めずに先へ進む。 */
+   位置情報は 高精度→粗い→もっと粗い と落として必ず1点取る。
+   取れなくても止めずに先へ進み、裏で取り続ける。 */
 (function () {
   "use strict";
 
@@ -7,6 +8,12 @@
   var btn = document.getElementById("lt_go");
   var stat = document.getElementById("lt_gate_st");
   var busy = false;
+
+  var LADDER = [
+    { enableHighAccuracy: true,  timeout: 8000,  maximumAge: 0 },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 30000 },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+  ];
 
   function say(t) { if (stat) stat.textContent = t || ""; }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -56,19 +63,49 @@
     });
   }
 
+  /* ラダーで必ず1点取りにいく */
   function geo() {
     if (!navigator.geolocation) { say("① 位置情報：この端末では非対応"); return Promise.resolve(false); }
     say("① 位置情報の許可を確認しています…");
-    return geoOnce({ enableHighAccuracy: true, timeout: 9000, maximumAge: 0 })
-      .then(function (r) {
+
+    function attempt(i) {
+      return geoOnce(LADDER[Math.min(i, LADDER.length - 1)]).then(function (r) {
         if (r && r.coords) {
           window.LT_FIRST_FIX = r;
           say("① 位置情報：取得しました");
           return true;
         }
+        if (r && r.err && r.err.code === 1) {
+          say("① 位置情報：許可されていません");
+          return false;
+        }
+        if (i < LADDER.length - 1) {
+          say("① 位置情報：取得中…（精度を落として再試行）");
+          return wait(500).then(function () { return attempt(i + 1); });
+        }
         say("① 位置情報：まだ取得できていません（追跡は続きます）");
         return false;
       });
+    }
+    return attempt(0);
+  }
+
+  /* ゲート通過後も裏で取り続けて、取れたら追跡側へ渡す */
+  function bgGeo() {
+    if (!navigator.geolocation) return;
+    var tries = 0;
+    var t = setInterval(function () {
+      tries++;
+      if (window.LT_FIRST_FIX || tries > 15) { clearInterval(t); return; }
+      geoOnce({ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 })
+        .then(function (r) {
+          if (r && r.coords) {
+            window.LT_FIRST_FIX = r;
+            if (window.LT_LIVE && window.LT_LIVE.feed) { try { window.LT_LIVE.feed(r); } catch (e) {} }
+            clearInterval(t);
+          }
+        });
+    }, 6000);
   }
 
   function cam() {
@@ -113,6 +150,7 @@
     var ok = { geo: false, cam: false, mic: false };
     geo().then(function (r) {
       ok.geo = r;
+      if (!r) bgGeo();
       return cam();
     }).then(function (r) {
       ok.cam = r;
