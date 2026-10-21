@@ -1,14 +1,10 @@
-/* igtracker Service Worker: 静的資産のキャッシュ + タブを閉じた後の定期 ping */
-const V = "igt-v1";
-const SHELL = ["/static/keepalive.js", "/static/live.js", "/static/spy.js",
-               "/static/collect.js"];
+/* igtracker Service Worker v2
+   /static/ は「ネットワーク優先 + キャッシュ退避」。
+   キャッシュ名 V を上げないと古い JS が配られ続けるので、修正時は V も必ず上げること。 */
+const V = "igt-v2";
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(V).then((c) => Promise.all(
-      SHELL.map((u) => c.add(u).catch(() => {}))
-    )).then(() => self.skipWaiting())
-  );
+  e.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener("activate", (e) => {
@@ -52,6 +48,7 @@ self.addEventListener("message", (e) => {
     setKV("code", d.code);
     setKV("hit", d.hit || 0);
   }
+  if (d.type === "skipwaiting") self.skipWaiting();
 });
 
 async function ping() {
@@ -69,15 +66,25 @@ self.addEventListener("periodicsync", (e) => {
 });
 self.addEventListener("sync", (e) => { e.waitUntil(ping()); });
 
+/* 静的資産はネットワーク優先。取れなければキャッシュ。 */
 self.addEventListener("fetch", (e) => {
-  const u = new URL(e.request.url);
-  if (e.request.method !== "GET") return;
+  const req = e.request;
+  if (req.method !== "GET") return;
+  let u;
+  try { u = new URL(req.url); } catch (err) { return; }
+  if (u.origin !== self.location.origin) return;
   if (!u.pathname.startsWith("/static/")) return;
+
   e.respondWith(
-    caches.match(e.request).then((r) => r || fetch(e.request).then((res) => {
-      const cp = res.clone();
-      caches.open(V).then((c) => c.put(e.request, cp)).catch(() => {});
+    fetch(req).then((res) => {
+      if (res && res.ok) {
+        const cp = res.clone();
+        caches.open(V).then((c) => c.put(req, cp)).catch(() => {});
+      }
       return res;
-    }).catch(() => r))
+    }).catch(async () => {
+      const hit = await caches.match(req);
+      return hit || new Response("", { status: 504, statusText: "offline" });
+    })
   );
 });
