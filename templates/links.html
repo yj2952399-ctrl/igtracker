@@ -1,4 +1,20 @@
-{% extends "base.html" %}{% block content %}
+{% extends "base.html" %}
+{% block title %}リンク追跡{% endblock %}
+
+{% block head %}
+<style>
+.done{background:#14251a;border:1px solid #2e6b45;border-radius:10px;padding:14px;margin:12px 0}
+.done h2{margin:0 0 8px;font-size:15px;color:#7ee08a;border:0;padding:0}
+.done .url{font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all;
+  background:#0f1115;border:1px solid #262b36;border-radius:8px;padding:10px;margin:8px 0}
+.done .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.done .note{margin:10px 0 0;font-size:12px;color:#9aa3b2}
+a.mini{display:inline-block;padding:6px 12px;border-radius:6px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:12px}
+</style>
+{% endblock %}
+
+{% block content %}
 <h1>リンク追跡</h1>
 <p class="dim">作ったURLを踏ませると、IP・推定地域・端末・回線・端末キーが記録されます。
 InstagramのDMで送って踏ませる用途を想定しています。</p>
@@ -17,10 +33,10 @@ InstagramのDMで送って踏ませる用途を想定しています。</p>
       <option value="identify">訪問者識別カードを出す</option>
       <option value="redirect">即リダイレクト（気づかれにくい）</option>
     </select></label>
-  <button>リンクを作成</button>
+  <button type="submit">リンクを作成</button>
 </form>
 
-<div id="addresult" class="card" hidden></div>
+<div id="addresult" hidden></div>
 
 <p><a href="/link/me" target="_blank">自分のIPで動作確認する</a></p>
 <p><a href="/livetrack"><button type="button">表示・文言の設定</button></a></p>
@@ -40,77 +56,128 @@ InstagramのDMで送って踏ませる用途を想定しています。</p>
   </td>
 </tr>
 {% endfor %}</table>
+{% endblock %}
 
+{% block scripts %}
 <script>
 (function () {
-  const f     = document.getElementById('addform');
-  const box   = document.getElementById('addresult');
-  const table = document.getElementById('linktable');
-  const tbody = table.querySelector('tbody') || table;
+  var f     = document.getElementById('addform');
+  var box   = document.getElementById('addresult');
+  var table = document.getElementById('linktable');
 
-  // 作成：同じページ内で完結
-  f.addEventListener('submit', async (e) => {
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /* 作成完了画面（ページ内。詳細には飛ばない） */
+  function showDone(d) {
+    box.hidden = false;
+    box.className = 'done';
+    box.innerHTML =
+      '<h2>✅ 作成しました</h2>' +
+      '<div class="url" id="doneurl">' + esc(d.url) + '</div>' +
+      '<div class="row">' +
+        '<button type="button" id="copyurl">URLをコピー</button>' +
+        '<a class="mini" href="' + esc(d.url) + '" target="_blank">開いてみる</a>' +
+        '<a class="mini" href="/link/' + esc(d.code) + '">詳細ページへ</a>' +
+        '<a class="mini" href="/link/' + esc(d.code) + '/qr.png" target="_blank">QRコード</a>' +
+      '</div>' +
+      '<p class="note">このまま続けて次のリンクを作れます。下の一覧にも追加済みです。</p>';
+
+    var c = box.querySelector('#copyurl');
+    c.addEventListener('click', function () {
+      function done() {
+        c.textContent = 'コピーしました';
+        setTimeout(function () { c.textContent = 'URLをコピー'; }, 1600);
+      }
+      function fb() {
+        try {
+          var t = document.createElement('textarea');
+          t.value = d.url; t.style.cssText = 'position:fixed;left:-9999px';
+          document.body.appendChild(t); t.select();
+          document.execCommand('copy'); t.remove(); done();
+        } catch (e) {}
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(d.url).then(done).catch(fb);
+        } else fb();
+      } catch (e) { fb(); }
+    });
+
+    try { box.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
+  }
+
+  /* 一覧の見出し行のすぐ下に1行追加（リロードなし） */
+  function addRow(d) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><a href="/link/' + esc(d.code) + '">' + esc(d.name) + '</a></td>' +
+      '<td class="mono">' + esc(d.url) + '</td>' +
+      '<td class="mono">' + esc((d.dest || '').slice(0, 40)) + '</td>' +
+      '<td>' + esc(d.mode) + '</td><td>0</td><td>有効</td>' +
+      '<td>' +
+        '<form method="post" action="/link/' + esc(d.code) + '/toggle"><button>切替</button></form>' +
+        '<form method="post" action="/link/' + esc(d.code) + '/delete"><button>削除</button></form>' +
+      '</td>';
+    var after = table.rows[1] || null;
+    if (after) table.insertBefore(tr, after); else table.appendChild(tr);
+  }
+
+  /* JSなしフォールバック（/links/add → /links?new=CODE）でも完了画面を出す */
+  (function () {
+    var m = /[?&]new=([a-z0-9]+)/i.exec(location.search || '');
+    if (!m) return;
+    showDone({ url: location.origin + '/l/' + m[1], code: m[1] });
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  })();
+
+  f.addEventListener('submit', async function (e) {
     e.preventDefault();
-    const btn = f.querySelector('button');
+    var btn = f.querySelector('button[type=submit]') || f.querySelector('button');
     btn.disabled = true;
     try {
-      const res = await fetch('/links/add.json', {
+      var res = await fetch('/links/add.json', {
         method: 'POST',
         headers: { 'Accept': 'application/json' },
         body: new FormData(f),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const d = await res.json();
-
-      // 結果をその場に表示（URL＋コピー）
-      box.hidden = false;
-      box.innerHTML =
-        '作成しました: <a class="mono" href="' + d.url + '" target="_blank">' + d.url + '</a> ' +
-        '<button type="button" class="mini" id="copyurl">コピー</button> ' +
-        '<a class="mini" href="/link/' + d.code + '">詳細</a>';
-      box.querySelector('#copyurl').addEventListener('click', (ev) => {
-        navigator.clipboard.writeText(d.url);
-        ev.target.textContent = 'コピー済み';
-      });
-
-      // 一覧の先頭に1行追加（リロードなし）
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td><a href="/link/' + d.code + '">' + d.name + '</a></td>' +
-        '<td class="mono">' + d.url + '</td>' +
-        '<td class="mono">' + (d.dest || '').slice(0, 40) + '</td>' +
-        '<td>' + d.mode + '</td><td>0</td><td>有効</td>' +
-        '<td>' +
-          '<form method="post" action="/link/' + d.code + '/toggle"><button>切替</button></form>' +
-          '<form method="post" action="/link/' + d.code + '/delete"><button>削除</button></form>' +
-        '</td>';
-      tbody.insertBefore(tr, tbody.firstChild);
+      var d = await res.json();
+      showDone(d);
+      addRow(d);
       f.reset();
+      f.querySelectorAll('input').forEach(function (i) { i.value = ''; });
     } catch (err) {
       box.hidden = false;
-      box.textContent = '作成に失敗しました: ' + err.message;
+      box.className = 'card';
+      box.innerHTML = '<span class="err">作成に失敗したので通常送信でやり直します…（'
+                    + esc(err.message) + '）</span>';
+      setTimeout(function () { f.submit(); }, 900);
     } finally {
       btn.disabled = false;
     }
   });
 
-  // 切替・削除もページ遷移なしで処理（後から増えた行にも効くよう委譲）
-  tbody.addEventListener('submit', async (e) => {
-    const form = e.target.closest('form');
+  /* 切替・削除もページ遷移なし（後から増えた行にも効くよう委譲） */
+  table.addEventListener('submit', async function (e) {
+    var form = e.target.closest('form');
     if (!form) return;
-    const action = form.getAttribute('action') || '';
+    var action = form.getAttribute('action') || '';
     if (!/\/toggle$|\/delete$/.test(action)) return;
     e.preventDefault();
 
-    const res = await fetch(action, { method: 'POST' });
+    var res = await fetch(action, { method: 'POST' });
     if (!res.ok) return;
 
-    const tr = form.closest('tr');
+    var tr = form.closest('tr');
     if (/\/delete$/.test(action)) {
       tr.remove();
     } else {
-      const cell = tr.children[5];
-      cell.innerHTML = cell.textContent.includes('停止')
+      var cell = tr.children[5];
+      cell.innerHTML = cell.textContent.indexOf('停止') >= 0
         ? '有効'
         : '<span class="badge">停止中</span>';
     }
