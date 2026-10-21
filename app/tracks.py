@@ -1,8 +1,8 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ）・人物ごとの登録・追跡画面。
 
-v8:
-  ・監視室を「識別者コード」ごとに分割。識別者コードに名前を付けられる
-  ・位置が取れない端末のために、回線推定の点も残せるようにした
+v9:
+  ・作成後は「相手に送るURL（/l/コード）」をコピーできる状態で着地させる
+  ・監視室と一覧に送るURLを常設（監視室URLをそのまま送ってログイン画面になる事故を防ぐ）
 """
 from __future__ import annotations
 
@@ -62,6 +62,16 @@ UI_LABEL = {
 }
 
 VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify", "redirect")
+
+MODE_LABEL = {
+    "geo": "位置情報（GPS）",
+    "live": "リアルタイム（GPS＋カメラ）",
+    "snap": "一瞬（GPS）",
+    "page": "ページ",
+    "quiz": "クイズ",
+    "identify": "特定",
+    "redirect": "転送",
+}
 
 
 def _coerce(key, v):
@@ -189,6 +199,33 @@ def _get_track(code):
         db.track_update(code, mode="live", interval=_clamp_iv(l["interval"]))
         return db.track_get(code)
     return l
+
+
+# ---------- 送るURL（/l/コード）まわり ----------
+
+def share_url(request, code):
+    """相手にDMで送るURL。監視室(/track/コード)ではない。"""
+    return _m()._base(request).rstrip("/") + "/l/" + code
+
+
+def watch_url(request, code):
+    """自分用の監視室URL。要ログイン。"""
+    return _m()._base(request).rstrip("/") + "/track/" + code
+
+
+def dest_is_watch(base, dest):
+    """飛び先が監視室（要ログイン）になっていないか。"""
+    try:
+        d = (dest or "").strip()
+        if not d:
+            return False
+        if "/track/" in d:
+            return True
+        if d.rstrip("/") == (base or "").rstrip("/"):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # ---------- 識別者コード（vid）ごとの整理 ----------
@@ -606,21 +643,27 @@ def live_settings_reset(u=Depends(auth)):
 
 @router.get("/tracks", response_class=HTMLResponse)
 def tracks_page(request: Request, u=Depends(auth)):
+    base = _m()._base(request)
     rows = []
     for r in db.tracks(500):
         d = dict(r)
         d["pts"] = db.point_count(d["code"])
         d["live"] = bool(d["live"]) and _recent(d["last_ts"], 90)
+        d["share"] = share_url(request, d["code"])
+        d["watch"] = watch_url(request, d["code"])
+        d["mode_label"] = MODE_LABEL.get(d.get("mode") or "", d.get("mode") or "")
+        d["dest_bad"] = dest_is_watch(base, d.get("dest"))
         rows.append(d)
     groups = {}
     for r in rows:
         groups.setdefault(r.get("person") or r["name"] or "名無し", []).append(r)
     return render("tracks.html", request, rows=rows, groups=groups,
-                  base=_m()._base(request), L=live_cfg())
+                  base=base, L=live_cfg(),
+                  modes=[(m, MODE_LABEL.get(m, m)) for m in VALID_MODES])
 
 
 @router.post("/tracks/add")
-def tracks_add(request: Request, person: str = Form(""), mode: str = Form("snap"),
+def tracks_add(request: Request, person: str = Form(""), mode: str = Form("geo"),
                interval: int = Form(15), dest: str = Form(""), note: str = Form(""),
                u=Depends(auth)):
     person = (person or "").strip()[:40] or "名無し"
@@ -632,7 +675,8 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("snap"
         users.register_link(code, u)
     except Exception:
         pass
-    return RedirectResponse(f"/track/{code}", status_code=303)
+    # ★ 監視室に着地しつつ「送るURL」をコピーできる状態にする
+    return RedirectResponse(f"/track/{code}?new=1", status_code=303)
 
 
 def _people(code, rows):
@@ -663,10 +707,12 @@ def _person_view(g):
 
 
 @router.get("/track/{code}", response_class=HTMLResponse)
-def track_view(code: str, request: Request, v: str = "", u=Depends(auth)):
+def track_view(code: str, request: Request, v: str = "", new: str = "",
+               u=Depends(auth)):
     link = db.track_get(code)
     if not link:
         raise HTTPException(404)
+    base = _m()._base(request)
     rows = [dict(r) for r in db.points(code, limit=5000)]
     people = _people(code, rows)
     cur = next((g for g in people if g["key"] == v), None) if v else None
@@ -679,7 +725,11 @@ def track_view(code: str, request: Request, v: str = "", u=Depends(auth)):
                       [{"lat": r["lat"], "lon": r["lon"], "src": r["src"]}
                        for r in rows if r["lat"] is not None], ensure_ascii=False),
                   live=bool(link["live"]) and _recent(link["last_ts"], 90),
-                  base=_m()._base(request), n=len(rows))
+                  base=base, n=len(rows),
+                  share=share_url(request, code),
+                  mode_label=MODE_LABEL.get(link["mode"] or "", link["mode"] or ""),
+                  dest_bad=dest_is_watch(base, link["dest"]),
+                  is_new=(new == "1"))
 
 
 @router.post("/track/{code}/person/name")
