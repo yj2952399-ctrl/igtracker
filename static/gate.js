@@ -15,10 +15,11 @@
 
   /* 1回目はオプション無し。以降は精度を落として粘る */
   var LADDER = [
-    { timeout: 12000, maximumAge: 0 },
+    { timeout: 10000, maximumAge: 0 },                              // ← 追加（既定）
     { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
     { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 },
     { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 },
+    { enableHighAccuracy: false, timeout: 25000, maximumAge: Infinity }   // ← 追加
   ];
 
   function say(t) { if (stat) stat.textContent = t || ""; }
