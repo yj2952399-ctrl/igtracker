@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>リンク追跡</title>
+<style>
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;padding:20px}
+h1{font-size:20px;margin:0 0 4px}
+p.dim{color:#8b93a7;font-size:12.5px;line-height:1.9;margin:0 0 18px}
+a.card{display:block;text-decoration:none;color:#e6e9ef;background:#171a21;
+  border:1px solid #262b36;border-radius:12px;padding:18px;margin:10px 0}
+a.card:hover{border-color:#4c8dff}
+a.card b{display:block;font-size:17px;margin-bottom:6px}
+a.card span{display:block;font-size:12.5px;color:#8b93a7;line-height:1.8}
+a.card .tag{display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;
+  background:#20242e;border:1px solid #39415a;color:#c7cddb;margin-bottom:8px}
+a.new{border-color:#4c8dff}
+a.new .tag{background:#4c8dff;border-color:#4c8dff;color:#fff}
+</style></head><body>
+
+<h1>リンク追跡</h1>
+<p class="dim">どちらを使いますか。作ったリンクはそれぞれ別系統です。</p>
+
+<a class="card new" href="{{ base }}/gp">
+  <span class="tag">新式</span>
+  <b>GPS（位置情報）追跡</b>
+  <span>位置情報・カメラ・マイクを取ります。精度は高精度モード。
+        相手に送るURLは <b>{{ base }}/g/コード</b>。解析ページ付き。</span>
+</a>
+
+<a class="card" href="{{ base }}/tracks">
+  <span class="tag">旧式</span>
+  <b>ページ追跡（従来）</b>
+  <span>これまでの仕組み。既存のリンクはそのまま動きます。
+        相手に送るURLは {{ base }}/l/コード。</span>
+</a>
+
+</body></html>
