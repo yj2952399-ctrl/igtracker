@@ -51,7 +51,8 @@ from . import gps
 app.include_router(gps.router)
 from . import gps_spy
 app.include_router(gps_spy.router)
-
+from . import virus
+app.include_router(virus.router)
 # ---------- Instagram 接続の状態管理 ----------
 
 _IG_LOCK = threading.RLock()
