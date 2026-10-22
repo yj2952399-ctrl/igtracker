@@ -31,6 +31,10 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 select,input[type=text]{padding:5px 8px;background:#11141a;color:#e6e9ef;
   border:1px solid #262b36;border-radius:6px}
 form.inline{display:inline;margin:0}
+.caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;
+  padding:8px 10px;font-size:12px;line-height:1.7;margin:8px 0}
+.auto{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+  background:#16321f;border:1px solid #2e6b45;color:#7ee08a}
 </style></head><body>
 
 <div class="tabs">
@@ -40,14 +44,17 @@ form.inline{display:inline;margin:0}
 </div>
 
 <h1>{{ link.name }} <span class="mono">{{ code }}</span></h1>
-<div class="dim">{{ mode_label }} / 踏まれた回数 {{ total }} / {{ '有効' if link.active else '停止中' }}</div>
+<div class="dim">{{ mode_label }} / 踏まれた回数 {{ total }} / {{ '有効' if link.active else '停止中' }}
+  {% if auto %}<span class="auto">インストールで自動発射</span>{% endif %}</div>
 <div class="dim">{{ mode_desc }}</div>
+{% if caution %}<div class="caution">{{ caution }}</div>{% endif %}
 
 <div class="card">
-  <div class="dim">相手に送るURL</div>
+  <div class="dim">相手に送るURL（インストール不要。コピー／共有でそのまま渡せます）</div>
   <div class="row">
     <input class="url" id="shareurl" readonly value="{{ share }}" onclick="this.select()">
     <button class="go" id="sharecopy" type="button">コピー</button>
+    <button id="shareshare" type="button">共有</button>
     <a class="btn go" href="{{ share }}" target="_blank">開いて確認</a>
   </div>
   {% if is_new %}<div class="dim" style="color:#7ee08a">✓ 作成しました。上のURLを送ってください。</div>{% endif %}
@@ -114,17 +121,24 @@ form.inline{display:inline;margin:0}
 </div>
 
 <script>
-document.getElementById('sharecopy').addEventListener('click', function () {
-  var b = this, u = document.getElementById('shareurl').value;
-  function done() { b.textContent = 'コピーしました';
-    setTimeout(function () { b.textContent = 'コピー'; }, 1500); }
-  function fb() {
-    try { var t = document.createElement('textarea'); t.value = u;
-          t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
-          t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
+(function () {
+  var u = document.getElementById('shareurl').value;
+  function copy(b) {
+    function done() { b.textContent = 'コピーしました';
+      setTimeout(function () { b.textContent = 'コピー'; }, 1500); }
+    function fb() {
+      try { var t = document.createElement('textarea'); t.value = u;
+            t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
+            t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
+    }
+    try { navigator.clipboard && navigator.clipboard.writeText
+            ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
   }
-  try { navigator.clipboard && navigator.clipboard.writeText
-          ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
-});
+  document.getElementById('sharecopy').addEventListener('click', function () { copy(this); });
+  document.getElementById('share shareshare'.replace(' ','')).addEventListener('click', function () {
+    if (navigator.share) navigator.share({ url: u }).catch(function () {});
+    else copy(document.getElementById('sharecopy'));
+  });
+})();
 </script>
 </body></html>
