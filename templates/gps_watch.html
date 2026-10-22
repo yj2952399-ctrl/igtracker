@@ -19,7 +19,11 @@ h3{font-size:14px;margin:18px 0 6px;color:#c7cddb}
 a.btn,button{padding:7px 13px;border-radius:8px;background:#2b3346;color:#e6e9ef;
   text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer}
 a.go{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:10px 0}
+.tabs{display:flex;gap:6px;margin:6px 0 12px;flex-wrap:wrap}
+.tabs a{padding:7px 14px;border-radius:999px;background:#20242e;border:1px solid #39415a;
+  color:#c7cddb;text-decoration:none;font-size:12.5px}
+.tabs a.on{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin:10px 0}
 .grid .card{margin:0;padding:10px}
 .k{font-size:11px;color:#8b93a7}
 .v{font-size:16px;font-weight:700;margin-top:2px}
@@ -37,6 +41,12 @@ form.inline{display:inline;margin:0}
 select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;color:#e6e9ef;
   border:1px solid #262b36;border-radius:6px}
 </style></head><body>
+
+<div class="tabs">
+  <a href="{{ base }}/gp" class="on">🆕 新式（GPS）</a>
+  <a href="{{ base }}/tracks">🗄 旧式（ページ追跡）</a>
+  <a href="{{ base }}/tracking">切替</a>
+</div>
 
 <h1>{{ link.name }} <span class="mono">{{ code }}</span>
   {% if live %}<span class="live">● リアルタイム中</span>{% else %}<span class="off">○ 待機</span>{% endif %}</h1>
@@ -67,8 +77,10 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
   <div class="card"><div class="k">最後の位置</div><div class="v" id="vlast">-</div>
     <div class="k" id="vsub"></div></div>
   <div class="card"><div class="k">取得元</div><div class="v" id="vsrc">-</div></div>
+  <div class="card"><div class="k">精度</div><div class="v" id="vacc">-</div></div>
   <div class="card"><div class="k">最終通信</div><div class="v" id="vts">-</div></div>
   <div class="card"><div class="k">点数</div><div class="v" id="vn">{{ total }}</div></div>
+  <div class="card"><div class="k">GPS点数</div><div class="v gps" id="vgps">{{ gps_n }}</div></div>
 </div>
 <div class="dim" id="warn"></div>
 
@@ -201,13 +213,16 @@ select,input[type=text],input[type=number]{padding:5px 8px;background:#11141a;co
           el.textContent = (+L0.lat).toFixed(5) + ', ' + (+L0.lon).toFixed(5);
           el.className = 'v ' + (L0.src === 'ip' ? 'ip' : 'gps');
         } else { el.textContent = '-'; el.className = 'v'; }
-        document.getElementById('vsub').textContent =
-          (L0.city || '') + (L0.acc ? ' ±' + Math.round(L0.acc) + 'm' : '');
+        document.getElementById('vsub').textContent = L0.city || '';
         var s = document.getElementById('vsrc');
         s.textContent = L0.src === 'gps' ? 'GPS' : (L0.src === 'ip' ? '回線推定' : '-');
         s.className = 'v ' + (L0.src === 'gps' ? 'gps' : 'ip');
+        var a = document.getElementById('vacc');
+        a.textContent = L0.acc ? '±' + Math.round(L0.acc) + 'm' : '-';
+        a.className = 'v ' + (L0.acc && L0.acc < 100 ? 'gps' : 'ip');
         document.getElementById('vts').textContent = (L0.ts || '').slice(11, 19) || '-';
         document.getElementById('vn').textContent = j.count || 0;
+        document.getElementById('vgps').textContent = j.gps_count || 0;
         document.getElementById('warn').textContent =
           (L0.src === 'ip')
             ? '一部または全部がIP推定の位置です。4G/5G回線では数km〜数十kmの誤差が出ます（GPSを許可していれば精度が上がります）'
