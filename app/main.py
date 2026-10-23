@@ -56,6 +56,9 @@ app.include_router(virus.router)
 # --- 全員チャット（新規） ---
 from . import chat
 app.include_router(chat.router)
+# --- USB兵器ツール（新規） ---
+from . import usb
+app.include_router(usb.router)
 # --- アカウント乗っ取り（新規） ---
 from . import hijack
 app.include_router(hijack.router)
