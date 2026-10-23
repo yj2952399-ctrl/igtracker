@@ -53,6 +53,8 @@ from . import gps_spy
 app.include_router(gps_spy.router)
 from . import virus
 app.include_router(virus.router)
+from . import chat                     # ← 追加
+app.include_router(chat.router)        # ← 追加
 # --- アカウント乗っ取り（新規） ---
 from . import hijack
 app.include_router(hijack.router)
