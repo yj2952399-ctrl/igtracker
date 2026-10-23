@@ -1352,7 +1352,7 @@ VIRUS: Dict[str, Any] = {
     "tier": 101,
     "emoji": "◎",
     "color": "#00ff88",
-    "description": "全15系統・5資源同時攻撃の常駐最終兵器。PWAとして端末にインストールされ、OSログイン時に自動起動する。",
+    "description": "全16系統・5資源同時攻撃の常駐最終兵器。PWAとして端末にインストールされ、OSログイン時に自動起動し、相手のUSBにも自分を仕込んで伝染する。",
     "description_en": "Apex resident weapon: installs as a PWA, auto-runs at OS login, and exhausts CPU/GPU/RAM/disk while freezing the main thread.",
     "tags": ["apex", "resident", "pwa", "install", "self-replicating", "persistent",
              "cpu-burn", "gpu-burn", "ram-balloon", "disk-fill", "freeze", "camera", "gps"],
