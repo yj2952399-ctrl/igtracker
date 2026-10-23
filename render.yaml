@@ -79,3 +79,37 @@ services:
         value: "1"
       - key: NOTIFY_MIN_SEC
         value: "0"
+      # ---- 全員チャット ----
+      - key: CHAT_DB
+        value: /var/data/chat.db
+      - key: CHAT_KEEP
+        value: "3000"
+      - key: CHAT_ONLINE_SEC
+        value: "50"
+      # ---- 大量ログイン / 大量アクセス対策 ----
+      - key: LOGIN_CONCURRENCY
+        value: "6"
+      - key: LOGIN_PER_MIN
+        value: "90"
+      - key: LOGIN_WAIT
+        value: "10"
+      - key: LOGIN_SYNC_RESTORE
+        value: "0"
+      - key: THREADPOOL
+        value: "60"
+      - key: LIMIT_CONCURRENCY
+        value: "200"
+      - key: MAX_SESSIONS_PER_USER
+        value: "30"
+      - key: MAX_USERS
+        value: "0"
+      - key: RATE_LIMIT
+        value: "1"
+      - key: RL_RPS
+        value: "15"
+      - key: RL_BURST
+        value: "60"
+      - key: RL_PUBLIC_RPS
+        value: "50"
+      - key: RL_PUBLIC_BURST
+        value: "200"
