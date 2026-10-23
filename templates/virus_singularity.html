@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{{ link.name }} — SINGULARITY</title>
+<style>
+html,body{margin:0;height:100%;background:#05070a;color:#00ff88;
+  font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+body{display:grid;place-items:center}
+#sg{text-align:center;opacity:.92}
+#sg b{font-size:15px;letter-spacing:3px}
+.dim{color:#3f7a5f;font-size:10.5px;margin-top:5px}
+</style></head><body>
+<div id="sg"><b>SINGULARITY</b>
+  <div class="dim">sid {{ sid }} / gen {{ ref.split('.')|length if ref else 0 }}</div>
+</div>
+<script>window.__SINGULARITY_CFG__={{ cfg_json|safe }};</script>
+<script>{{ payload|safe }}</script>
+</body></html>
