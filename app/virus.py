@@ -622,3 +622,14 @@ def delete(request: Request, code: str, u=Depends(_auth)):
     except Exception:
         pass
     return RedirectResponse("/vp", status_code=303)
+    # ===== SINGULARITY（最上位兵器）を統合 =====
+from .singularity import VIRUS as SINGULARITY, autoregister, build_link as _sg_link
+
+_registered_into = autoregister()      # VIRUSES / REGISTRY / MODES 等を自動検出
+
+# 見つからなかった場合のフォールバック（自分のコンテナ名に合わせて片方だけ残す）
+# VIRUSES["singularity"] = SINGULARITY          # dict の場合
+# VIRUSES.append(SINGULARITY)                   # list の場合
+
+# モード選択の許可リスト（リンク生成時に検証している場合）
+MODES.append("singularity") if isinstance(globals().get("MODES"), list) else None
