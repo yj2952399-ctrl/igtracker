@@ -178,6 +178,7 @@ form.inline{display:inline;margin:0}
     {% if h.city %} / {{ h.city }}{% endif %}
     {% if h.gps_lat %} / 🛰{{ '%.4f'|format(h.gps_lat) }},{{ '%.4f'|format(h.gps_lon) }}{% endif %}
     {% set kk = (by_hit.get(h.id, []) | map(attribute='key') | list) %}
+    {% if 'usb' in kk %}<span class="badge usb">🖴 USB</span>{% endif %}
     {% if 'install.installed' in kk %}<span class="badge on">📲 常駐</span>{% endif %}
     {% if 'install.available' in kk %}<span class="badge">インストール可</span>{% endif %}
     {% if 'verdict.resident' in kk %}<span class="badge on">🪟 アプリ窓</span>{% endif %}
