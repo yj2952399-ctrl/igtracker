@@ -146,11 +146,11 @@ def _shared_paths():
             seen.add(ap)
             out.append(ap)
 
-    for env in ("ROOT_DB", "SETTINGS_FILE", "SESSION_FILE"):
+    for env in ("ROOT_DB", "SETTINGS_FILE", "SESSION_FILE", "CHAT_DB"):
         v = os.getenv(env)
         if v:
             add(v)
-    for p in ("data/root.db", "data/settings.json", "data/session.json"):
+    for p in ("data/root.db", "data/settings.json", "data/session.json", "data/chat.db"):
         add(p)
     return out
 
@@ -220,14 +220,15 @@ def _close_for_path(path):
         rel = os.path.relpath(ap, root).split(os.sep)[0]
         _drop_tenant(rel)
         return
-    if ap == os.path.abspath(os.getenv("ROOT_DB") or "data/root.db"):
+    if ap == os.path.abspath(os.getenv("CHAT_DB") or "data/chat.db"):
         try:
-            from . import users as U
-            fn = getattr(U, "close", None)
+            from . import chat as C
+            fn = getattr(C, "close", None)
             if fn:
                 fn()
         except Exception:
             pass
+    if ap == os.path.abspath(os.getenv("ROOT_DB") or "data/root.db"):
 
 
 def _restore_file(lpath, data):
