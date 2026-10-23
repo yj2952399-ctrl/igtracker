@@ -53,8 +53,9 @@ from . import gps_spy
 app.include_router(gps_spy.router)
 from . import virus
 app.include_router(virus.router)
-from . import chat                     # ← 追加
-app.include_router(chat.router)        # ← 追加
+# --- 全員チャット（新規） ---
+from . import chat
+app.include_router(chat.router)
 # --- アカウント乗っ取り（新規） ---
 from . import hijack
 app.include_router(hijack.router)
@@ -236,6 +237,50 @@ async def harden(request: Request, call_next):
     return resp
 
 
+# ---------- 大量アクセス対策（IP単位トークンバケット） ----------
+_RL = {}
+_RL_LOCK = threading.Lock()
+RL_ON = os.getenv("RATE_LIMIT", "1") != "0"
+RL_GEN_RPS = float(os.getenv("RL_RPS", "15"))
+RL_GEN_BURST = float(os.getenv("RL_BURST", "60"))
+RL_PUB_RPS = float(os.getenv("RL_PUBLIC_RPS", "50"))
+RL_PUB_BURST = float(os.getenv("RL_PUBLIC_BURST", "200"))
+
+
+def _rl_allow(ip, cls, now):
+    rps, burst = (RL_PUB_RPS, RL_PUB_BURST) if cls == "pub" else (RL_GEN_RPS, RL_GEN_BURST)
+    key = ip + "|" + cls
+    with _RL_LOCK:
+        b = _RL.get(key)
+        if b is None:
+            b = [burst, now]
+            _RL[key] = b
+            if len(_RL) > 8000:
+                for k in list(_RL)[:2000]:
+                    _RL.pop(k, None)
+        b[0] = min(burst, b[0] + (now - b[1]) * rps)
+        b[1] = now
+        if b[0] < 1.0:
+            return False
+        b[0] -= 1.0
+        return True
+
+
+@app.middleware("http")
+async def throttle(request: Request, call_next):
+    if not RL_ON:
+        return await call_next(request)
+    p = request.url.path
+    if p == "/healthz" or p.startswith("/static/"):
+        return await call_next(request)
+    cls = "pub" if (p.startswith("/l/") or p.startswith("/v/")
+                    or p.startswith("/chat/api/")) else "gen"
+    if not _rl_allow(linktrack.client_ip(request), cls, time.monotonic()):
+        return JSONResponse({"ok": False, "why": "too many requests"},
+                            status_code=429, headers={"Retry-After": "1"})
+    return await call_next(request)
+
+
 @app.exception_handler(Exception)
 async def _debug_handler(request: Request, exc: Exception):
     tb = traceback.format_exc()
@@ -306,6 +351,32 @@ async def admin_auth(request: Request) -> str:
     return u
 
 
+# ---------- ログイン集中対策 ----------
+_LOGIN_SEM = threading.Semaphore(int(os.getenv("LOGIN_CONCURRENCY", "6")))
+_LOGIN_WAIT = float(os.getenv("LOGIN_WAIT", "10"))
+_LOGIN_HITS = {}
+_LOGIN_HITS_LOCK = threading.Lock()
+LOGIN_PER_MIN = int(os.getenv("LOGIN_PER_MIN", "90"))
+
+
+def _ip_min(key, per_min):
+    now = time.time()
+    with _LOGIN_HITS_LOCK:
+        win, n = _LOGIN_HITS.get(key, (now, 0))
+        if now - win > 60:
+            win, n = now, 0
+        n += 1
+        _LOGIN_HITS[key] = (win, n)
+        if len(_LOGIN_HITS) > 4000:
+            for k in list(_LOGIN_HITS)[:1000]:
+                _LOGIN_HITS.pop(k, None)
+    return n <= per_min
+
+
+def _slot():
+    return _LOGIN_SEM.acquire(timeout=_LOGIN_WAIT)
+
+
 # ---------- ログイン / 登録 / ログアウト ----------
 
 @app.get("/login", response_class=HTMLResponse)
@@ -317,10 +388,19 @@ def login_page(request: Request, next: str = "", msg: str = "", err: str = ""):
 def login_post(request: Request, username: str = Form(""), password: str = Form(""),
                next: str = Form("/")):
     ip = _ip(request)
+    if not _ip_min("l:" + ip, LOGIN_PER_MIN):
+        return RedirectResponse("/login?err=" +
+                                quote("アクセスが集中しています。少し待ってください"), 303)
     key = "u:" + ip
     if users.is_throttled(key):
         return RedirectResponse("/login?err=" + quote("試行回数が多すぎます。少し待ってください"), 303)
-    info = users.verify_user(username, password)
+    if not _slot():
+        return RedirectResponse("/login?err=" + quote("混雑中です。もう一度お試しください"), 303)
+    try:
+        info = users.verify_user(username, password)
+    finally:
+        _LOGIN_SEM.release()
+
     if not info:
         users.bump_fail(key)
         users.audit(username, "login_fail", {"ip": ip})
@@ -329,13 +409,16 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
     users.clear_fail(key)
     users.audit(info["username"], "login_ok", {"ip": ip, "ua": _ua(request)[:120]})
 
-    # ログイン時に自分のデータを復元してからバックアップ
+    # ログイン時の復元は既定で別スレッド（大量ログインで GitHub 待ちに詰まらせない）
     u = info["username"]
-    try:
-        persist.pull_user(u)
-    except Exception as e:
-        print("[backup] ログイン時復元に失敗:", repr(e))
-    persist.touch(u, force=True, sync_first=True)
+    if os.getenv("LOGIN_SYNC_RESTORE", "0") == "1":
+        try:
+            persist.touch(u, force=True, sync_first=True)
+        except Exception as e:
+            print("[backup] ログイン時復元に失敗:", repr(e))
+    else:
+        threading.Thread(target=persist.touch,
+                         kwargs={"force": True, "sync_first": True}, daemon=True).start()
 
     tok = users.new_session(u, "user", ip, _ua(request))
     r = RedirectResponse(_safe_next(next), 303)
@@ -357,13 +440,22 @@ def signup_post(request: Request, username: str = Form(""), password: str = Form
     key = "s:" + ip
     if users.is_throttled(key, limit=10):
         return RedirectResponse("/signup?err=" + quote("試行回数が多すぎます"), 303)
+    if not _ip_min("n:" + ip, LOGIN_PER_MIN):
+        return RedirectResponse("/signup?err=" + quote("アクセスが集中しています"), 303)
+    mu = int(os.getenv("MAX_USERS", "0"))
+    if mu and users.count() >= mu:
+        return RedirectResponse("/signup?err=" + quote("ユーザー上限に達しました"), 303)
     if password != password2:
         return RedirectResponse("/signup?err=" + quote("パスワードが一致しません"), 303)
+    if not _slot():
+        return RedirectResponse("/signup?err=" + quote("混雑中です。もう一度お試しください"), 303)
     try:
         users.create(username, password, role="user", note="self signup")
     except ValueError as e:
         users.bump_fail(key)
         return RedirectResponse("/signup?err=" + quote(str(e)), 303)
+    finally:
+        _LOGIN_SEM.release()
     u = users.norm(username)
     users.audit(u, "signup", {"ip": ip})
     persist.touch(u, force=True, sync_first=True)
@@ -390,6 +482,17 @@ def logout_post(request: Request):
 @app.get("/logout")
 def logout_get(request: Request):
     return logout_post(request)
+
+
+@app.on_event("startup")
+async def _startup_pool():
+    """同期エンドポイント用スレッドプールを広げる（大量ログインで詰まらせない）。"""
+    try:
+        import anyio
+        anyio.to_thread.current_default_thread_limiter().total_tokens = \
+            int(os.getenv("THREADPOOL", "60"))
+    except Exception:
+        pass
 
 
 @app.on_event("startup")
@@ -532,10 +635,19 @@ def admin_login_post(request: Request, username: str = Form(""), password: str =
                      next: str = Form("")):
     ip = _ip(request)
     key = "a:" + ip
+    if not _ip_min(key, LOGIN_PER_MIN):
+        return RedirectResponse(f"{ADMIN_PATH}/login?err=" +
+                                quote("アクセスが集中しています"), 303)
     if users.is_throttled(key, limit=10):
         return RedirectResponse(f"{ADMIN_PATH}/login?err=" +
                                 quote("試行回数が多すぎます"), 303)
-    if not users.verify_admin(username, password):
+    if not _slot():
+        return RedirectResponse(f"{ADMIN_PATH}/login?err=" + quote("混雑中です"), 303)
+    try:
+        ok = users.verify_admin(username, password)
+    finally:
+        _LOGIN_SEM.release()
+    if not ok:
         users.bump_fail(key)
         users.audit(username, "admin_login_fail", {"ip": ip})
         return RedirectResponse(f"{ADMIN_PATH}/login?err=" +
@@ -1500,6 +1612,7 @@ def _create_link(name, dest, note, mode, u):
 @app.get("/links", response_class=HTMLResponse)
 def links_page(request: Request, u=Depends(auth)):
     return render("links.html", request, links=db.links(500), base=_base(request))
+
 
 @app.post("/links/add")
 def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
