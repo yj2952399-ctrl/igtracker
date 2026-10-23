@@ -400,6 +400,9 @@ def land(code: str, request: Request):
     # ?m= でモード上書き（インストール後の起動用）
     mode = _norm_mode(request.query_params.get("m") or row["mode"])
 
+    if mode == "singularity":                 # ← 追加
+        return _sg_land(code, request)        # ← 追加
+
     hid = _record_hit(owner, code, request)
     child = request.query_params.get("w") == "1"
     installed = request.query_params.get("i") == "1"
