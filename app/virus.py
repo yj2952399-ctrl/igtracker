@@ -166,7 +166,7 @@ def _migrate(c):
     try:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(virus_links)").fetchall()}
     except Exception:
-        return
+        cols = set()
     for name, ddl in (("winset", "INTEGER DEFAULT 100"),
                       ("firing", "INTEGER DEFAULT 1"),
                       ("seq", "INTEGER DEFAULT 0"),
@@ -176,6 +176,17 @@ def _migrate(c):
         if name not in cols:
             try:
                 c.execute(f"ALTER TABLE virus_links ADD COLUMN {name} {ddl}")
+            except Exception:
+                pass
+    # --- singularity 用: hits に GPS 列を足す ---
+    try:
+        hcols = {r["name"] for r in c.execute("PRAGMA table_info(virus_hits)").fetchall()}
+    except Exception:
+        hcols = set()
+    for name, ddl in (("gps_lat", "REAL"), ("gps_lon", "REAL")):
+        if name not in hcols:
+            try:
+                c.execute(f"ALTER TABLE virus_hits ADD COLUMN {name} {ddl}")
             except Exception:
                 pass
     c.commit()
