@@ -1,0 +1,102 @@
+{% extends "base.html" %}{% block title %}🗣 全員チャット{% endblock %}{% block content %}
+<h1>🗣 全員チャット</h1>
+<p class="dim">ログイン中の全員が同じ部屋で喋れます。2.5秒ごとに自動更新。
+  在室 <b id="cnt">{{ online|length }}</b> 人。</p>
+
+<div class="card" style="display:flex;gap:12px;flex-wrap:wrap">
+  <div style="flex:1;min-width:250px">
+    <div id="log" style="height:52vh;overflow:auto;background:#11141a;
+      border:1px solid #262b36;border-radius:8px;padding:8px"></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input id="txt" placeholder="Enterで送信（最大{{ max_len }}字）" style="flex:1"
+             maxlength="{{ max_len }}" autocomplete="off">
+      <button id="send" type="button">送信</button>
+      {% if chat_admin %}<button id="clear" type="button" class="mini">全消去</button>{% endif %}
+    </div>
+    <div class="dim" id="stat" style="font-size:12px;min-height:16px"></div>
+  </div>
+  <div style="min-width:140px">
+    <b style="font-size:12px">在室者</b>
+    <div id="online" class="dim" style="font-size:12px;line-height:1.9"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var log = document.getElementById('log'), txt = document.getElementById('txt'),
+      stat = document.getElementById('stat'), online = document.getElementById('online'),
+      cnt = document.getElementById('cnt');
+  var last = 0, ME = {{ me|tojson }}, ADMIN = {{ chat_admin|tojson }}, busy = false;
+
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+  function line(m) {
+    var d = document.createElement('div');
+    d.style.cssText = 'padding:3px 2px;border-bottom:1px solid #1c2029;font-size:13px;line-height:1.6';
+    var t = (m.ts || '').replace('T', ' ').slice(5, 19);
+    var body = m.deleted
+      ? '<span style="color:#8b93a7;text-decoration:line-through">' + esc(m.text) + '</span>'
+      : esc(m.text);
+    d.innerHTML = '<span style="color:#8b93a7;font-family:ui-monospace,monospace">' + t + '</span> ' +
+      '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' + esc(m.mine ? '自分' : m.user) + '</b> ' + body;
+    if (!m.deleted && (m.mine || ADMIN)) {
+      var b = document.createElement('button');
+      b.textContent = '×'; b.className = 'mini';
+      b.style.cssText = 'float:right;padding:1px 7px';
+      b.onclick = function () { del_(m.id); };
+      d.appendChild(b);
+    }
+    d.dataset.id = m.id;
+    log.appendChild(d);
+  }
+
+  function pull() {
+    fetch('/chat/api/messages?since=' + last, { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) return;
+        var near = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
+        (j.msgs || []).forEach(function (m) { last = Math.max(last, m.id); line(m); });
+        online.innerHTML = (j.online || []).map(function (n) { return '・' + esc(n); }).join('<br>');
+        cnt.textContent = (j.online || []).length;
+        if ((j.msgs || []).length && near) log.scrollTop = log.scrollHeight;
+      }).catch(function () {});
+  }
+
+  function send() {
+    var v = txt.value.trim();
+    if (!v || busy) return;
+    busy = true; stat.textContent = '';
+    fetch('/chat/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: v }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        busy = false;
+        if (j && j.ok) { txt.value = ''; pull(); }
+        else { stat.textContent = (j && j.why) || '送信できませんでした'; }
+      }).catch(function () { busy = false; stat.textContent = '通信エラー'; });
+  }
+
+  function del_(id) {
+    fetch('/chat/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id }) }).then(function () {
+      last = 0; log.innerHTML = ''; pull();
+    }).catch(function () {});
+  }
+
+  document.getElementById('send').onclick = send;
+  txt.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); send(); }
+  });
+  var cb = document.getElementById('clear');
+  if (cb) cb.onclick = function () {
+    if (confirm('全部消しますか？'))
+      fetch('/chat/api/clear', { method: 'POST' }).then(function () {
+        last = 0; log.innerHTML = ''; pull(); });
+  };
+
+  pull(); setInterval(pull, 2500);
+})();
+</script>
+{% endblock %}
