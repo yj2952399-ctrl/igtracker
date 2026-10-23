@@ -6,6 +6,7 @@
   - realm='user' と realm='admin' を分離（管理者は別パスワード・別Cookie）
   - pw_epoch / admin_epoch をパスワード変更でインクリメント → 全端末即無効
   - env は「初回ブートストラップ」と「ブレークグラス」専用
+  - 1ユーザーあたりのセッション数に上限（大量ログインで膨らまない）
 """
 import os, re, hmac, base64, hashlib, secrets, sqlite3, threading, time, json
 import datetime as dt
@@ -14,6 +15,7 @@ from .database import now
 
 ROOT_DB = os.getenv("ROOT_DB", "data/root.db")
 SESSION_DAYS = int(os.getenv("SESSION_DAYS", "30"))
+MAX_SESSIONS = int(os.getenv("MAX_SESSIONS_PER_USER", "30"))
 
 USER_RE = re.compile(r"^[a-z0-9]([a-z0-9_.-]{0,38}[a-z0-9])?$")
 
@@ -69,6 +71,8 @@ def _c():
         _conn.commit()
         _migrate(_conn)
     return _conn
+
+
 def close():
     """root.db の接続を閉じる（バックアップ復元の前に使う）。"""
     global _conn
@@ -79,6 +83,7 @@ def close():
             except Exception:
                 pass
             _conn = None
+
 
 def _migrate(c):
     def cols(t):
@@ -355,6 +360,11 @@ def new_session(username, realm="user", ip="", ua=""):
             (_sid(token), u, realm, epoch, now(), now(),
              (_now() + dt.timedelta(days=SESSION_DAYS)).isoformat(),
              (ip or "")[:64], (ua or "")[:300]))
+        # 上限を超えたら古い順に間引く（大量ログイン対策）
+        c.execute("""DELETE FROM sessions WHERE sid IN (
+            SELECT sid FROM sessions WHERE username=? AND realm=?
+            ORDER BY last_seen DESC LIMIT -1 OFFSET ?)""",
+            (u, realm, MAX_SESSIONS))
         c.commit()
     return token
 
@@ -405,11 +415,13 @@ def delete_session(token):
         c.execute("DELETE FROM sessions WHERE sid=?", (_sid(token),))
         c.commit()
 
+
 def delete_session_by_sid(sid):
     with _lock:
         c = _c()
         c.execute("DELETE FROM sessions WHERE sid=?", (sid,))
         c.commit()
+
 
 def delete_sessions(username, realm=None):
     with _lock:
