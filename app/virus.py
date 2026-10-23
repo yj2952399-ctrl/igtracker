@@ -42,6 +42,7 @@ import os
 import re
 import json
 import base64
+import io                    # ← 追加
 import random
 import string
 import sqlite3
