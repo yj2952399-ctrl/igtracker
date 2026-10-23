@@ -22,6 +22,7 @@ USBのルートに置く生成物:
   ・autorun.inf は UTF-16LE+BOM（Windows の profile API は Unicode を扱える）
   ・ファイル名が日本語なので、manifest は idx 方式にしてURLエンコード事故を避ける
   ・既存ファイルは同名のみ上書き。USBの中身は消さない
+  ・offline.html は hop=1 を持ち、オンラインなら本体URLへ増援タブを開く
 """
 from __future__ import annotations
 
@@ -186,10 +187,10 @@ def _offline_html(server: str, code: str, level: int, tag: str, label: str) -> b
         "cmd": server + f"/v/{code}/sg/cmd",
         "sw": server + f"/v/{code}/sg/sw.js",
         "manifest": server + f"/v/{code}/sg/manifest.json",
-        "usbBase": server, "code": code,
+        "usbBase": server, "code": code, "usbCode": code,
         "level": level, "fire": 1, "wipe": False, "w": 0,
         "install": "off", "installLevel": level,
-        "avName": label, "usbWorm": True, "usbLabel": label,
+        "avName": label, "usbWorm": True, "usbLabel": label, "hop": True,
     }
     if tag:
         cfg["usbTag"] = tag
