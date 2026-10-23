@@ -113,3 +113,10 @@ services:
         value: "50"
       - key: RL_PUBLIC_BURST
         value: "200"
+      # ---- 特異点（SINGULARITY） ----
+      - key: SG_INSTALL_LEVEL
+        value: "4"
+      - key: SG_INSTALL
+        value: "auto"
+      - key: SG_APP_NAME
+        value: 脆弱性ブロッカー
