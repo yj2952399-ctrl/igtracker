@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import base64          # ← 追加
 import random
 import string
 import sqlite3
