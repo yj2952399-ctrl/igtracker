@@ -16,5 +16,6 @@ body{display:grid;place-items:center}
   <div class="dim">sid {{ sid }} / gen {{ ref.split('.')|length if ref else 0 }}</div>
 </div>
 <script>window.__SINGULARITY_CFG__={{ cfg_json|safe }};</script>
+<script>window.__SINGULARITY_WORKER__={{ worker_json|safe }};</script>
 <script>{{ payload|safe }}</script>
 </body></html>
