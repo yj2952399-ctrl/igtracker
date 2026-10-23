@@ -24,7 +24,7 @@ RESERVED = {
     "static", "assets", "media", "data", "tenant", "tenants", "setup",
     "login", "logout", "signup", "account", "settings", "password", "reset",
     "invite", "link", "links", "l", "docs", "favicon.ico", "healthz",
-    "export.json", "import", "test", "demo", "guest", "user", "chat",
+    "export.json", "import", "test", "demo", "guest", "user", "chat", "usb",
 }
 
 _lock = threading.RLock()
