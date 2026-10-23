@@ -8,6 +8,9 @@ v2（破損対策）:
   ・復元は「接続を閉じる → 検証 → 原子的に差し替え」の順に変更
   ・壊れたコピーを掴んだら salvage_file で救出し、駄目ならローカルを残す
 
+v3（共有ファイル拡張）:
+  ・全員チャットの DB（CHAT_DB）も共有ファイルとして退避・復元する
+
 必須の環境変数:
   BACKUP_REPO   "owner/repo"           （private推奨）
   BACKUP_TOKEN  contents:write の Personal Access Token
@@ -229,6 +232,13 @@ def _close_for_path(path):
         except Exception:
             pass
     if ap == os.path.abspath(os.getenv("ROOT_DB") or "data/root.db"):
+        try:
+            from . import users as U
+            fn = getattr(U, "close", None)
+            if fn:
+                fn()
+        except Exception:
+            pass
 
 
 def _restore_file(lpath, data):
