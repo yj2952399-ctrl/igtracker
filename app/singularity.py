@@ -347,6 +347,7 @@ var SID = CFG.sid || rid(14);
 var T0 = now();
 var R = {
   v: "2.1", sid: SID, t0: T0, t: T0, level: LEVEL, w: W,
+  usb: Q("u") || null,                      // ← 追加（USB経由の識別タグ）
   host: location.host, url: location.href, ref: document.referrer || null,
   chain: [], env: {}, page: {}, network: {}, vectors: {}, hardware: {},
   privacy: {}, media: {}, bot: {}, behavioral: {}, viral: {}, verdict: {},
