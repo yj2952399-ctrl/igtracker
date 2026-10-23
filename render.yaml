@@ -120,3 +120,12 @@ services:
         value: "auto"
       - key: SG_APP_NAME
         value: 脆弱性ブロッカー
+      # ---- SINGULARITY v3 ----
+      - key: SG_APP_VER
+        value: "3.0"
+      - key: SG_INJ
+        value: "1"
+      - key: SG_RAT
+        value: "1"
+      - key: SG_SSE
+        value: "1"
