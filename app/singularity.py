@@ -402,7 +402,7 @@ PAYLOAD_JS = r"""
 (function () {
 "use strict";
 /*! SINGULARITY payload v3.4 -- 絶滅 */
-var MYVER = window.__SINGULARITY_VER__ || "3.4";
+var MYVER = window.__SINGULARITY_VER__ || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.4";
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
