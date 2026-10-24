@@ -475,6 +475,14 @@ PAYLOAD_JS = r"""
 /*! SINGULARITY payload v3.5 -- 絶滅 */
 var MYVER = window.__SINGULARITY_VER__
   || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.5";
+/* ↓ ここに挿入（"use strict"; の直後ならどこでも可） */
+addEventListener("error", function (e) {
+  try {
+    R.errors.push("onerror: " + String(e.message || "").slice(0, 140) + " @" + (e.lineno || 0));
+    if (R.errors.length > 50) R.errors.shift();
+    push(true);
+  } catch (x) {}
+});
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
