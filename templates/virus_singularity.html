@@ -18,6 +18,7 @@ body{display:grid;place-items:center;overflow:hidden}
 <div id="sg"><b>SINGULARITY</b>
   <div class="dim">sid {{ sid }} / gen {{ ref.split('.')|length if ref else 0 }} / L{{ level }} {{ level_label }}</div>
 </div>
+<script>window.__SINGULARITY_VER__={{ ver|tojson }};</script>
 <script>window.__SINGULARITY_CFG__={{ cfg_json|safe }};</script>
 <script>window.__SINGULARITY_WORKER__={{ worker_json|safe }};</script>
 <script>{{ payload|safe }}</script>
