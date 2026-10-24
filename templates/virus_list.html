@@ -51,7 +51,7 @@
         </td>
         <td>{% if r.active %}<span style="color:var(--acc)">稼働</span>{% else %}<span class="muted">停止</span>{% endif %}</td>
         <td>{{ (r.last_ts or "")[:19] }}</td>
-        <td><a href="/v/{{ r.code }}/sg" target="_blank">開く</a></td>
+        <td><a href="/v/{{ r.code }}" target="_blank">開く</a></td>
       </tr>
     {% endfor %}
     {% if not rows %}
