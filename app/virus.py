@@ -289,11 +289,24 @@ def list_page(request: Request, u=Depends(_auth)):
         "SELECT * FROM virus_links ORDER BY created DESC").fetchall()]
     c.close()
     base = _base(request)
+    for r in rows:
+        # --- 元の前処理（ここが抜けていた） ---
+        r["share"] = base + "/v/" + r["code"]
+        r["mode"] = _norm_mode(r.get("mode"))
+        r["mode_label"] = MODE_LABEL.get(r["mode"], r["mode"])
+        r["caution"] = CAUTION.get(r["mode"], "")
+        r["auto"] = (r["mode"] in AUTO_MODES)
+        r["level"] = int(r.get("level") or 1)
+        r["set_label"] = "∞" if (r.get("winset") == 0) else f'{r.get("winset") or 100}枚/セット'
+        r["firing"] = r.get("firing", 1)
+        # --- テンプレが使うURLを明示（href空対策・保険） ---
+        r["watch"] = base + "/vp/" + r["code"]
+        r["weapon"] = base + "/v/" + r["code"]
+        r["share_url"] = r["share"]
     return _render("virus_list.html", request, rows=rows, base=base,
                    cautions=CAUTION, sets=SET_CHOICES, default_notify=DEFAULT_NOTIFY,
                    levels=_SG_LEVEL_LABEL,
                    modes=[(m, MODE_LABEL[m], MODE_DESC[m]) for m in MODES])
-
 
 @router.post("/vp/add")
 def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
