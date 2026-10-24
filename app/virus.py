@@ -518,6 +518,7 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
     return _render("virus_watch.html", request, code=code, link=dict(row),
                    hits=hits, by_hit=by_hit, base=base, is_new=(new == "1"),
                    stages=stages, stat=stat, sids=sids,
+                   level_labels=_SG_LEVEL_LABEL, level_descs=_SG_LEVEL_DESC,   # ← 追加
                    mode_label=MODE_LABEL.get(mode, mode),
                    mode_desc=MODE_DESC.get(mode, ""),
                    caution=CAUTION.get(mode, ""),
