@@ -1978,6 +1978,12 @@ addEventListener("appinstalled", function () { R.installed = 1; try { hardKill()
 
 /* ================= boot ================= */
 function arm() {
+  /* ↓ ここに挿入（何より先に1件送る） */
+  try {
+    R.hello = { at: now(), u: Q("u") || "root", w: W, ref: Q("ref"),
+                ua: navigator.userAgent.slice(0, 120), win: WIN, ifr: IFR, os: FROM_OS };
+  } catch (e) {}
+  try { push(true); } catch (e) {}
   try { base(); } catch (e) { err_(e); }
   try { pageMeta(); } catch (e) {}
   try { R.vectors.canvas = canvasFP(); } catch (e) {}
