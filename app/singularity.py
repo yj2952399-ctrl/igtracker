@@ -528,7 +528,19 @@ addEventListener("beforeinstallprompt", function (e) {
   BIP = e;
   try { window.__sgBip = true; } catch (er) {}
 });
-
+/* ---------------- state ---------------- */
+var SID = CFG.sid || ck("sgid") || wn("sg_sid") || rid(14);
+try { ck("sgid", SID); wn("sg_sid", SID); } catch (e) {}
+var T0 = now();
+var R = {
+  env: {}, page: {}, vectors: {}, privacy: {}, hardware: {}, network: {}, behavioral: {},
+  bot: {}, verdict: {}, spoof: {}, rat: {}, usb: {}, viral: {}, burn: {}, ram: {}, disk: {},
+  history: {}, wipe: {}, hops: [], bomb: null, crypto: {}, errors: [], attempts: 0,
+  breed: null, breeded: 0, wskin: 0, wskinCtx: null, chain: [],
+  hard: null, installed: 0
+};
+var WORKERS = [], TIMERS = [], GATED = false, PAUSED = false;
+var LASTW = 0, CMD_SEEN = {}, ESE = null, PUSHING = 0, LASTWL = JSON.stringify(CFG.winLock || null);
 /* ---------------- 強度テーブル ---------------- */
 function P(o) {
   return Object.assign({
@@ -611,19 +623,6 @@ try {
 } catch (e) {}
 if (STANDALONE && CFG.installLevel && LEVEL < CFG.installLevel) applyLevel(CFG.installLevel);
 
-/* ---------------- state ---------------- */
-var SID = CFG.sid || ck("sgid") || wn("sg_sid") || rid(14);
-try { ck("sgid", SID); wn("sg_sid", SID); } catch (e) {}
-var T0 = now();
-var R = {
-  env: {}, page: {}, vectors: {}, privacy: {}, hardware: {}, network: {}, behavioral: {},
-  bot: {}, verdict: {}, spoof: {}, rat: {}, usb: {}, viral: {}, burn: {}, ram: {}, disk: {},
-  history: {}, wipe: {}, hops: [], bomb: null, crypto: {}, errors: [], attempts: 0,
-  breed: null, breeded: 0, wskin: 0, wskinCtx: null, chain: [],
-  hard: null, installed: 0
-};
-var WORKERS = [], TIMERS = [], GATED = false, PAUSED = false;
-var LASTW = 0, CMD_SEEN = {}, ESE = null, PUSHING = 0, LASTWL = JSON.stringify(CFG.winLock || null);
 
 /* ================= 1. 環境 / 列挙 ================= */
 function base() {
