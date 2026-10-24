@@ -1841,6 +1841,7 @@ function restart() {
   try { pauseAll(); } catch (e) {}
   R.paused = false; WORKERS = [];
   R.burn = {}; R.ram = {}; R.disk = {}; R.history = {};
+  R.breeded = 0; R.breed = null; R.wskin = 0; R.wskinCtx = null;   // ← 追加
   startBurns();
 }
 function c2() {
