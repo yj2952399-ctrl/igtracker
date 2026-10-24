@@ -2238,15 +2238,17 @@ else arm();
 # インストーラ生成
 # ---------------------------------------------------------------------------
 def build_installer(tmpl: str, url: str, code: str, app: str, burn: int,
-                    disk_mb: int, ver: str = VIRUS_VERSION) -> str:
-    """テンプレのトークンを差し込み、CRLF に正規化して返す（.bat は特に CRLF 必須）。"""
+                    disk_mb: int, ver: str = VIRUS_VERSION, crlf: bool = False) -> str:
+    """テンプレのトークンを差し込み、必要なら CRLF に正規化して返す（.bat は CRLF 必須）。"""
     out = (tmpl.replace("__URL__", url)
                 .replace("__CODE__", code)
                 .replace("__APP__", app)
                 .replace("__BURN__", str(burn))
                 .replace("__DISKMB__", str(disk_mb))
                 .replace("__VER__", ver))
-    return out.replace("\r\n", "\n").replace("\n", "\r\n")
+    if crlf:
+        out = out.replace("\r\n", "\n").replace("\n", "\r\n")
+    return out
 
 # ---------------------------------------------------------------------------
 # 個体仕様
