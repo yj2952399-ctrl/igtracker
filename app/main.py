@@ -17,6 +17,8 @@ from . import config, tenancy, users
 from .config import get as get_cfg
 from . import instagram as ig
 from . import identity, watcher, forensics, linktrack, together, snscheck, campaign
+# --- 役職・権限（新規） ---
+from . import roles
 # --- 封鎖（新規） ---
 from . import lockdown
 
@@ -180,6 +182,14 @@ def render(name, request, **ctx):
     ctx["impersonating"] = bool(ctx["me"] and ctx["real_user"] and ctx["me"] != ctx["real_user"])
     ctx["admin_path"] = ADMIN_PATH
     ctx["signup_open"] = SIGNUP_OPEN
+    # --- 役職・権限（新規） ---
+    rl = ctx.get("view_role") or getattr(request.state, "role", None)
+    ctx["role"] = rl
+    ctx["role_label"] = roles.LABELS.get(rl or "", "")
+    ctx["role_level"] = roles.LEVEL.get(rl or "", 0)
+    ctx["perms"] = roles.perms_of(rl)
+    ctx["is_root"] = getattr(request.state, "is_root", False)
+    ctx["console_ok"] = getattr(request.state, "console_ok", False)
     return templates.TemplateResponse(name, ctx)
 
 
@@ -229,6 +239,11 @@ def _activate(request, row, admin_ok=False):
     request.state.is_admin = is_admin
     request.state.admin_ok = admin_ok
     request.state.must_change = bool(row["must_change"]) and effective == real
+    # --- 役職・権限（新規） ---
+    request.state.role = users.role_of(effective)
+    request.state.is_root = users.is_root(effective)
+    request.state.console_ok = (request.state.is_root
+                                or roles.has(request.state.role, "console.view"))
     return effective
 
 
@@ -293,6 +308,47 @@ async def throttle(request: Request, call_next):
 @app.middleware("http")
 async def lockdown_gate(request: Request, call_next):
     return await lockdown.gate(request, call_next)
+
+
+# ---------- 権限チェック / 例外 ----------
+
+def _perm(request: Request, key: str) -> str:
+    """権限チェック。ルート管理者は常に通す。無ければ 403。"""
+    u = getattr(request.state, "real_user", None) or getattr(request.state, "user_name", None)
+    if not u:
+        raise HTTPException(401, "ログインしてください")
+    if users.is_root(u):
+        return u
+    if not roles.has(users.role_of(u), key):
+        raise HTTPException(403, f"権限がありません: {roles.label(key)}")
+    return u
+
+
+def _guard(request: Request, target: str, key: str, purge: bool = False) -> str:
+    """対象ユーザーへの操作可否（ルート保護＋同格以上は不可）。"""
+    me = _perm(request, key)
+    if purge:
+        _perm(request, "users.purge")
+    if users.norm(target) == users.norm(me):
+        return me
+    if users.is_root(target) and not users.is_root(me):
+        raise HTTPException(403, "ルート管理者は触れません")
+    if not users.is_root(me):
+        if roles.level(users.role_of(me)) <= roles.level(users.role_of(target)):
+            raise HTTPException(403, "同格以上には触れません")
+    return me
+
+
+@app.exception_handler(HTTPException)
+async def _http_exc(request: Request, exc: HTTPException):
+    if exc.status_code in (301, 302, 303, 307, 308) and exc.headers:
+        return RedirectResponse(exc.headers.get("Location", "/"),
+                                status_code=exc.status_code)
+    if exc.status_code == 403 and not _wants_json(request):
+        back = request.headers.get("referer") or "/"
+        sep = "&" if "?" in back else "?"
+        return RedirectResponse(f"{back}{sep}err=" + quote(str(exc.detail)), 303)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
 
 @app.exception_handler(Exception)
@@ -545,6 +601,7 @@ def account_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)
     adms = [dict(s) | {"short": s["sid"][:8]} for s in users.list_sessions(real, "admin")]
     return render("account.html", request, msg=msg, err=err,
                   role=users.role_of(real),
+                  role_label=roles.LABELS.get(users.role_of(real), ""),
                   env_admin=bool(users.env_admin()[0] == real),
                   breakglass=bool(users.env_breakglass()),
                   sessions=sess, admin_sessions=adms,
@@ -622,7 +679,8 @@ def backup_me_pull(u=Depends(auth)):
 
 
 @app.post("/backup/all/push")
-def backup_all_push(u=Depends(auth)):
+def backup_all_push(request: Request, u=Depends(auth)):
+    _perm(request, "backup.all")
     return RedirectResponse("/backup?msg=" + quote("全ユーザー退避を開始しました"), 303)
 
 
@@ -634,6 +692,74 @@ def api_backup(u=Depends(auth)):
 @app.get("/api/backup/me")
 def api_backup_me(u=Depends(auth)):
     return persist.user_state(u)
+
+
+# ---------- 役職コンソール ----------
+
+_CONSOLE_LINKS = [
+    ("/console", "🧭 役職コンソール", "console.view"),
+    (ADMIN_PATH + "/", "🛠 管理コンソール", "users.view"),
+    ("/console/roles", "🧮 権限マトリクス", "roles.edit"),
+    ("/lock/panel", "🔒 封鎖パネル", "lockdown"),
+    (ADMIN_PATH + "/audit", "📜 監査ログ", "audit.view"),
+    ("/backup", "💾 バックアップ", "console.view"),
+]
+
+
+def _console_ctx():
+    return {"rows": roles.PERMS, "all_roles": roles.ROLES, "labels": roles.LABELS,
+            "levels": roles.LEVEL, "links": _CONSOLE_LINKS}
+
+
+def _can_edit_roles(me: str) -> bool:
+    return users.is_root(me) or roles.has(users.role_of(me), "roles.edit")
+
+
+@app.get("/console", response_class=HTMLResponse)
+def console_page(request: Request, u=Depends(auth)):
+    return render("console.html", request, **_console_ctx(),
+                  view_role=request.state.role, preview=False)
+
+
+@app.get("/console/roles", response_class=HTMLResponse)
+def console_roles(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
+    me = request.state.real_user
+    if not _can_edit_roles(me):
+        raise HTTPException(403, "権限マトリクスを扱う権限がありません")
+    return render("console_roles.html", request, **_console_ctx(),
+                  matrix=roles.load(), msg=msg, err=err)
+
+
+@app.post("/console/roles/save")
+async def console_roles_save(request: Request, u=Depends(auth)):
+    me = request.state.real_user
+    if not _can_edit_roles(me):
+        raise HTTPException(403, "権限マトリクスを扱う権限がありません")
+    form = await request.form()
+    new = {}
+    for r in roles.ROLES:
+        new[r] = [p["key"] for p in roles.PERMS if form.get(f"p.{r}.{p['key']}")]
+    roles.save_perms(new)
+    users.audit(me, "roles_save", {r: len(v) for r, v in new.items()})
+    return RedirectResponse("/console/roles?msg=" + quote("権限を保存しました"), 303)
+
+
+@app.post("/console/roles/reset")
+def console_roles_reset(request: Request, u=Depends(auth)):
+    me = request.state.real_user
+    if not _can_edit_roles(me):
+        raise HTTPException(403, "権限マトリクスを扱う権限がありません")
+    roles.reset()
+    users.audit(me, "roles_reset", {})
+    return RedirectResponse("/console/roles?msg=" + quote("既定に戻しました"), 303)
+
+
+@app.get("/console/{role}", response_class=HTMLResponse)
+def console_role_preview(role: str, request: Request, u=Depends(auth)):
+    if role not in roles.ROLES:
+        raise HTTPException(404)
+    return render("console.html", request, **_console_ctx(),
+                  view_role=role, preview=True)
 
 
 # ---------- 管理 ----------
@@ -665,7 +791,7 @@ def admin_login_post(request: Request, username: str = Form(""), password: str =
         users.bump_fail(key)
         users.audit(username, "admin_login_fail", {"ip": ip})
         return RedirectResponse(f"{ADMIN_PATH}/login?err=" +
-                                quote("管理者として認証できません"), 303)
+                                quote("コンソール権限がありません"), 303)
     users.clear_fail(key)
     u = users.norm(username)
     users.audit(u, "admin_login_ok", {"ip": ip})
@@ -678,7 +804,7 @@ def admin_login_post(request: Request, username: str = Form(""), password: str =
 @admin.post("/logout")
 def admin_logout(request: Request):
     users.delete_session(request.cookies.get(COOKIE_ADMIN))
-    r = RedirectResponse(f"{ADMIN_PATH}/login?msg=" + quote("管理者ログアウトしました"), 303)
+    r = RedirectResponse(f"{ADMIN_PATH}/login?msg=" + quote("コンソールから出ました"), 303)
     r.delete_cookie(COOKIE_ADMIN, path="/")
     return r
 
@@ -698,6 +824,12 @@ def _tenant_size(t):
 @admin.get("", response_class=HTMLResponse)
 @admin.get("/", response_class=HTMLResponse)
 def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_auth)):
+    me = request.state.real_user
+    _perm(request, "users.view")
+    me_role = users.role_of(me)
+    me_root = users.is_root(me)
+    can_purge = me_root or roles.has(me_role, "users.purge")
+    assign = roles.assignable(me_role, me_root)
     rows = []
     for r in users.list_users():
         d = dict(r)
@@ -715,17 +847,25 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
         d["size_mb"] = round(_tenant_size(t) / 1048576, 2)
         d["sessions"] = len(users.list_sessions(r["username"], "user"))
         d["backup"] = persist.user_state(r["username"])
+        d["root"] = users.is_root(r["username"])
+        d["same"] = users.norm(r["username"]) == users.norm(me)
+        d["can_act"] = roles.can_act(me_role, r["role"], me_root, d["root"], d["same"])
+        d["role_options"] = sorted(set(assign + [r["role"]]),
+                                   key=lambda x: -roles.LEVEL.get(x, 0))
         rows.append(d)
     return render("admin.html", request, rows=rows, msg=msg, err=err,
                   env_user=users.env_admin()[0],
                   breakglass=bool(users.env_breakglass()),
                   tenant_root=tenancy.ROOT,
                   audits=users.list_audit(200),
-                  me=request.state.real_user)
+                  me=me, me_root=me_root, my_label=roles.LABELS.get(me_role, me_role),
+                  assignable=assign, labels=roles.LABELS, levels=roles.LEVEL,
+                  can_purge=can_purge, can_switch=me_root or roles.has(me_role, "view_as"))
 
 
 @admin.get("/audit", response_class=HTMLResponse)
 def admin_audit(request: Request, u=Depends(admin_auth)):
+    _perm(request, "audit.view")
     return render("admin_audit.html", request, rows=users.list_audit(1000),
                   tenant_root=tenancy.ROOT)
 
@@ -739,7 +879,7 @@ def admin_password(request: Request, cur: str = Form(""), new: str = Form(""),
     bg = users.env_breakglass()
     ok = users.verify_admin(real, cur) or (bg and cur == bg)
     if not ok:
-        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("現在の管理者パスワードが違います"), 303)
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("現在のコンソールパスワードが違います"), 303)
     try:
         users.set_admin_password(real, new)
     except ValueError as e:
@@ -747,29 +887,34 @@ def admin_password(request: Request, cur: str = Form(""), new: str = Form(""),
     tok = users.new_session(real, "admin", _ip(request), _ua(request))
     users.audit(real, "admin_password_changed", {})
     r = RedirectResponse(ADMIN_PATH + "/?msg=" + quote(
-        "管理者パスワードを変更し、他の管理者セッションを無効化しました"), 303)
+        "コンソールパスワードを変更し、他のコンソールセッションを無効化しました"), 303)
     _set_cookie(r, COOKIE_ADMIN, tok)
     return r
 
 
 @admin.post("/users/create")
-def admin_create(username: str = Form(...), password: str = Form(...),
+def admin_create(request: Request, username: str = Form(...), password: str = Form(...),
                  role: str = Form("user"), note: str = Form(""),
                  must_change: str = Form(""), u=Depends(admin_auth)):
+    me = _perm(request, "users.create")
+    if not roles.can_assign(users.role_of(me), role, users.is_root(me)):
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("その役職は付与できません"), 303)
     try:
-        users.create(username, password, role="admin" if role == "admin" else "user",
-                     note=note, must_change=bool(must_change))
-        users.audit(request_actor(u), "admin_create", {"username": username, "role": role})
+        users.create(username, password, role=role, note=note,
+                     must_change=bool(must_change))
+        users.audit(me, "admin_create", {"username": username, "role": role})
         return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{username} を作成しました"), 303)
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
 
 
 @admin.post("/users/{target}/password")
-def admin_setpw(target: str, password: str = Form(...), u=Depends(admin_auth)):
+def admin_setpw(request: Request, target: str, password: str = Form(...),
+                u=Depends(admin_auth)):
+    me = _guard(request, target, "users.setpw")
     try:
         users.set_password(target, password, must_change=1)
-        users.audit(u, "admin_setpw", {"username": target})
+        users.audit(me, "admin_setpw", {"username": target})
         return RedirectResponse(ADMIN_PATH + "/?msg=" +
                                 quote(f"{target} のパスワードを再設定しました"), 303)
     except ValueError as e:
@@ -777,47 +922,66 @@ def admin_setpw(target: str, password: str = Form(...), u=Depends(admin_auth)):
 
 
 @admin.post("/users/{target}/adminpw")
-def admin_set_adminpw(target: str, password: str = Form(...), u=Depends(admin_auth)):
+def admin_set_adminpw(request: Request, target: str, password: str = Form(...),
+                      u=Depends(admin_auth)):
+    me = _guard(request, target, "users.setadminpw")
     try:
         users.set_admin_password(target, password)
-        users.audit(u, "admin_set_adminpw", {"username": target})
+        users.audit(me, "admin_set_adminpw", {"username": target})
         return RedirectResponse(ADMIN_PATH + "/?msg=" +
-                                quote(f"{target} の管理者パスワードを設定しました"), 303)
+                                quote(f"{target} のコンソールPWを設定しました"), 303)
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
 
 
 @admin.post("/users/{target}/role")
-def admin_role(target: str, role: str = Form(...), u=Depends(admin_auth)):
-    users.set_role(target, "admin" if role == "admin" else "user")
-    users.audit(u, "admin_role", {"username": target, "role": role})
-    return RedirectResponse(ADMIN_PATH + "/", 303)
+def admin_role(request: Request, target: str, role: str = Form(...),
+               u=Depends(admin_auth)):
+    me = _guard(request, target, "users.role")
+    if not roles.can_assign(users.role_of(me), role, users.is_root(me)):
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("その役職にはできません"), 303)
+    try:
+        users.set_role(target, role)
+        users.audit(me, "admin_role", {"username": target, "role": role})
+        return RedirectResponse(ADMIN_PATH + "/?msg=" +
+                                quote(f"{target} を {roles.label(role)} にしました"), 303)
+    except ValueError as e:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
 
 
 @admin.post("/users/{target}/toggle")
-def admin_toggle(target: str, u=Depends(admin_auth)):
-    row = users.get(target)
-    if row:
-        users.set_disabled(target, not row["disabled"])
-        users.audit(u, "admin_toggle", {"username": target, "disabled": bool(not row["disabled"])})
-    return RedirectResponse(ADMIN_PATH + "/", 303)
+def admin_toggle(request: Request, target: str, u=Depends(admin_auth)):
+    me = _guard(request, target, "users.disable")
+    try:
+        row = users.get(target)
+        if row:
+            users.set_disabled(target, not row["disabled"])
+        return RedirectResponse(ADMIN_PATH + "/", 303)
+    except ValueError as e:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
 
 
 @admin.post("/users/{target}/delete")
-def admin_delete(target: str, purge: str = Form(""), u=Depends(admin_auth)):
-    if users.norm(target) == users.norm(u):
+def admin_delete(request: Request, target: str, purge: str = Form(""),
+                 u=Depends(admin_auth)):
+    if users.norm(target) == users.norm(request.state.real_user):
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote("自分自身は削除できません"), 303)
-    users.delete(target)
+    me = _guard(request, target, "users.delete", purge=bool(purge))
+    try:
+        users.delete(target)
+    except ValueError as e:
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
     if purge:
         shutil.rmtree(os.path.join(tenancy.ROOT, tenancy.safe_name(target)),
                       ignore_errors=True)
         tenancy.close(target)
-    users.audit(u, "admin_delete", {"username": target, "purge": bool(purge)})
+    users.audit(me, "admin_delete", {"username": target, "purge": bool(purge)})
     return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{target} を削除しました"), 303)
 
 
 @admin.get("/switch")
 def admin_switch(request: Request, to: str = "", back: str = "/", u=Depends(admin_auth)):
+    _perm(request, "view_as")
     r = RedirectResponse(_safe_next(back, ADMIN_PATH + "/"), 303)
     if to and users.get(to):
         r.set_cookie("view_as", users.norm(to), httponly=True, samesite="lax",
