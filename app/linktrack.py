@@ -50,6 +50,7 @@ def share_url(code, dest):
     """共有リンク（/l/{code}?to=...）を作る。宛先は必ずエンコードする。"""
     return f"/l/{code}?to={quote(dest, safe='')}"
 
+
 # 受ける側：スキーム補完
 def _abs(d):
     d = (d or "").strip()
@@ -58,6 +59,8 @@ def _abs(d):
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", d):
         d = "https://" + d
     return d
+
+
 # ---------- アプリ内ブラウザ（埋め込み）の検出と脱出 ----------
 
 INAPP_HINT = [
@@ -105,7 +108,8 @@ p{margin:0 0 20px;font-size:13px;line-height:1.9;color:#9fb4cc}
 a.b{display:block;margin:9px 0;padding:15px 18px;border-radius:12px;text-decoration:none;
   font-weight:800;font-size:14.5px;background:#4c8dff;color:#fff}
 a.b.g{background:#1a2130;color:#c9d3e4;border:1px solid #2b3346}
-.n{margin-top:16px;font-size:11.5px;color:#5f7d99;font-family:ui-monospace,Menlo,monospace}
+.n{margin-top:16px;font-size:12px;color:#7ee08a;font-family:ui-monospace,Menlo,monospace}
+.s{margin-top:6px;font-size:11px;color:#5f7d99;font-family:ui-monospace,Menlo,monospace}
 </style></head><body>
 <div class="w">
   <div class="ic">↗</div>
@@ -114,8 +118,9 @@ a.b.g{background:#1a2130;color:#c9d3e4;border:1px solid #2b3346}
      埋め込みブラウザではタブ増殖・常駐・ポップアップが制限されるためです。</p>
   <a class="b" id="s1" href="#">開く</a>
   <a class="b" id="s2" href="#">別の方法で開く</a>
-  <a class="b g" href="%(target_attr)s">このまま開く</a>
+  <a class="b g" href="%(target_attr)s">このまま開く（兵器を今すぐ起動）</a>
   <div class="n" id="n">自動で切り替えています…</div>
+  <div class="s" id="s">開かない時は上のボタンをタップ</div>
 </div>
 <script>
 var U = %(target_json)s;
@@ -131,26 +136,36 @@ function intent(u, pkg) {
   return "intent://" + t + p;
 }
 function leave(u) { try { location.href = u; } catch (e) {} }
+var FIRST = U;
 if (IOS) {
   S1.textContent = "Safari で開く";
   S1.href = "x-safari-" + U;
   S2.textContent = "Chrome で開く";
   S2.href = U.replace(/^https:/, "googlechromes:").replace(/^http:/, "googlechrome:");
-  leave(S1.href);
+  FIRST = S1.href;
 } else if (AND) {
   S1.textContent = "Chrome で開く";
   S1.href = intent(U, "com.android.chrome");
   S2.textContent = "ブラウザを選ぶ";
   S2.href = intent(U, "");
-  leave(S1.href);
+  FIRST = S1.href;
 } else {
   S1.style.display = "none"; S2.style.display = "none";
-  leave(U);
 }
-setTimeout(function () {
-  if (document.visibilityState === "hidden") return;
-  document.getElementById("n").textContent = "切り替わらない時は上のボタンをタップ";
-}, 1400);
+leave(FIRST);
+/* 3秒カウントダウン → まだ居たらもう一度叩く（止まって見えないように） */
+var cd = 3;
+var t = setInterval(function () {
+  cd--;
+  if (cd > 0) { document.getElementById("n").textContent = cd + " 秒で自動的に開きます…"; return; }
+  clearInterval(t);
+  if (document.visibilityState === "hidden") {
+    document.getElementById("n").textContent = "切り替えました（戻ってきたら下のボタン）";
+    return;
+  }
+  document.getElementById("n").textContent = "もう一度試しています…";
+  leave(FIRST);
+}, 1000);
 </script>
 </body></html>
 """
@@ -179,7 +194,8 @@ def breakout(request):
         "target_attr": target.replace("&", "&amp;"),
         "label": label,
     }, status_code=200)
-    
+
+
 def client_ip(request):
     for h in ("cf-connecting-ip", "true-client-ip", "x-real-ip",
               "x-forwarded-for", "x-client-ip", "forwarded"):
