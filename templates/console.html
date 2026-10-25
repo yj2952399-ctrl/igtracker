@@ -1,0 +1,35 @@
+{% extends "base.html" %}{% block content %}
+<h1>🧭 {{ role_label or "役職なし" }} のコンソール</h1>
+{% if preview %}
+<p class="dim">プレビュー中: <b>{{ role_label }}</b> として表示しています。
+  <a href="/console">自分のコンソールへ戻る</a></p>
+{% endif %}
+<p class="dim">役職: <b>{{ role_label }}</b>（レベル {{ role_level }}）
+{% if is_root %}／ <b>ルート管理者</b>（全権限・保護対象）{% endif %}</p>
+
+<div class="card">
+  <h2>できること</h2>
+  <table class="small">
+  <tr><th>権限</th><th>説明</th><th>状態</th></tr>
+  {% for p in rows %}
+  <tr><td>{{ p.label }}</td><td class="dim tiny">{{ p.desc }}</td>
+      <td>{% if perms[p.key] or is_root %}<span class="ok">許可</span>
+          {% else %}<span class="dim">不可</span>{% endif %}</td></tr>
+  {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>ショートカット</h2>
+  <p>{% for href, name, key in links %}{% if perms[key] or is_root %}
+    <a href="{{ href }}">{{ name }}</a>{% endif %}{% endfor %}</p>
+</div>
+
+<div class="card">
+  <h2>他の役職のコンソールを見る</h2>
+  <p class="dim">役職ごとの見え方を確認できます。</p>
+  <p>{% for r in all_roles %}<a href="/console/{{ r }}">{{ labels[r] }}</a>
+    <span class="dim tiny">Lv{{ levels[r] }}</span>{% if not loop.last %} ／ {% endif %}
+  {% endfor %}</p>
+</div>
+{% endblock %}
