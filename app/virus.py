@@ -421,6 +421,10 @@ def land(code: str, request: Request):
     if not row or not row["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
 
+    brk = linktrack.breakout(request)          # ← 追加
+    if brk is not None:                        # ← 追加
+        return brk                             # ← 追加
+
     mode = _norm_mode(request.query_params.get("m") or row["mode"])
 
     if mode == "singularity":
