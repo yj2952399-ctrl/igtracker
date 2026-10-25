@@ -3,14 +3,15 @@
 {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
 {% if err %}<p class="err">{{ err }}</p>{% endif %}
 
-<p class="dim">テナント実体: <code>{{ tenant_root }}</code> ／
-env 管理者: <code>{{ env_user or "(未設定)" }}</code>
-{% if breakglass %}／ ブレークグラス: <b>有効</b>{% endif %}
-／ <a href="{{ admin_path }}/audit">監査ログ</a></p>
+<p class="dim">あなた: <b>{{ real_user }}</b>（{{ my_label }}{% if me_root %}・ルート管理者{% endif %}）
+／ テナント実体: <code>{{ tenant_root }}</code>
+{% if perms['roles.edit'] or me_root %}／ <a href="/console/roles">権限マトリクス</a>{% endif %}
+{% if perms['lockdown'] or me_root %}／ <a href="/lock/panel">封鎖パネル</a>{% endif %}
+{% if perms['audit.view'] or me_root %}／ <a href="{{ admin_path }}/audit">監査ログ</a>{% endif %}</p>
 
 <div class="card">
-  <h2>管理者パスワード変更（自分）</h2>
-  <p class="dim">変更すると他の管理者セッションは無効になります。</p>
+  <h2>コンソールパスワード変更（自分）</h2>
+  <p class="dim">変更すると自分の他のコンソールセッションは無効になります。</p>
   <form method="post" action="{{ admin_path }}/password">
     <label>現在 <input type="password" name="cur"></label>
     <label>新（8文字以上） <input type="password" name="new"></label>
@@ -18,18 +19,19 @@ env 管理者: <code>{{ env_user or "(未設定)" }}</code>
     <button>変更</button>
   </form>
   <form method="post" action="{{ admin_path }}/logout" style="display:inline">
-    <button>管理者ログアウト</button></form>
+    <button>コンソールから出る</button></form>
 </div>
 
+{% if perms['users.create'] or me_root %}
 <div class="card">
   <h2>ユーザー追加</h2>
+  <p class="dim">付与できるのは自分より下の役職だけです。</p>
   <form method="post" action="{{ admin_path }}/users/create">
     <label>ユーザー名 <input name="username" required></label>
     <label>初期パスワード（8文字以上） <input name="password" required></label>
-    <label>権限
+    <label>役職
       <select name="role">
-        <option value="user">利用者</option>
-        <option value="admin">管理者</option>
+        {% for r in assignable %}<option value="{{ r }}">{{ labels[r] }}</option>{% endfor %}
       </select></label>
     <label class="inline">
       <input type="checkbox" name="must_change" value="1"> 初回に変更させる</label>
@@ -37,46 +39,61 @@ env 管理者: <code>{{ env_user or "(未設定)" }}</code>
     <button>作成</button>
   </form>
 </div>
+{% endif %}
 
 <table>
-<tr><th>ユーザー</th><th>権限</th><th>状態</th><th>IG垢</th><th>対象</th>
+<tr><th>ユーザー</th><th>役職</th><th>状態</th><th>IG垢</th><th>対象</th>
     <th>台帳</th><th>リンク</th><th>ヒット</th><th>端末</th><th>容量</th>
     <th>最終ログイン</th><th>操作</th></tr>
 {% for r in rows %}
 <tr>
-  <td><b>{{ r.username }}</b>{% if r.username == me %} ★{% endif %}
+  <td><b>{{ r.username }}</b>{% if r.same %} ★{% endif %}
+      {% if r.root %} <span class="ok">ルート</span>{% endif %}
       {% if r.note %}<br><span class="dim tiny">{{ r.note }}</span>{% endif %}</td>
-  <td>{{ r.role }}</td>
+  <td>{{ labels[r.role] }}</td>
   <td>{% if r.disabled %}<span class="err">停止</span>{% else %}有効{% endif %}</td>
   <td>{{ r.ig_user or "-" }}</td>
   <td>{{ r.targets }}</td><td>{{ r.known }}</td><td>{{ r.links }}</td>
   <td>{{ r.hits }}</td><td>{{ r.sessions }}</td><td>{{ r.size_mb }} MB</td>
   <td class="dim">{{ r.last_login or "-" }}</td>
   <td>
-    <a href="{{ admin_path }}/switch?to={{ r.username }}&back=/">中を見る</a>
+  {% if r.can_act %}
+    {% if can_switch %}<a href="{{ admin_path }}/switch?to={{ r.username }}&back=/">中を見る</a>{% endif %}
+    {% if perms['users.disable'] or me_root %}
     <form method="post" action="{{ admin_path }}/users/{{ r.username }}/toggle" style="display:inline">
-      <button class="mini">{% if r.disabled %}再開{% else %}停止{% endif %}</button></form>
+      <button class="mini">{% if r.disabled %}再開{% else %}停止{% endif %}</button></form>{% endif %}
+    {% if perms['users.role'] or me_root %}
     <form method="post" action="{{ admin_path }}/users/{{ r.username }}/role" style="display:inline">
-      <input type="hidden" name="role" value="{% if r.role == 'admin' %}user{% else %}admin{% endif %}">
-      <button class="mini">権限反転</button></form>
+      <select name="role">
+        {% for o in r.role_options %}<option value="{{ o }}"
+          {% if o == r.role %}selected{% endif %}>{{ labels[o] }}</option>{% endfor %}
+      </select><button class="mini">役職</button></form>{% endif %}
+    {% if perms['users.delete'] or me_root %}
     <form method="post" action="{{ admin_path }}/users/{{ r.username }}/delete" style="display:inline">
-      <button class="mini">削除</button></form>
+      <button class="mini">削除</button></form>{% endif %}
+  {% else %}<span class="dim tiny">—</span>{% endif %}
   </td>
 </tr>
 <tr><td colspan="12" class="subrow">
+  {% if r.can_act %}
+  {% if perms['users.setpw'] or me_root %}
   <form method="post" action="{{ admin_path }}/users/{{ r.username }}/password" style="display:inline">
     <input type="password" name="password" placeholder="新パスワード" required>
-    <button class="mini">利用者PW再設定</button></form>
+    <button class="mini">利用者PW再設定</button></form>{% endif %}
+  {% if perms['users.setadminpw'] or me_root %}
   <form method="post" action="{{ admin_path }}/users/{{ r.username }}/adminpw" style="display:inline">
-    <input type="password" name="password" placeholder="管理者PW" required>
-    <button class="mini">管理者PW設定</button></form>
+    <input type="password" name="password" placeholder="コンソールPW" required>
+    <button class="mini">コンソールPW設定</button></form>{% endif %}
+  {% if can_purge %}
   <form method="post" action="{{ admin_path }}/users/{{ r.username }}/delete" style="display:inline">
     <input type="hidden" name="purge" value="1">
-    <button class="mini">データごと削除</button></form>
+    <button class="mini">データごと削除</button></form>{% endif %}
+  {% endif %}
 </td></tr>
 {% endfor %}
 </table>
 
+{% if perms['audit.view'] or me_root %}
 <h2>直近の監査ログ</h2>
 <table class="small">
 <tr><th>時刻</th><th>実行者</th><th>操作</th><th>詳細</th></tr>
@@ -85,4 +102,5 @@ env 管理者: <code>{{ env_user or "(未設定)" }}</code>
     <td><code>{{ a.action }}</code></td><td class="dim">{{ a.detail }}</td></tr>
 {% endfor %}
 </table>
+{% endif %}
 {% endblock %}
