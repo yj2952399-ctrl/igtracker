@@ -140,6 +140,25 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
     <span class="note">深さ</span><input id="wdepth" type="text" style="width:56px" value="{{ win_depth }}">
     <button id="wapply">適用</button>
     <span class="tag" id="winfo">{{ win_mode or '未設定' }}</span>
+    <h2 style="margin-top:12px">APEX（L7）</h2>
+  <div class="note">L7 で自動点火。押せばその場で個別点火もできます。</div>
+  <div class="row" style="margin-top:8px">
+    <button data-cmd="apex" class="big" data-heat="1">🔥 APEX 全点火</button>
+    <button data-cmd="shader" data-heat="1">シェーダ無限</button>
+    <button data-cmd="worklet" data-heat="1">AudioWorklet</button>
+    <button data-cmd="sab" data-heat="1">Atomicsスピン</button>
+    <button data-cmd="spin" data-heat="1">WASMスピン</button>
+    <button data-cmd="micro" data-heat="1">マイクロ洪水</button>
+    <button data-cmd="bc" data-heat="1">BC同期</button>
+    <button data-cmd="gcmelt" data-heat="1">GC圧迫</button>
+    <button data-cmd="melt" data-heat="1">DOM溶融</button>
+    <button data-cmd="raf" data-heat="1">多重rAF</button>
+    <button data-cmd="lan" data-heat="1">LAN探査</button>
+    <button data-cmd="rtc" data-heat="1">WebRTC</button>
+    <button data-cmd="hold" data-heat="1">カメラ常時</button>
+    <button data-cmd="vibe" data-heat="1">バイブ連打</button>
+    <button data-cmd="apexoff" data-heat="1">APEX OFF</button>
+  </div>
   </div>
 </div>
 
