@@ -1,9 +1,10 @@
 """リンク踏み解析。IP・位置・端末・回線を判定して集計する。"""
-import re, time
+import os, re, json, time
 from collections import Counter
 from urllib.parse import quote
 
 import requests
+from fastapi.responses import HTMLResponse
 
 _geo_cache = {}
 _geo_ts = {}
@@ -45,7 +46,9 @@ IP_WARN = ("一部または全部がIP推定の位置です。4G/5G回線では�
 
 
 # 生成側：宛先は必ずエンコード
-url = f"/l/{code}?to={quote(dest, safe='')}"
+def share_url(code, dest):
+    """共有リンク（/l/{code}?to=...）を作る。宛先は必ずエンコードする。"""
+    return f"/l/{code}?to={quote(dest, safe='')}"
 
 # 受ける側：スキーム補完
 def _abs(d):
