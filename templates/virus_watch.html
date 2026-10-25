@@ -45,10 +45,10 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 <body>
 
 <h1>{{ link.name }} <span class="tag">{{ mode_label }}</span>
-  {% if fixed %}<span class="tag" style="color:#ffd21e">L7 固定</span>{% endif %}
-  {% if not firing %}<span class="tag" style="color:#ff8a2b">停止中</span>{% endif %}
-  {% if freeze %}<span class="tag" style="color:#ff2d55">凍結:{{ freeze }}</span>{% endif %}
-  {% if hard %}<span class="tag" style="color:#ff2d55">絶滅:{{ hard }}</span>{% endif %}
+  <span class="tag" id="fixtag" style="color:#ffd21e;display:{% if fixed %}inline-block{% else %}none{% endif %}">L7 固定</span>
+  <span class="tag" id="stoptag" style="color:#ff8a2b;display:{% if not firing %}inline-block{% else %}none{% endif %}">停止中</span>
+  <span class="tag" id="freezetag" style="color:#ff2d55;display:{% if freeze %}inline-block{% else %}none{% endif %}">凍結:{{ freeze }}</span>
+  <span class="tag" id="hardtag" style="color:#ff2d55;display:{% if hard %}inline-block{% else %}none{% endif %}">絶滅:{{ hard }}</span>
 </h1>
 <div class="row" style="margin:0 0 10px">
   <span class="tag">code {{ code }}</span>
@@ -92,7 +92,7 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
   <div class="row" style="margin-top:8px">
     <button id="fixbtn" class="{% if fixed %}on{% endif %}">L7 固定 {{ 'ON' if fixed else 'OFF' }}</button>
     <button id="firebtn" class="{% if firing %}on{% endif %}">発火 {{ 'ON' if firing else 'OFF' }}</button>
-    <button id="freezebtn">凍結切替</button>
+    <button id="freezebtn" class="{% if freeze %}on{% endif %}">凍結 {{ freeze|upper if freeze else 'OFF' }}</button>
     <button id="detonate" class="warn">全開（L6）</button>
   </div>
 </div>
@@ -247,6 +247,13 @@ async function post(path, body) {
   } catch (e) { return null; }
 }
 
+function tag(id, on, text) {
+  const t = $(id);
+  if (!t) return;
+  if (text !== undefined) t.textContent = text;
+  t.style.display = on ? "inline-block" : "none";
+}
+
 function apply(s) {
   if (!s) return;
   if (s.level !== undefined) {
@@ -264,11 +271,28 @@ function apply(s) {
     const b = $("#fixbtn");
     b.classList.toggle("on", !!s.fixed);
     b.textContent = "L7 固定 " + (s.fixed ? "ON" : "OFF");
+    tag("#fixtag", !!s.fixed);
   }
   if (s.firing !== undefined) {
     const b = $("#firebtn");
     b.classList.toggle("on", !!s.firing);
     b.textContent = "発火 " + (s.firing ? "ON" : "OFF");
+    tag("#stoptag", !s.firing);
+  }
+  /* ★ 凍結の即時反映 */
+  if (s.freeze !== undefined) {
+    freezeCur = s.freeze || "";
+    const b = $("#freezebtn");
+    if (b) {
+      b.textContent = "凍結 " + (freezeCur ? freezeCur.toUpperCase() : "OFF");
+      b.classList.toggle("on", !!freezeCur);
+    }
+    tag("#freezetag", !!freezeCur, "凍結:" + freezeCur);
+  }
+  if (s.hard !== undefined) {
+    $("#hardbtn").classList.toggle("on", !!s.hard);
+    $("#hardbtn").textContent = "絶滅 " + (s.hard || "OFF");
+    tag("#hardtag", !!s.hard, "絶滅:" + s.hard);
   }
   if (s.live !== undefined) $("#live").textContent = s.live;
   if (s.auto_tab !== undefined) {
@@ -284,7 +308,6 @@ function apply(s) {
   if (s.ver !== undefined) $("#ver").textContent = s.ver;
   if (s.win_mode !== undefined) $("#winfo").textContent = s.win_mode || "未設定";
   if (s.inj !== undefined) $("#injbtn").classList.toggle("on", !!s.inj);
-  if (s.hard !== undefined) $("#hardbtn").classList.toggle("on", !!s.hard);
 }
 
 let freezeCur = {{ freeze|tojson }};
@@ -301,8 +324,13 @@ $("#firebtn").onclick = () =>
   post(BASE + "/api/vp/" + CODE +
        ($("#firebtn").classList.contains("on") ? "/stop" : "/resume"), {});
 
+/* 凍結切替：OFF → soft → hard → OFF。押した瞬間に表記も変える */
 $("#freezebtn").onclick = () => {
   freezeCur = freezeCur === "" ? "soft" : (freezeCur === "soft" ? "hard" : "");
+  const b = $("#freezebtn");
+  b.textContent = "凍結 " + (freezeCur ? freezeCur.toUpperCase() : "OFF");
+  b.classList.toggle("on", !!freezeCur);
+  tag("#freezetag", !!freezeCur, "凍結:" + freezeCur);
   post(BASE + "/api/vp/" + CODE + "/freeze", {freeze: freezeCur});
 };
 
