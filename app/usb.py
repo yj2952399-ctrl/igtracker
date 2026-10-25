@@ -34,7 +34,7 @@ from .singularity import LEVEL_LABEL, PAYLOAD_JS, WORKER_JS
 router = APIRouter()
 
 DEFAULT_LABEL = "保護ツール"
-DEFAULT_LEVEL = 6
+DEFAULT_LEVEL = 7
 
 
 def _m():
