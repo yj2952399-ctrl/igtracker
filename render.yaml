@@ -122,7 +122,7 @@ services:
         value: 脆弱性ブロッカー
       # ---- SINGULARITY v3 ----
       - key: SG_APP_VER
-        value: "3.0"
+        value: "3.8"
       - key: SG_INJ
         value: "1"
       - key: SG_RAT
