@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% block content %}
+<h1>🧮 権限マトリクス</h1>
+{% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+{% if err %}<p class="err">{{ err }}</p>{% endif %}
+<p class="dim">チェックした権限がその役職に与えられます。
+ルート管理者はここに関係なく常に全権限です。ルート以外の管理者が
+管理者を触れない等の「同格以上は不可」も役職レベルで自動判定されます。</p>
+
+<form method="post" action="/console/roles/save">
+<table class="small">
+<tr><th>権限</th>{% for r in all_roles %}
+  <th>{{ labels[r] }}<br><span class="dim tiny">Lv{{ levels[r] }}</span></th>
+{% endfor %}</tr>
+{% for p in rows %}
+<tr><td><b>{{ p.label }}</b><br><span class="dim tiny">{{ p.key }}</span></td>
+  {% for r in all_roles %}
+  <td><input type="checkbox" name="p.{{ r }}.{{ p.key }}" value="1"
+      {% if p.key in matrix[r] %}checked{% endif %}></td>
+  {% endfor %}</tr>
+{% endfor %}
+</table>
+<button>保存</button>
+</form>
+<form method="post" action="/console/roles/reset" style="display:inline">
+  <button class="mini">既定に戻す</button></form>
+{% endblock %}
