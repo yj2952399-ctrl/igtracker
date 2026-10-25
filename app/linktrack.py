@@ -1,6 +1,7 @@
 """リンク踏み解析。IP・位置・端末・回線を判定して集計する。"""
 import re, time
 from collections import Counter
+from urllib.parse import quote
 
 import requests
 
