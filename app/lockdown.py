@@ -8,6 +8,8 @@ main.py への追記は3か所だけ:
         return await lockdown.gate(request, call_next)
 
 状態は lockdown.json に保存（DB不要）。管理者は /lock/panel から操作。
+「管理者として通す」判定は、lockdown.json の admins（部分一致）に加えて
+「ルート管理者」と「lockdown 権限を持つ役職」も自動で通す。
 """
 from __future__ import annotations
 
@@ -111,6 +113,15 @@ def is_admin_ident(ident: str) -> bool:
     for a in st["admins"]:
         if s == a or s.endswith("@" + a) or s.startswith(a + "@") or a in s:
             return True
+    try:
+        from . import users, roles
+        if users.is_root(s):
+            return True
+        row = users.get(s)
+        if row and roles.has(row["role"], "lockdown"):
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -159,6 +170,10 @@ def _ident(form: Dict[str, str]) -> str:
 def _admin(request: Request) -> bool:
     try:
         if bool(getattr(request.state, "is_admin", False)):
+            return True
+        if bool(getattr(request.state, "console_ok", False)):
+            return True
+        if bool(getattr(request.state, "is_root", False)):
             return True
     except Exception:
         pass
