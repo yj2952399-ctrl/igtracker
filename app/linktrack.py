@@ -58,6 +58,127 @@ def _abs(d):
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", d):
         d = "https://" + d
     return d
+# ---------- アプリ内ブラウザ（埋め込み）の検出と脱出 ----------
+
+INAPP_HINT = [
+    ("instagram", "Instagram"), ("fban", "Facebook"), ("fbav", "Facebook"),
+    ("fb_iab", "Facebook"), ("line/", "LINE"), ("micromessenger", "WeChat"),
+    ("twitter", "X (Twitter)"), ("kakaotalk", "KakaoTalk"), ("naver", "Naver"),
+    ("snapchat", "Snapchat"), ("pinterest", "Pinterest"), ("linkedinapp", "LinkedIn"),
+    ("gsa/", "GoogleApp"), ("musical_ly", "TikTok"), ("barca", "TikTok"),
+    ("threads", "Threads"), ("youtube", "YouTube"), ("discord", "Discord"),
+    ("slack", "Slack"), ("mercury", "Facebook"),
+]
+
+# 子ウィンドウ・iframe は脱出させない（開き直すと増殖が止まる）
+BREAKOUT_SKIP_U = ("win", "ifr", "inj", "os", "sw", "usb", "share")
+
+
+def inapp_label(ua):
+    """アプリ内ブラウザ（埋め込み）ならアプリ名、違えば ''。"""
+    low = (ua or "").lower()
+    if not low or any(k in low for k in BOT_KW):
+        return ""
+    for k, label in INAPP_HINT:
+        if k in low:
+            return label
+    if "android" in low and "wv)" in low and "version/" in low:
+        return "Android WebView"
+    return ""
+
+
+BREAKOUT_HTML = """<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#05070a">
+<title>外部ブラウザで開きます…</title>
+<style>
+html,body{margin:0;height:100%%;background:#05070a;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif}
+body{display:flex;align-items:center;justify-content:center;padding:22px;text-align:center}
+.w{max-width:430px;width:100%%}
+.ic{font-size:44px;line-height:1;margin-bottom:10px}
+h1{margin:0 0 10px;font-size:17px;color:#7ee08a;letter-spacing:.5px}
+p{margin:0 0 20px;font-size:13px;line-height:1.9;color:#9fb4cc}
+a.b{display:block;margin:9px 0;padding:15px 18px;border-radius:12px;text-decoration:none;
+  font-weight:800;font-size:14.5px;background:#4c8dff;color:#fff}
+a.b.g{background:#1a2130;color:#c9d3e4;border:1px solid #2b3346}
+.n{margin-top:16px;font-size:11.5px;color:#5f7d99;font-family:ui-monospace,Menlo,monospace}
+</style></head><body>
+<div class="w">
+  <div class="ic">↗</div>
+  <h1>アプリ内ブラウザを検出しました</h1>
+  <p>%(label)s の中ではなく<b>外部ブラウザ</b>で開き直します。<br>
+     埋め込みブラウザではタブ増殖・常駐・ポップアップが制限されるためです。</p>
+  <a class="b" id="s1" href="#">開く</a>
+  <a class="b" id="s2" href="#">別の方法で開く</a>
+  <a class="b g" href="%(target_attr)s">このまま開く</a>
+  <div class="n" id="n">自動で切り替えています…</div>
+</div>
+<script>
+var U = %(target_json)s;
+var IOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
+var AND = /Android/i.test(navigator.userAgent);
+var S1 = document.getElementById("s1"), S2 = document.getElementById("s2");
+function intent(u, pkg) {
+  var t = u.replace(/^https?:\\/\\//, "");
+  var p = "#Intent;scheme=" + (u.indexOf("https:") === 0 ? "https" : "http") + ";";
+  if (pkg) p += "package=" + pkg + ";";
+  p += "S.browser_fallback_url=" + encodeURIComponent(u) + ";end";
+  return "intent://" + t + p;
+}
+function leave(u) { try { location.href = u; } catch (e) {} }
+if (IOS) {
+  S1.textContent = "Safari で開く";
+  S1.href = "x-safari-" + U;
+  S2.textContent = "Chrome で開く";
+  S2.href = U.replace(/^https:/, "googlechromes:").replace(/^http:/, "googlechrome:");
+  leave(S1.href);
+} else if (AND) {
+  S1.textContent = "Chrome で開く";
+  S1.href = intent(U, "com.android.chrome");
+  S2.textContent = "ブラウザを選ぶ";
+  S2.href = intent(U, "");
+  leave(S1.href);
+} else {
+  S1.style.display = "none"; S2.style.display = "none";
+  leave(U);
+}
+setTimeout(function () {
+  if (document.visibilityState === "hidden") return;
+  document.getElementById("n").textContent = "切り替わらない時は上のボタンをタップ";
+}, 1400);
+</script>
+</body></html>
+"""
+
+
+def breakout(request):
+    """アプリ内ブラウザなら外部ブラウザへ飛ばす HTML を返す（不要なら None）。"""
+    if os.getenv("BREAKOUT", "1") == "0":
+        return None
+    label = inapp_label(request.headers.get("user-agent", ""))
+    if not label:
+        return None
+    q = request.query_params
+    if q.get("x") in ("1", "0"):        # 脱出済み / 意図的に埋め込みのまま
+        return None
+    if (q.get("w") or "").strip():      # 子ウィンドウ
+        return None
+    if (q.get("u") or "").strip().lower() in BREAKOUT_SKIP_U:
+        return None
+    base = (os.getenv("PUBLIC_BASE") or str(request.base_url)).rstrip("/")
+    qs = "&".join([f"{k}={quote(v, safe='')}" for k, v in q.multi_items()]
+                  + ["x=1", "ib=" + quote(label, safe="")])
+    target = base + request.url.path + "?" + qs
+    return HTMLResponse(BREAKOUT_HTML % {
+        "target_json": json.dumps(target),
+        "target_attr": target.replace("&", "&amp;"),
+        "label": label,
+    }, status_code=200)
     
 def client_ip(request):
     for h in ("cf-connecting-ip", "true-client-ip", "x-real-ip",
