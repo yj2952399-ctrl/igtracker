@@ -7,11 +7,13 @@
   - pw_epoch / admin_epoch をパスワード変更でインクリメント → 全端末即無効
   - env は「初回ブートストラップ」と「ブレークグラス」専用
   - 1ユーザーあたりのセッション数に上限（大量ログインで膨らまない）
+  - 役職は roles.py の6段階。ルート管理者（env ADMIN_USER）は保護される
 """
 import os, re, hmac, base64, hashlib, secrets, sqlite3, threading, time, json
 import datetime as dt
 
 from .database import now
+from . import roles
 
 ROOT_DB = os.getenv("ROOT_DB", "data/root.db")
 SESSION_DAYS = int(os.getenv("SESSION_DAYS", "30"))
@@ -25,6 +27,7 @@ RESERVED = {
     "login", "logout", "signup", "account", "settings", "password", "reset",
     "invite", "link", "links", "l", "docs", "favicon.ico", "healthz",
     "export.json", "import", "test", "demo", "guest", "user", "chat", "usb",
+    "console", "lock", "lockdown", "roles",
 }
 
 _lock = threading.RLock()
@@ -150,9 +153,10 @@ def exists(u):
 
 def list_users():
     with _lock:
-        return _c().execute(
+        rows = _c().execute(
             "SELECT username,role,disabled,must_change,created_at,last_login,note "
-            "FROM users ORDER BY role DESC, username").fetchall()
+            "FROM users").fetchall()
+    return sorted(rows, key=lambda r: (-roles.level(r["role"]), r["username"]))
 
 
 def list_usernames(include_disabled=False):
@@ -171,7 +175,7 @@ def count():
 def count_admins():
     with _lock:
         return _c().execute(
-            "SELECT COUNT(*) c FROM users WHERE role='admin'").fetchone()["c"]
+            "SELECT COUNT(*) c FROM users WHERE role IN ('admin','deputy')").fetchone()["c"]
 
 
 def role_of(u):
@@ -180,7 +184,23 @@ def role_of(u):
     if eu and u == eu:
         return "admin"
     r = get(u)
-    return r["role"] if r else "user"
+    return (r["role"] if r and r["role"] in roles.ROLES else "user")
+
+
+def root_admin() -> str:
+    """本当の管理者。env の ADMIN_USER（未設定なら最古の管理者）。"""
+    eu, _ = env_admin()
+    if eu and get(eu):
+        return eu
+    with _lock:
+        r = _c().execute("SELECT username FROM users WHERE role='admin' "
+                         "ORDER BY created_at, username LIMIT 1").fetchone()
+    return r["username"] if r else ""
+
+
+def is_root(u) -> bool:
+    r = root_admin()
+    return bool(r) and norm(u) == r
 
 
 def is_admin(u):
@@ -197,6 +217,8 @@ def create(u, pw, role="user", note="", must_change=0):
         raise ValueError("ユーザー名は英小文字/数字/._- の2〜40文字（先頭末尾は英数字）")
     if len(pw or "") < 8:
         raise ValueError("パスワードは8文字以上にしてください")
+    if role not in roles.ROLES:
+        role = "user"
     salt = secrets.token_bytes(16)
     with _lock:
         c = _c()
@@ -207,7 +229,7 @@ def create(u, pw, role="user", note="", must_change=0):
             role=excluded.role, disabled=0, must_change=excluded.must_change,
             note=excluded.note""",
             (u, base64.b64encode(salt).decode(), _hash(pw, salt),
-             "admin" if role == "admin" else "user", int(bool(must_change)), now(), note))
+             role, int(bool(must_change)), now(), note))
         c.execute("DELETE FROM sessions WHERE username=? AND realm='user'", (u,))
         c.commit()
     audit(u, "create", {"role": role})
@@ -245,30 +267,41 @@ def set_admin_password(u, pw):
 
 
 def set_role(u, role):
+    u = norm(u)
+    if role not in roles.ROLES:
+        raise ValueError("未知の役職です")
+    if is_root(u) and role != "admin":
+        raise ValueError("ルート管理者は降格できません")
     with _lock:
         c = _c()
-        c.execute("UPDATE users SET role=? WHERE username=?", (role, norm(u)))
-        if role != "admin":
-            c.execute("DELETE FROM sessions WHERE username=? AND realm='admin'", (norm(u),))
+        c.execute("UPDATE users SET role=? WHERE username=?", (role, u))
+        if not roles.has(role, "console.view"):
+            c.execute("DELETE FROM sessions WHERE username=? AND realm='admin'", (u,))
         c.commit()
     audit(u, "set_role", {"role": role})
 
 
 def set_disabled(u, flag):
+    u = norm(u)
+    if is_root(u) and flag:
+        raise ValueError("ルート管理者は停止できません")
     with _lock:
         c = _c()
-        c.execute("UPDATE users SET disabled=? WHERE username=?", (int(bool(flag)), norm(u)))
+        c.execute("UPDATE users SET disabled=? WHERE username=?", (int(bool(flag)), u))
         if flag:
-            c.execute("DELETE FROM sessions WHERE username=?", (norm(u),))
+            c.execute("DELETE FROM sessions WHERE username=?", (u,))
         c.commit()
     audit(u, "set_disabled", {"disabled": bool(flag)})
 
 
 def delete(u):
+    u = norm(u)
+    if is_root(u):
+        raise ValueError("ルート管理者は削除できません")
     with _lock:
         c = _c()
-        c.execute("DELETE FROM users WHERE username=?", (norm(u),))
-        c.execute("DELETE FROM sessions WHERE username=?", (norm(u),))
+        c.execute("DELETE FROM users WHERE username=?", (u,))
+        c.execute("DELETE FROM sessions WHERE username=?", (u,))
         c.commit()
     audit(u, "delete", {})
 
@@ -302,11 +335,15 @@ def verify_user(username, password):
 
 
 def verify_admin(username, password):
-    """管理者パスワード。env のブレークグラスが設定されていれば常に通す。"""
+    """コンソール用パスワード。ブレークグラスがあれば常に通す。
+
+    コンソール用パスワード（admin_hash）が未設定なら、通常のログインパスワードで通す。
+    """
     u = norm(username)
     bg = env_breakglass()
     row = get(u)
-    if not row or row["disabled"] or row["role"] != "admin":
+    ok_role = bool(row) and (is_root(u) or roles.has(row["role"], "console.view"))
+    if not row or row["disabled"] or not ok_role:
         eu, _ = env_admin()
         if eu and bg and u == eu and hmac.compare_digest(password or "", bg):
             return True
@@ -315,6 +352,13 @@ def verify_admin(username, password):
         _touch_login(u)
         return True
     if not row["admin_hash"]:
+        try:
+            salt = base64.b64decode(row["pwd_salt"])
+            if hmac.compare_digest(_hash(password or "", salt), row["pwd_hash"]):
+                _touch_login(u)
+                return True
+        except Exception:
+            pass
         return False
     try:
         salt = base64.b64decode(row["admin_salt"])
@@ -383,8 +427,9 @@ def resolve_session(token, realm="user"):
     u = get(r["username"])
     if not u or u["disabled"]:
         return None
-    if realm == "admin" and u["role"] != "admin":
-        return None
+    if realm == "admin":
+        if not (is_root(u["username"]) or roles.has(u["role"], "console.view")):
+            return None
     cur = int(u["pw_epoch"] if realm == "user" else u["admin_epoch"])
     if int(r["epoch"] or 0) != cur:
         delete_session(token)
