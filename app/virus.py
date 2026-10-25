@@ -1469,8 +1469,11 @@ def _api_state(owner, code):
             auto_win = v
     c.close()
     fixed = _is_fixed(row)
+    lv = 7 if fixed else int(_val(row, "level", 1) or 0)
     return {"ok": 1, "code": code,
-            "level": 7 if fixed else int(_val(row, "level", 1) or 0),
+            "level": lv,
+            "level_label": _SG_LEVEL_LABEL.get(lv, ""),
+            "level_desc": _SG_LEVEL_DESC.get(lv, ""),
             "fixed": 1 if fixed else 0,
             "firing": int(_val(row, "firing", 1) or 0),
             "freeze": _val(row, "freeze", "") or "",
