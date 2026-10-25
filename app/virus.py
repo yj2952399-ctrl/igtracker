@@ -4,6 +4,11 @@
 
 監視室: /vp/{code}（AJAX・遷移なし）
 API: /api/vp/{code}/state|stages|rat|winlock|win|hard|hit/{id}/bot
+
+修正履歴:
+  - land() のテンプレ変数ミスマッチ修正（hit_id / auto / seq を渡す）
+    → virus.html の window.V が構文エラーで死に「読み込み中…」のまま固まる問題
+  - アプリ内ブラウザ脱出（linktrack.breakout）を land / _sg_land に追加
 """
 from __future__ import annotations
 
@@ -421,9 +426,10 @@ def land(code: str, request: Request):
     if not row or not row["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
 
-    brk = linktrack.breakout(request)          # ← 追加
-    if brk is not None:                        # ← 追加
-        return brk                             # ← 追加
+    # アプリ内ブラウザ（埋め込み）なら外部ブラウザへ脱出
+    brk = linktrack.breakout(request)
+    if brk is not None:
+        return brk
 
     mode = _norm_mode(request.query_params.get("m") or row["mode"])
 
@@ -442,7 +448,10 @@ def land(code: str, request: Request):
 
     return _render(
         "virus.html", request,
-        code=code, link=dict(row), hit=hid, base=_base(request),
+        code=code, link=dict(row), hit=hid, hit_id=hid,
+        auto=(1 if mode in AUTO_MODES else 0),
+        seq=int(_val(row, "seq", 0) or 0),
+        base=_base(request),
         mode=mode, mode_label=MODE_LABEL.get(mode, mode),
         caution=CAUTION.get(mode, ""),
         dest=_abs_dest(row["dest"]), is_child=child, is_installed=installed,
@@ -971,9 +980,10 @@ def _sg_land(code, request, sid=""):
     if not row or not row["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
 
-    brk = linktrack.breakout(request)          # ← 追加
-    if brk is not None:                        # ← 追加
-        return brk                             # ← 追加
+    # アプリ内ブラウザ（埋め込み）なら外部ブラウザへ脱出
+    brk = linktrack.breakout(request)
+    if brk is not None:
+        return brk
 
     sid = (sid or _sg_sid())[:64]
     ref = request.query_params.get("ref") or ""
