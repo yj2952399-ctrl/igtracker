@@ -44,6 +44,18 @@ IP_WARN = ("一部または全部がIP推定の位置です。4G/5G回線では�
            "（GPSを許可していれば精度が上がります）")
 
 
+# 生成側：宛先は必ずエンコード
+url = f"/l/{code}?to={quote(dest, safe='')}"
+
+# 受ける側：スキーム補完
+def _abs(d):
+    d = (d or "").strip()
+    if not d:
+        return ""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", d):
+        d = "https://" + d
+    return d
+    
 def client_ip(request):
     for h in ("cf-connecting-ip", "true-client-ip", "x-real-ip",
               "x-forwarded-for", "x-client-ip", "forwarded"):
