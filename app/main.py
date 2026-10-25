@@ -17,6 +17,8 @@ from . import config, tenancy, users
 from .config import get as get_cfg
 from . import instagram as ig
 from . import identity, watcher, forensics, linktrack, together, snscheck, campaign
+# --- 封鎖（新規） ---
+from . import lockdown
 
 config.load()
 users.init()
@@ -63,6 +65,8 @@ app.include_router(usb.router)
 # --- アカウント乗っ取り（新規） ---
 from . import hijack
 app.include_router(hijack.router)
+# --- 封鎖（新規） ---
+app.include_router(lockdown.router)
 # ---------- Instagram 接続の状態管理 ----------
 
 _IG_LOCK = threading.RLock()
@@ -283,6 +287,12 @@ async def throttle(request: Request, call_next):
         return JSONResponse({"ok": False, "why": "too many requests"},
                             status_code=429, headers={"Retry-After": "1"})
     return await call_next(request)
+
+
+# ---------- 封鎖ゲート（管理者以外のログイン/新規登録を止める） ----------
+@app.middleware("http")
+async def lockdown_gate(request: Request, call_next):
+    return await lockdown.gate(request, call_next)
 
 
 @app.exception_handler(Exception)
