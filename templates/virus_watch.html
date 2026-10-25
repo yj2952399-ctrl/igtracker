@@ -307,7 +307,8 @@
   document.querySelectorAll("[data-cmd]").forEach(function (b) {
     b.addEventListener("click", function () {
       const k = b.getAttribute("data-cmd");
-      const a = (k === "speak" || k === "open" || k === "native" || k === "win") ? $("vw-arg").value : "";
+      /* sendCmd の引数対象に tabs を追加 */
+　　　　const a = (k === "speak" || k === "open" || k === "native" || k === "win" || k === "tabs") ? $("vw-arg").value : "";
       sendCmd(k, a);
     });
   });
