@@ -78,11 +78,9 @@ _IG_LOCK = threading.RLock()
 _IG_STATE = {"ok": False, "running": False, "last_try": 0.0, "fails": 0,
              "last_err": "", "last_ok_at": 0.0, "note": ""}
 
-
 def _ig_note(msg):
     _IG_STATE["note"] = msg
     print("[igboot]", msg)
-
 
 def _ig_client(force=False, tries=1, quiet=False):
     with _IG_LOCK:
@@ -121,7 +119,6 @@ def _ig_client(force=False, tries=1, quiet=False):
                     time.sleep(min(5 * (2 ** i), 60))
         raise last if last else RuntimeError("instagram client unavailable")
 
-
 def _ig_boot(force=False):
     with _IG_LOCK:
         if _IG_STATE["running"]:
@@ -154,7 +151,6 @@ def _ig_boot(force=False):
     finally:
         _IG_STATE["running"] = False
 
-
 def _ig_boot_loop():
     delay = 20
     for attempt in range(1, IG_BOOT_MAX_TRIES + 1):
@@ -171,7 +167,6 @@ def _ig_boot_loop():
         time.sleep(delay)
         delay = min(delay * 2, 900)
     _ig_note("起動時の接続は諦めました。/ig/boot か /ig/test で再試行できます")
-
 
 # ---------- 共通 ----------
 
@@ -197,7 +192,6 @@ def render(name, request, **ctx):
     ctx["console_ok"] = getattr(request.state, "console_ok", False)
     return templates.TemplateResponse(name, ctx)
 
-
 def _wants_json(request):
     p = request.url.path
     if p.startswith("/api/") or p in ("/export.json", "/import"):
@@ -205,29 +199,23 @@ def _wants_json(request):
     acc = request.headers.get("accept", "")
     return "application/json" in acc and "text/html" not in acc
 
-
 def _safe_next(n, default="/"):
     if not n or not n.startswith("/") or n.startswith("//"):
         return default
     return n
 
-
 def _ip(request):
     return linktrack.client_ip(request)
-
 
 def _ua(request):
     return request.headers.get("user-agent", "")
 
-
 def _base(request):
     return str(request.base_url).rstrip("/")
-
 
 def _set_cookie(resp, name, token):
     resp.set_cookie(name, token, max_age=users.SESSION_DAYS * 86400, httponly=True,
                     secure=SECURE_COOKIE, samesite="lax", path="/")
-
 
 def _activate(request, row, admin_ok=False):
     real = row["username"]
@@ -251,7 +239,6 @@ def _activate(request, row, admin_ok=False):
                                 or roles.has(request.state.role, "console.view"))
     return effective
 
-
 @app.middleware("http")
 async def harden(request: Request, call_next):
     resp = await call_next(request)
@@ -264,7 +251,6 @@ async def harden(request: Request, call_next):
             resp.headers["Referrer-Policy"] = "no-referrer"
     return resp
 
-
 # ---------- 大量アクセス対策（IP単位トークンバケット） ----------
 _RL = {}
 _RL_LOCK = threading.Lock()
@@ -273,7 +259,6 @@ RL_GEN_RPS = float(os.getenv("RL_RPS", "15"))
 RL_GEN_BURST = float(os.getenv("RL_BURST", "60"))
 RL_PUB_RPS = float(os.getenv("RL_PUBLIC_RPS", "50"))
 RL_PUB_BURST = float(os.getenv("RL_PUBLIC_BURST", "200"))
-
 
 def _rl_allow(ip, cls, now):
     rps, burst = (RL_PUB_RPS, RL_PUB_BURST) if cls == "pub" else (RL_GEN_RPS, RL_GEN_BURST)
@@ -293,7 +278,6 @@ def _rl_allow(ip, cls, now):
         b[0] -= 1.0
         return True
 
-
 @app.middleware("http")
 async def throttle(request: Request, call_next):
     if not RL_ON:
@@ -308,12 +292,10 @@ async def throttle(request: Request, call_next):
                             status_code=429, headers={"Retry-After": "1"})
     return await call_next(request)
 
-
 # ---------- 封鎖ゲート（管理者以外のログイン/新規登録を止める） ----------
 @app.middleware("http")
 async def lockdown_gate(request: Request, call_next):
     return await lockdown.gate(request, call_next)
-
 
 # ---------- 権限チェック / 例外 ----------
 
@@ -327,7 +309,6 @@ def _perm(request: Request, key: str) -> str:
     if not roles.has(users.role_of(u), key):
         raise HTTPException(403, f"権限がありません: {roles.label(key)}")
     return u
-
 
 def _guard(request: Request, target: str, key: str, purge: bool = False) -> str:
     """対象ユーザーへの操作可否（ルート保護＋同格以上は不可）。"""
@@ -343,7 +324,6 @@ def _guard(request: Request, target: str, key: str, purge: bool = False) -> str:
             raise HTTPException(403, "同格以上には触れません")
     return me
 
-
 @app.exception_handler(HTTPException)
 async def _http_exc(request: Request, exc: HTTPException):
     if exc.status_code in (301, 302, 303, 307, 308) and exc.headers:
@@ -354,7 +334,6 @@ async def _http_exc(request: Request, exc: HTTPException):
         sep = "&" if "?" in back else "?"
         return RedirectResponse(f"{back}{sep}err=" + quote(str(exc.detail)), 303)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
 
 @app.exception_handler(Exception)
 async def _debug_handler(request: Request, exc: Exception):
@@ -367,23 +346,19 @@ async def _debug_handler(request: Request, exc: Exception):
         pass
     return PlainTextResponse(f"PATH: {request.url.path}\n\n{tb}", status_code=500)
 
-
 # ---------- ヘルスチェック ----------
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
 
-
 @app.head("/healthz")
 def healthz_head():
     return PlainTextResponse("")
 
-
 @app.head("/")
 def head_root():
     return PlainTextResponse("")
-
 
 # ---------- 認証依存 ----------
 
@@ -412,7 +387,6 @@ async def auth(request: Request) -> str:
     raise HTTPException(303, headers={
         "Location": "/login?next=" + quote(str(request.url.path))})
 
-
 async def admin_auth(request: Request) -> str:
     tok = request.cookies.get(COOKIE_ADMIN)
     row = users.resolve_session(tok, "admin")
@@ -425,14 +399,12 @@ async def admin_auth(request: Request) -> str:
     persist.touch(u)
     return u
 
-
 # ---------- ログイン集中対策 ----------
 _LOGIN_SEM = threading.Semaphore(int(os.getenv("LOGIN_CONCURRENCY", "6")))
 _LOGIN_WAIT = float(os.getenv("LOGIN_WAIT", "10"))
 _LOGIN_HITS = {}
 _LOGIN_HITS_LOCK = threading.Lock()
 LOGIN_PER_MIN = int(os.getenv("LOGIN_PER_MIN", "90"))
-
 
 def _ip_min(key, per_min):
     now = time.time()
@@ -447,17 +419,14 @@ def _ip_min(key, per_min):
                 _LOGIN_HITS.pop(k, None)
     return n <= per_min
 
-
 def _slot():
     return _LOGIN_SEM.acquire(timeout=_LOGIN_WAIT)
-
 
 # ---------- ログイン / 登録 / ログアウト ----------
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: str = "", msg: str = "", err: str = ""):
     return render("login.html", request, next=_safe_next(next), msg=msg, err=err)
-
 
 @app.post("/login")
 def login_post(request: Request, username: str = Form(""), password: str = Form(""),
@@ -500,11 +469,9 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
     _set_cookie(r, COOKIE_USER, tok)
     return r
 
-
 @app.get("/signup", response_class=HTMLResponse)
 def signup_page(request: Request, msg: str = "", err: str = ""):
     return render("signup.html", request, msg=msg, err=err)
-
 
 @app.post("/signup")
 def signup_post(request: Request, username: str = Form(""), password: str = Form(""),
@@ -539,7 +506,6 @@ def signup_post(request: Request, username: str = Form(""), password: str = Form
     _set_cookie(r, COOKIE_USER, tok)
     return r
 
-
 @app.post("/logout")
 def logout_post(request: Request):
     try:
@@ -553,11 +519,9 @@ def logout_post(request: Request):
     r.delete_cookie(COOKIE_USER, path="/")
     return r
 
-
 @app.get("/logout")
 def logout_get(request: Request):
     return logout_post(request)
-
 
 @app.on_event("startup")
 async def _startup_pool():
@@ -569,7 +533,6 @@ async def _startup_pool():
     except Exception:
         pass
 
-
 @app.on_event("startup")
 def _startup():
     users.bootstrap_admin()
@@ -578,7 +541,6 @@ def _startup():
         threading.Thread(target=_ig_boot_loop, daemon=True).start()
     if os.getenv("RUN_SCHEDULER", "1") == "1":
         watcher.start()
-
 
 @app.on_event("shutdown")
 def _shutdown():
@@ -591,7 +553,6 @@ def _shutdown():
             persist.push_user(t, force=True)
     except Exception:
         pass
-
 
 # ---------- 自分のアカウント ----------
 
@@ -614,7 +575,6 @@ def account_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)
                   backup=persist.state(), my_backup=persist.user_state(u),
                   profile=users.get_profile(real), display_name=users.display_name(real))
 
-
 @app.post("/account/profile")
 async def account_profile(request: Request, u=Depends(auth)):
     real = request.state.real_user
@@ -625,7 +585,6 @@ async def account_profile(request: Request, u=Depends(auth)):
     except ValueError as e:
         return RedirectResponse("/account?err=" + quote(str(e)), 303)
     return RedirectResponse("/account?msg=" + quote("表示名を保存しました"), 303)
-
 
 @app.post("/account/avatar")
 async def account_avatar(request: Request, u=Depends(auth)):
@@ -639,26 +598,26 @@ async def account_avatar(request: Request, u=Depends(auth)):
         return RedirectResponse("/account?err=" + quote("画像ファイルが空です"), 303)
     if len(data) > 2 * 1024 * 1024:
         return RedirectResponse("/account?err=" + quote("画像は2MB以下にしてください"), 303)
+    # --- マジックバイト判定（バックスラッシュ二重エスケープを廃止し 16 進数値で比較） ---
+    h = data[:12]
     mime = ""
-    if data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+    if h[:8] == bytes((0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)):
         mime = "image/png"
-    elif data.startswith(b"\\xff\\xd8\\xff"):
+    elif h[:3] == bytes((0xFF, 0xD8, 0xFF)):
         mime = "image/jpeg"
-    elif data.startswith((b"GIF87a", b"GIF89a")):
+    elif h[:6] in (b"GIF87a", b"GIF89a"):
         mime = "image/gif"
-    elif len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    elif len(data) >= 12 and h[:4] == b"RIFF" and h[8:12] == b"WEBP":
         mime = "image/webp"
     if not mime:
         return RedirectResponse("/account?err=" + quote("PNG/JPEG/GIF/WebP画像のみ設定できます"), 303)
     users.update_avatar(real, data, mime)
     return RedirectResponse("/account?msg=" + quote("アイコンを保存しました"), 303)
 
-
 @app.post("/account/avatar/delete")
 def account_avatar_delete(request: Request, u=Depends(auth)):
     users.clear_avatar(request.state.real_user)
     return RedirectResponse("/account?msg=" + quote("アイコンを削除しました"), 303)
-
 
 @app.get("/profile/avatar/{username}")
 def profile_avatar(username: str, u=Depends(auth)):
@@ -671,11 +630,9 @@ def profile_avatar(username: str, u=Depends(auth)):
                     headers={"Cache-Control": "private, max-age=300",
                              "X-Content-Type-Options": "nosniff"})
 
-
 @app.get("/members/count")
 def members_count(u=Depends(auth)):
     return {"ok": True, "count": len(users.list_usernames())}
-
 
 @app.get("/members", response_class=HTMLResponse)
 def members_page(request: Request, online: int = 0, u=Depends(auth)):
@@ -698,7 +655,6 @@ def members_page(request: Request, online: int = 0, u=Depends(auth)):
     return render("members.html", request, rows=rows, online_only=bool(online),
                   member_count=len(names), online_count=len(online_names))
 
-
 @app.post("/account/password")
 def account_password(request: Request, cur: str = Form(""), new: str = Form(""),
                      new2: str = Form(""), u=Depends(auth)):
@@ -719,7 +675,6 @@ def account_password(request: Request, cur: str = Form(""), new: str = Form(""),
     _set_cookie(r, COOKIE_USER, tok)
     return r
 
-
 @app.post("/account/sessions/delete")
 def account_session_delete(request: Request, sid: str = Form(...), u=Depends(auth)):
     real = request.state.real_user
@@ -733,7 +688,6 @@ def account_session_delete(request: Request, sid: str = Form(...), u=Depends(aut
             break
     return RedirectResponse("/account?msg=" + quote("セッションを削除しました"), 303)
 
-
 @app.post("/account/logout-all")
 def account_logout_all(request: Request, u=Depends(auth)):
     real = request.state.real_user
@@ -745,7 +699,6 @@ def account_logout_all(request: Request, u=Depends(auth)):
     _set_cookie(r, COOKIE_USER, tok)
     return r
 
-
 # ---------- バックアップ ----------
 
 @app.get("/backup", response_class=HTMLResponse)
@@ -756,33 +709,27 @@ def backup_page(request: Request, msg: str = "", err: str = "", u=Depends(auth))
                   every=os.getenv("BACKUP_EVERY") or "300",
                   msg=msg, err=err)
 
-
 @app.post("/backup/me/push")
 def backup_me_push(u=Depends(auth)):
     return RedirectResponse("/backup?msg=" + quote("退避: " + str(persist.push_user(u, force=True))), 303)
-
 
 @app.post("/backup/me/pull")
 def backup_me_pull(u=Depends(auth)):
     return RedirectResponse("/backup?msg=" + quote(
         "復元: " + str(persist.pull_user(u, force=True)) + "（再読み込みで反映）"), 303)
 
-
 @app.post("/backup/all/push")
 def backup_all_push(request: Request, u=Depends(auth)):
     _perm(request, "backup.all")
     return RedirectResponse("/backup?msg=" + quote("全ユーザー退避を開始しました"), 303)
 
-
 @app.get("/api/backup")
 def api_backup(u=Depends(auth)):
     return persist.state()
 
-
 @app.get("/api/backup/me")
 def api_backup_me(u=Depends(auth)):
     return persist.user_state(u)
-
 
 # ---------- 役職コンソール ----------
 
@@ -795,21 +742,17 @@ _CONSOLE_LINKS = [
     ("/backup", "💾 バックアップ", "console.view"),
 ]
 
-
 def _console_ctx():
     return {"rows": roles.PERMS, "all_roles": roles.ROLES, "labels": roles.LABELS,
             "levels": roles.LEVEL, "links": _CONSOLE_LINKS}
 
-
 def _can_edit_roles(me: str) -> bool:
     return users.is_root(me) or roles.has(users.role_of(me), "roles.edit")
-
 
 @app.get("/console", response_class=HTMLResponse)
 def console_page(request: Request, u=Depends(auth)):
     return render("console.html", request, **_console_ctx(),
                   view_role=request.state.role, preview=False)
-
 
 @app.get("/console/roles", response_class=HTMLResponse)
 def console_roles(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
@@ -818,7 +761,6 @@ def console_roles(request: Request, msg: str = "", err: str = "", u=Depends(auth
         raise HTTPException(403, "権限マトリクスを扱う権限がありません")
     return render("console_roles.html", request, **_console_ctx(),
                   matrix=roles.load(), msg=msg, err=err)
-
 
 @app.post("/console/roles/save")
 async def console_roles_save(request: Request, u=Depends(auth)):
@@ -833,7 +775,6 @@ async def console_roles_save(request: Request, u=Depends(auth)):
     users.audit(me, "roles_save", {r: len(v) for r, v in new.items()})
     return RedirectResponse("/console/roles?msg=" + quote("権限を保存しました"), 303)
 
-
 @app.post("/console/roles/reset")
 def console_roles_reset(request: Request, u=Depends(auth)):
     me = request.state.real_user
@@ -843,7 +784,6 @@ def console_roles_reset(request: Request, u=Depends(auth)):
     users.audit(me, "roles_reset", {})
     return RedirectResponse("/console/roles?msg=" + quote("既定に戻しました"), 303)
 
-
 @app.get("/console/{role}", response_class=HTMLResponse)
 def console_role_preview(role: str, request: Request, u=Depends(auth)):
     if role not in roles.ROLES:
@@ -851,14 +791,12 @@ def console_role_preview(role: str, request: Request, u=Depends(auth)):
     return render("console.html", request, **_console_ctx(),
                   view_role=role, preview=True)
 
-
 # ---------- 管理 ----------
 
 @admin.get("/login", response_class=HTMLResponse)
 def admin_login_page(request: Request, next: str = "", msg: str = "", err: str = ""):
     return render("admin_login.html", request, next=_safe_next(next, ADMIN_PATH + "/"),
                   msg=msg, err=err)
-
 
 @admin.post("/login")
 def admin_login_post(request: Request, username: str = Form(""), password: str = Form(""),
@@ -890,14 +828,12 @@ def admin_login_post(request: Request, username: str = Form(""), password: str =
     _set_cookie(r, COOKIE_ADMIN, tok)
     return r
 
-
 @admin.post("/logout")
 def admin_logout(request: Request):
     users.delete_session(request.cookies.get(COOKIE_ADMIN))
     r = RedirectResponse(f"{ADMIN_PATH}/login?msg=" + quote("コンソールから出ました"), 303)
     r.delete_cookie(COOKIE_ADMIN, path="/")
     return r
-
 
 def _tenant_size(t):
     p = os.path.join(tenancy.ROOT, t)
@@ -909,7 +845,6 @@ def _tenant_size(t):
             except OSError:
                 pass
     return tot
-
 
 @admin.get("", response_class=HTMLResponse)
 @admin.get("/", response_class=HTMLResponse)
@@ -946,18 +881,23 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
         d["role_options"] = sorted(set(assign + [r["role"]]),
                                    key=lambda x: -roles.LEVEL.get(x, 0))
         rows.append(d)
+    # --- 監査ログ：sqlite3.Row を先に dict 化してから .get() を使う（AttributeError 対策） ---
+    audits = []
+    for a in users.list_audit(200):
+        d = dict(a)
+        actor = d.get("actor", "") or ""
+        d["display_actor"] = users.display_name(actor)
+        d["actor_avatar"] = ("/profile/avatar/" + actor
+                             if actor and users.get_profile(actor).get("avatar_data") else "")
+        audits.append(d)
     return render("admin.html", request, rows=rows, msg=msg, err=err,
                   env_user=users.env_admin()[0],
                   breakglass=bool(users.env_breakglass()),
                   tenant_root=tenancy.ROOT,
-                  audits=[dict(a) | {"display_actor": users.display_name(a.get("actor", "")),
-                                      "actor_avatar": ("/profile/avatar/" + a.get("actor", "")
-                                                       if users.get_profile(a.get("actor", "")).get("avatar_data") else "")}
-                          for a in users.list_audit(200)],
+                  audits=audits,
                   me=me, me_root=me_root, my_label=roles.LABELS.get(me_role, me_role),
                   assignable=assign, labels=roles.LABELS, levels=roles.LEVEL,
                   can_purge=can_purge, can_switch=me_root or roles.has(me_role, "view_as"))
-
 
 @admin.get("/audit", response_class=HTMLResponse)
 def admin_audit(request: Request, u=Depends(admin_auth)):
@@ -971,7 +911,6 @@ def admin_audit(request: Request, u=Depends(admin_auth)):
         audit_rows.append(row)
     return render("admin_audit.html", request, rows=audit_rows,
                   tenant_root=tenancy.ROOT)
-
 
 @admin.post("/password")
 def admin_password(request: Request, cur: str = Form(""), new: str = Form(""),
@@ -994,7 +933,6 @@ def admin_password(request: Request, cur: str = Form(""), new: str = Form(""),
     _set_cookie(r, COOKIE_ADMIN, tok)
     return r
 
-
 @admin.post("/users/create")
 def admin_create(request: Request, username: str = Form(...), password: str = Form(...),
                  role: str = Form("user"), note: str = Form(""),
@@ -1010,7 +948,6 @@ def admin_create(request: Request, username: str = Form(...), password: str = Fo
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
 
-
 @admin.post("/users/{target}/password")
 def admin_setpw(request: Request, target: str, password: str = Form(...),
                 u=Depends(admin_auth)):
@@ -1023,7 +960,6 @@ def admin_setpw(request: Request, target: str, password: str = Form(...),
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
 
-
 @admin.post("/users/{target}/adminpw")
 def admin_set_adminpw(request: Request, target: str, password: str = Form(...),
                       u=Depends(admin_auth)):
@@ -1035,7 +971,6 @@ def admin_set_adminpw(request: Request, target: str, password: str = Form(...),
                                 quote(f"{target} のコンソールPWを設定しました"), 303)
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
-
 
 @admin.post("/users/{target}/role")
 def admin_role(request: Request, target: str, role: str = Form(...),
@@ -1051,7 +986,6 @@ def admin_role(request: Request, target: str, role: str = Form(...),
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
 
-
 @admin.post("/users/{target}/toggle")
 def admin_toggle(request: Request, target: str, u=Depends(admin_auth)):
     me = _guard(request, target, "users.disable")
@@ -1062,7 +996,6 @@ def admin_toggle(request: Request, target: str, u=Depends(admin_auth)):
         return RedirectResponse(ADMIN_PATH + "/", 303)
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
-
 
 @admin.post("/users/{target}/delete")
 def admin_delete(request: Request, target: str, purge: str = Form(""),
@@ -1081,7 +1014,6 @@ def admin_delete(request: Request, target: str, purge: str = Form(""),
     users.audit(me, "admin_delete", {"username": target, "purge": bool(purge)})
     return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{target} を削除しました"), 303)
 
-
 @admin.get("/switch")
 def admin_switch(request: Request, to: str = "", back: str = "/", u=Depends(admin_auth)):
     _perm(request, "view_as")
@@ -1093,13 +1025,10 @@ def admin_switch(request: Request, to: str = "", back: str = "/", u=Depends(admi
         r.delete_cookie("view_as", path="/")
     return r
 
-
 def request_actor(_):
     return tenancy.get_current() or ""
 
-
 app.include_router(admin)
-
 
 # ---------- ダッシュボード ----------
 
@@ -1116,7 +1045,6 @@ def dashboard(request: Request, u=Depends(auth)):
     events = db.q("SELECT * FROM events ORDER BY ts DESC LIMIT 40")
     return render("dashboard.html", request, targets=targets, events=events)
 
-
 # ---------- 特定 ----------
 
 @app.get("/identity", response_class=HTMLResponse)
@@ -1125,7 +1053,6 @@ def identity_page(request: Request, u=Depends(auth)):
     pairs = db.pairs(200)
     return render("identity.html", request, runs=runs, pairs=pairs,
                   candidates=get_cfg().get("candidates", []))
-
 
 @app.post("/identity/run")
 def identity_run(target: str = Form(...), candidates: str = Form(""),
@@ -1169,7 +1096,6 @@ def identity_run(target: str = Form(...), candidates: str = Form(""),
     watcher.run_bg(job)
     return RedirectResponse(f"/runs/{rid}", 303)
 
-
 @app.post("/pair/run")
 def pair_run(pid: int = Form(...), u=Depends(auth)):
     p = db.q1("SELECT * FROM saved_pairs WHERE id=?", (pid,))
@@ -1188,12 +1114,10 @@ def pair_run(pid: int = Form(...), u=Depends(auth)):
     watcher.run_bg(job)
     return RedirectResponse(f"/runs/{rid}", 303)
 
-
 @app.post("/pairs/{pid}/delete")
 def pair_delete(pid: int, u=Depends(auth)):
     db.del_pair(pid)
     return RedirectResponse("/identity", 303)
-
 
 # ---------- 履歴 ----------
 
@@ -1201,7 +1125,6 @@ def pair_delete(pid: int, u=Depends(auth)):
 def runs_page(request: Request, u=Depends(auth)):
     return render("runs.html", request,
                   runs=db.q("SELECT * FROM identity_runs ORDER BY id DESC LIMIT 300"))
-
 
 @app.get("/runs/{rid}", response_class=HTMLResponse)
 def run_detail(rid: int, request: Request, u=Depends(auth)):
@@ -1212,19 +1135,16 @@ def run_detail(rid: int, request: Request, u=Depends(auth)):
     tp = db.q1("SELECT * FROM profiles WHERE user_id=?", (run["target_uid"],))
     return render("run_detail.html", request, run=run, scores=scores, tp=tp)
 
-
 @app.post("/runs/{rid}/delete")
 def run_delete(rid: int, u=Depends(auth)):
     db.delete_run(rid)
     return RedirectResponse("/runs", 303)
-
 
 # ---------- アカウント台帳 ----------
 
 @app.get("/accounts", response_class=HTMLResponse)
 def accounts_page(request: Request, u=Depends(auth)):
     return render("accounts.html", request, rows=db.known(1000))
-
 
 @app.post("/accounts/add")
 def accounts_add(token: str = Form(...), note: str = Form(""),
@@ -1239,7 +1159,6 @@ def accounts_add(token: str = Form(...), note: str = Form(""),
                  deleted=bool(deleted) or identity.is_deleted(db, uid))
     return RedirectResponse("/accounts", 303)
 
-
 @app.post("/accounts/{uid}/archive")
 def accounts_archive(uid: str, u=Depends(auth)):
     def job():
@@ -1250,19 +1169,16 @@ def accounts_archive(uid: str, u=Depends(auth)):
     watcher.run_bg(job)
     return RedirectResponse("/accounts", 303)
 
-
 @app.post("/accounts/{uid}/deleted")
 def accounts_deleted(uid: str, u=Depends(auth)):
     row = db.known_get(uid)
     db.set_known_deleted(uid, not (row and row["deleted"]))
     return RedirectResponse("/accounts", 303)
 
-
 @app.post("/accounts/{uid}/delete")
 def accounts_delete(uid: str, u=Depends(auth)):
     db.del_known(uid)
     return RedirectResponse("/accounts", 303)
-
 
 # ---------- ターゲット ----------
 
@@ -1276,12 +1192,10 @@ def target_detail(uid: str, request: Request, u=Depends(auth)):
         ORDER BY taken_at DESC LIMIT 100""", (uid,))
     return render("target.html", request, uid=uid, p=p, posts=posts, rel=rel, snap=snap)
 
-
 @app.get("/forensics", response_class=HTMLResponse)
 def forensics_page(request: Request, u=Depends(auth)):
     rows = db.q("SELECT * FROM forensics ORDER BY ts DESC LIMIT 300")
     return render("activity.html", request, events=rows, kind="forensics")
-
 
 @app.get("/activity", response_class=HTMLResponse)
 def activity(request: Request, kind: str = "", u=Depends(auth)):
@@ -1292,7 +1206,6 @@ def activity(request: Request, kind: str = "", u=Depends(auth)):
         rows = db.q("SELECT * FROM events ORDER BY ts DESC LIMIT 500")
     return render("activity.html", request, events=rows, kind=kind)
 
-
 @app.get("/dms", response_class=HTMLResponse)
 def dms(request: Request, thread: str = "", u=Depends(auth)):
     threads = db.q("SELECT * FROM dm_threads ORDER BY last_activity_at DESC LIMIT 200")
@@ -1302,12 +1215,10 @@ def dms(request: Request, thread: str = "", u=Depends(auth)):
             ORDER BY timestamp ASC LIMIT 500""", (thread,))
     return render("dms.html", request, threads=threads, msgs=msgs, thread=thread)
 
-
 @app.get("/targets", response_class=HTMLResponse)
 def targets_page(request: Request, u=Depends(auth)):
     return render("targets.html", request, targets=db.targets(),
                   candidates=get_cfg().get("candidates", []))
-
 
 @app.post("/targets/add")
 def targets_add(handle: str = Form(...), u=Depends(auth)):
@@ -1319,7 +1230,6 @@ def targets_add(handle: str = Form(...), u=Depends(auth)):
     db.add_target(uid, h)
     db.add_known(uid, h, source="target")
     return RedirectResponse("/targets", 303)
-
 
 @app.post("/target/{uid}/archive")
 def target_archive(uid: str, u=Depends(auth)):
@@ -1333,7 +1243,6 @@ def target_archive(uid: str, u=Depends(auth)):
     watcher.run_bg(job)
     return RedirectResponse(f"/target/{uid}", 303)
 
-
 @app.post("/target/{uid}/monitor")
 def target_monitor(uid: str, u=Depends(auth)):
     row = db.q1("SELECT monitor FROM targets WHERE user_id=?", (uid,))
@@ -1342,7 +1251,6 @@ def target_monitor(uid: str, u=Depends(auth)):
         c.execute("UPDATE targets SET monitor=? WHERE user_id=?", (newv, uid))
     return RedirectResponse("/targets", 303)
 
-
 @app.post("/candidates/add")
 def candidates_add(handle: str = Form(...), u=Depends(auth)):
     h = handle.strip().lstrip("@")
@@ -1350,7 +1258,6 @@ def candidates_add(handle: str = Form(...), u=Depends(auth)):
     if h and h not in cur:
         config.save_sections({"candidates": cur + [h]})
     return RedirectResponse("/targets", 303)
-
 
 # ---------- 設定 ----------
 
@@ -1369,7 +1276,6 @@ def _coerce(old, new):
             return old
     return new
 
-
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
     cfg = get_cfg()
@@ -1381,7 +1287,6 @@ def settings_page(request: Request, msg: str = "", err: str = "", u=Depends(auth
                   targets="\n".join(cfg.get("targets", [])),
                   candidates="\n".join(cfg.get("candidates", [])),
                   msg=msg, err=err, ig_state=_IG_STATE, backup=persist.state())
-
 
 @app.post("/settings")
 async def settings_save(request: Request, u=Depends(auth)):
@@ -1418,7 +1323,6 @@ async def settings_save(request: Request, u=Depends(auth)):
     persist.push_user(u, force=True)
     return RedirectResponse("/settings?msg=" + quote("設定を保存しました"), 303)
 
-
 @app.post("/ig/test")
 def ig_test(u=Depends(auth)):
     try:
@@ -1427,13 +1331,11 @@ def ig_test(u=Depends(auth)):
     except Exception as e:
         return RedirectResponse("/settings?err=" + quote(repr(e)), 303)
 
-
 @app.post("/ig/boot")
 def ig_boot_route(u=Depends(auth)):
     _IG_STATE["ok"] = False
     threading.Thread(target=_ig_boot, kwargs={"force": True}, daemon=True).start()
     return RedirectResponse("/settings?msg=" + quote("Instagram再接続を開始しました"), 303)
-
 
 @app.post("/ig/login")
 def ig_login(user: str = Form(""), password: str = Form(""), u=Depends(auth)):
@@ -1455,7 +1357,6 @@ def ig_login(user: str = Form(""), password: str = Form(""), u=Depends(auth)):
     except Exception as e:
         return RedirectResponse("/settings?err=" + quote(repr(e)), 303)
 
-
 @app.post("/ig/logout")
 def ig_logout(u=Depends(auth)):
     sf = get_cfg()["instagram"]["session_file"]
@@ -1470,13 +1371,11 @@ def ig_logout(u=Depends(auth)):
     persist.push_user(u, force=True)
     return RedirectResponse("/settings?msg=" + quote("ログアウトしました"), 303)
 
-
 # ---------- SNS横断検索 ----------
 
 @app.get("/sns", response_class=HTMLResponse)
 def sns_page(request: Request, u=Depends(auth)):
     return render("sns.html", request, scans=db.scans(100), cats=snscheck.CATS)
-
 
 @app.post("/sns/scan")
 def sns_scan(username: str = Form(...), cats: list[str] = Form([]), u=Depends(auth)):
@@ -1502,7 +1401,6 @@ def sns_scan(username: str = Form(...), cats: list[str] = Form([]), u=Depends(au
     watcher.run_bg(job)
     return RedirectResponse(f"/sns/{sid}", 303)
 
-
 @app.get("/sns/{sid}", response_class=HTMLResponse)
 def sns_result(sid: int, request: Request, u=Depends(auth)):
     sc = db.scan(sid)
@@ -1511,12 +1409,10 @@ def sns_result(sid: int, request: Request, u=Depends(auth)):
     hits = [dict(r) for r in db.sns_hits(sid)]
     return render("sns_result.html", request, sc=sc, hits=hits)
 
-
 @app.post("/sns/{sid}/delete")
 def sns_delete(sid: int, u=Depends(auth)):
     db.del_scan(sid)
     return RedirectResponse("/sns", 303)
-
 
 @app.post("/sns/{sid}/avatars")
 def sns_avatars(sid: int, u=Depends(auth)):
@@ -1529,7 +1425,6 @@ def sns_avatars(sid: int, u=Depends(auth)):
                 db.upsert_avatar("sns", r["username"], r["site"], r["og_image"], ph)
     watcher.run_bg(job)
     return RedirectResponse(f"/sns/{sid}?msg=" + quote("アイコン照合を開始しました"), 303)
-
 
 @app.get("/avatars", response_class=HTMLResponse)
 def avatars_page(request: Request, u=Depends(auth)):
@@ -1548,11 +1443,9 @@ def avatars_page(request: Request, u=Depends(auth)):
     gs.sort(key=lambda g: -len(g))
     return render("avatars.html", request, groups=gs, total=len(rows))
 
-
 @app.get("/gravatar", response_class=HTMLResponse)
 def gravatar_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)):
     return render("gravatar.html", request, rows=db.gravatars(200), msg=msg, err=err)
-
 
 @app.post("/gravatar")
 def gravatar_lookup(email: str = Form(...), u=Depends(auth)):
@@ -1562,19 +1455,16 @@ def gravatar_lookup(email: str = Form(...), u=Depends(auth)):
     db.add_gravatar(d)
     return RedirectResponse("/gravatar?msg=" + quote("取得しました"), 303)
 
-
 @app.post("/gravatar/{gid}/delete")
 def gravatar_del(gid: int, u=Depends(auth)):
     db.del_gravatar(gid)
     return RedirectResponse("/gravatar", 303)
-
 
 # ---------- キャンペーン / 一斉操作 ----------
 
 @app.get("/campaigns", response_class=HTMLResponse)
 def campaigns_page(request: Request, u=Depends(auth)):
     return render("campaigns.html", request, camps=db.campaigns(200), base=_base(request))
-
 
 @app.post("/campaigns/add")
 def campaigns_add(name: str = Form(...), handles: str = Form(""), message: str = Form(""),
@@ -1585,7 +1475,6 @@ def campaigns_add(name: str = Form(...), handles: str = Form(""), message: str =
     persist.push_user(u, force=True)
     return RedirectResponse(f"/campaign/{cid}", 303)
 
-
 @app.get("/campaign/{cid}", response_class=HTMLResponse)
 def campaign_detail(cid: int, request: Request, u=Depends(auth)):
     c = db.campaign(cid)
@@ -1594,7 +1483,6 @@ def campaign_detail(cid: int, request: Request, u=Depends(auth)):
     rows = campaign.match(db, cid)
     hit = sum(1 for r in rows if r["hits"])
     return render("campaign_detail.html", request, c=c, rows=rows, hit=hit, base=_base(request))
-
 
 @app.post("/campaign/{cid}/send")
 def campaign_send(cid: int, request: Request, delay: float = Form(8.0),
@@ -1610,7 +1498,6 @@ def campaign_send(cid: int, request: Request, delay: float = Form(8.0),
     watcher.run_bg(job)
     return RedirectResponse(f"/campaign/{cid}", 303)
 
-
 @app.post("/campaign/{cid}/delete")
 def campaign_del(cid: int, u=Depends(auth)):
     for r in db.q("SELECT code FROM campaign_targets WHERE campaign_id=?", (cid,)):
@@ -1619,11 +1506,9 @@ def campaign_del(cid: int, u=Depends(auth)):
     db.del_campaign(cid)
     return RedirectResponse("/campaigns", 303)
 
-
 @app.get("/tools", response_class=HTMLResponse)
 def tools_page(request: Request, u=Depends(auth)):
     return render("tools.html", request)
-
 
 @app.post("/tools/follow")
 def tools_follow(handles: str = Form(...), delay: float = Form(6.0),
@@ -1633,13 +1518,11 @@ def tools_follow(handles: str = Form(...), delay: float = Form(6.0),
         watcher.run_bg(lambda: campaign.bulk_follow(hs, delay=delay, unfollow=bool(unfollow)))
     return RedirectResponse("/tools", 303)
 
-
 @app.post("/tools/like")
 def tools_like(username: str = Form(...), amount: int = Form(12),
                delay: float = Form(5.0), u=Depends(auth)):
     watcher.run_bg(lambda: campaign.bulk_like(username, amount=amount, delay=delay))
     return RedirectResponse("/tools", 303)
-
 
 @app.post("/tools/comment")
 def tools_comment(target: str = Form(...), text: str = Form(...),
@@ -1647,14 +1530,12 @@ def tools_comment(target: str = Form(...), text: str = Form(...),
     watcher.run_bg(lambda: campaign.bulk_comment(target, text, delay=delay))
     return RedirectResponse("/tools", 303)
 
-
 @app.post("/tools/archive")
 def tools_archive(handles: str = Form(...), u=Depends(auth)):
     hs = [h.strip() for h in handles.replace(",", "\n").splitlines() if h.strip()]
     if hs:
         watcher.run_bg(lambda: campaign.bulk_archive(db, hs))
     return RedirectResponse("/tools", 303)
-
 
 # ---------- リンク追跡（公開ルート） ----------
 
@@ -1687,11 +1568,9 @@ def _record_hit(request: Request, code: str):
     db.bump_link(code)
     return hid
 
-
 def now_iso():
     import datetime as _dt
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
-
 
 def _bind_owner(code):
     owner = users.owner_of_link(code)
@@ -1699,7 +1578,6 @@ def _bind_owner(code):
         tenancy.set_current(owner)
         persist.touch(owner, interval=persist.cfg()["every_hit"])
     return owner
-
 
 @app.get("/l/{code}")
 def link_hit(code: str, request: Request):
@@ -1737,7 +1615,6 @@ def link_hit(code: str, request: Request):
 
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
                   dest=link["dest"] or "", nonce=nonce)
-
 
 @app.post("/l/{code}/x")
 async def link_extra(code: str, request: Request):
@@ -1792,7 +1669,6 @@ async def link_extra(code: str, request: Request):
             pubkey=str(body.get("pubkey") or "")[:512])
     return {"ok": True, "vid": vid}
 
-
 @app.post("/l/{code}/a")
 async def link_answer(code: str, request: Request):
     if not _bind_owner(code):
@@ -1828,7 +1704,6 @@ async def link_answer(code: str, request: Request):
         reveal = q["reveal"] or ""
     return {"ok": True, "correct": ok, "reveal": reveal}
 
-
 @app.post("/l/{code}/done")
 async def link_done(code: str, request: Request):
     if not _bind_owner(code):
@@ -1847,7 +1722,6 @@ async def link_done(code: str, request: Request):
                                      "total": body.get("total")})
     return {"ok": True}
 
-
 @app.get("/l/{code}/go")
 def link_go(code: str):
     if not _bind_owner(code):
@@ -1857,14 +1731,12 @@ def link_go(code: str):
         raise HTTPException(404)
     return RedirectResponse(link["dest"] or "/", 302)
 
-
 @app.get("/link/me", response_class=HTMLResponse)
 def link_me(request: Request):
     ip = linktrack.client_ip(request)
     ua = request.headers.get("user-agent", "")
     return render("link_me.html", request, ip=ip, ua=ua,
                   p=linktrack.parse_ua(ua), g=linktrack.geo(ip))
-
 
 # ---------- リンク管理 ----------
 
@@ -1874,7 +1746,6 @@ def _new_code(n=8):
         if not users.owner_of_link(c):
             return c
     return secrets.token_urlsafe(8)
-
 
 def _create_link(name, dest, note, mode, u):
     code = _new_code()
@@ -1889,11 +1760,9 @@ def _create_link(name, dest, note, mode, u):
     persist.push_user(u, force=True)
     return code, m
 
-
 @app.get("/links", response_class=HTMLResponse)
 def links_page(request: Request, u=Depends(auth)):
     return render("links.html", request, links=db.links(500), base=_base(request))
-
 
 @app.post("/links/add")
 def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
@@ -1901,7 +1770,6 @@ def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
     # 直接POST → 作成完了ページへ（詳細ページには飛ばさない）
     code, _ = _create_link(name, dest, note, mode, u)
     return RedirectResponse(f"/links/created/{code}", 303)
-
 
 @app.get("/links/created/{code}", response_class=HTMLResponse)
 def link_created(code: str, request: Request, u=Depends(auth)):
@@ -1911,7 +1779,6 @@ def link_created(code: str, request: Request, u=Depends(auth)):
     base = _base(request)
     return render("link_created.html", request, link=link, base=base,
                   url=f"{base}/l/{code}")
-
 
 @app.post("/links/add.json")
 def links_add_json(request: Request, name: str = Form(""), dest: str = Form(""),
@@ -1925,7 +1792,6 @@ def links_add_json(request: Request, name: str = Form(""), dest: str = Form(""),
         "dest": dest.strip(),
         "url": f"{_base(request)}/l/{code}",
     })
-
 
 @app.get("/link/{code}", response_class=HTMLResponse)
 def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
@@ -1951,14 +1817,12 @@ def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
                   qs=db.questions(code), fp_counts=dict(fp_counts),
                   vlabels={v["vid"]: (v["label"] or "") for v in db.visitors(500)})
 
-
 @app.post("/link/{code}/toggle")
 def link_toggle(code: str, u=Depends(auth)):
     l = db.link_get(code)
     if l:
         db.set_link_active(code, not l["active"])
     return RedirectResponse(f"/link/{code}", 303)
-
 
 @app.post("/link/{code}/delete")
 def link_delete(code: str, u=Depends(auth)):
@@ -1967,12 +1831,10 @@ def link_delete(code: str, u=Depends(auth)):
     persist.push_user(u, force=True)
     return RedirectResponse("/links", 303)
 
-
 @app.post("/link/{code}/hits/clear")
 def link_clear(code: str, u=Depends(auth)):
     db.del_hits(code)
     return RedirectResponse(f"/link/{code}", 303)
-
 
 @app.post("/link/{code}/hit/{hid}/bot")
 def link_hit_bot(code: str, hid: int, u=Depends(auth)):
@@ -1980,7 +1842,6 @@ def link_hit_bot(code: str, hid: int, u=Depends(auth)):
     if row:
         db.update_hit(hid, is_bot=0 if row["is_bot"] else 1)
     return RedirectResponse(f"/link/{code}?bots=1", 303)
-
 
 @app.get("/link/{code}/qr.png")
 def link_qr(code: str, request: Request):
@@ -1997,7 +1858,6 @@ def link_qr(code: str, request: Request):
     return Response(buf.getvalue(), media_type="image/png",
                     headers={"Cache-Control": "no-store"})
 
-
 # ---------- クイズ編集 / 訪問者 / 一緒解析 ----------
 
 @app.get("/link/{code}/questions", response_class=HTMLResponse)
@@ -2007,7 +1867,6 @@ def link_questions(code: str, request: Request, u=Depends(auth)):
         raise HTTPException(404)
     return render("link_questions.html", request, link=link, qs=db.questions(code),
                   base=_base(request))
-
 
 @app.post("/link/{code}/questions/add")
 def link_questions_add(code: str, prompt: str = Form(...), qtype: str = Form("choice"),
@@ -2026,17 +1885,14 @@ def link_questions_add(code: str, prompt: str = Form(...), qtype: str = Form("ch
                     rows, answer_key, reveal)
     return RedirectResponse(f"/link/{code}/questions", 303)
 
-
 @app.post("/link/{code}/questions/{qid}/delete")
 def link_questions_del(code: str, qid: int, u=Depends(auth)):
     db.del_question(qid)
     return RedirectResponse(f"/link/{code}/questions", 303)
 
-
 @app.get("/visitors", response_class=HTMLResponse)
 def visitors_page(request: Request, u=Depends(auth)):
     return render("visitors.html", request, rows=db.visitors(500))
-
 
 @app.get("/visitor/{vid}", response_class=HTMLResponse)
 def visitor_detail(vid: str, request: Request, u=Depends(auth)):
@@ -2048,12 +1904,10 @@ def visitor_detail(vid: str, request: Request, u=Depends(auth)):
                   near=together.for_visitor(db, vid),
                   same_dev=same_dev, dev_stat=dev_stat)
 
-
 @app.post("/visitor/{vid}/label")
 def visitor_label(vid: str, label: str = Form(""), note: str = Form(""), u=Depends(auth)):
     db.set_visitor_label(vid, label, note)
     return RedirectResponse(f"/visitor/{vid}", 303)
-
 
 @app.get("/together", response_class=HTMLResponse)
 def together_page(request: Request, code: str = "", window: int = 6,
@@ -2063,7 +1917,6 @@ def together_page(request: Request, code: str = "", window: int = 6,
                            min_score=max(0.0, min(float(minscore), 1.0)))
     return render("together.html", request, res=res, code=code,
                   window=window, minscore=minscore, links=db.links(500))
-
 
 # ---------- API ----------
 
@@ -2081,29 +1934,24 @@ def api_summary(u=Depends(auth)):
         "events": db.q1("SELECT COUNT(*) c FROM events")["c"],
     }
 
-
 @app.get("/api/events")
 def api_events(limit: int = 500, u=Depends(auth)):
     return [dict(r) for r in db.q("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,))]
 
-
 @app.get("/api/ig_state")
 def api_ig_state(u=Depends(auth)):
     return dict(_IG_STATE)
-
 
 @app.get("/api/sns")
 def api_sns(username: str, cats: str = "", u=Depends(auth)):
     cs = [c for c in cats.split(",") if c] or None
     return snscheck.scan(username, cats=cs)
 
-
 @app.get("/api/together")
 def api_together(code: str = "", window: int = 6, minscore: float = 0.35, u=Depends(auth)):
     return together.analyze(db, code=code or None,
                             window_h=max(1, min(int(window), 72)),
                             min_score=max(0.0, min(float(minscore), 1.0)))
-
 
 @app.get("/export.json")
 def export_json(u=Depends(auth)):
@@ -2115,7 +1963,6 @@ def export_json(u=Depends(auth)):
         "runs": [dict(r) for r in db.q("SELECT * FROM identity_runs")],
         "scores": [dict(r) for r in db.q("SELECT * FROM identity_scores")],
     }
-
 
 @app.post("/import")
 async def import_json(request: Request, u=Depends(auth)):
@@ -2134,7 +1981,6 @@ async def import_json(request: Request, u=Depends(auth)):
     for p in doc.get("profiles", []):
         db.upsert_profile(p)
     return RedirectResponse("/accounts", 303)
-
 
 # ---------- CORS（file:// で開かれた感染体＝オフラインUSBから叩けるようにする） ----------
 # add_middleware はリスト先頭に挿入されるため、ここで最後に足した CORS が最外周になる。
