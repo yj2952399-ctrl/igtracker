@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS users (
     disabled INTEGER DEFAULT 0, must_change INTEGER DEFAULT 0,
     created_at TEXT, last_login TEXT, note TEXT
 );
+CREATE TABLE IF NOT EXISTS profiles (
+    username TEXT PRIMARY KEY,
+    display_name TEXT DEFAULT '',
+    avatar_data BLOB,
+    avatar_mime TEXT DEFAULT '',
+    updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS sessions (
     sid TEXT PRIMARY KEY, username TEXT, realm TEXT DEFAULT 'user',
     epoch INTEGER DEFAULT 0, created_at TEXT, last_seen TEXT, expires_at TEXT,
@@ -165,6 +172,65 @@ def list_usernames(include_disabled=False):
         sql += " WHERE disabled=0"
     with _lock:
         return [r["username"] for r in _c().execute(sql + " ORDER BY username").fetchall()]
+
+
+def get_profile(u):
+    """公開プロフィール情報。ログインIDと表示名は分離して管理する。"""
+    u = norm(u)
+    with _lock:
+        row = _c().execute(
+            "SELECT username,display_name,avatar_mime,avatar_data,updated_at "
+            "FROM profiles WHERE username=?", (u,)).fetchone()
+    if row:
+        return dict(row)
+    return {"username": u, "display_name": "", "avatar_mime": "", "avatar_data": None,
+            "updated_at": None}
+
+
+def display_name(u):
+    p = get_profile(u)
+    return (p.get("display_name") or "").strip() or norm(u)
+
+
+def update_profile(u, display_name_value):
+    u = norm(u)
+    name = (display_name_value or "").strip()
+    if len(name) > 40:
+        raise ValueError("表示名は40文字以内にしてください")
+    if any(ord(ch) < 32 for ch in name):
+        raise ValueError("表示名に制御文字は使用できません")
+    if not get(u):
+        raise ValueError("ユーザーが見つかりません")
+    with _lock:
+        _c().execute("""INSERT INTO profiles(username,display_name,updated_at)
+            VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET
+            display_name=excluded.display_name, updated_at=excluded.updated_at""",
+            (u, name, now()))
+        _c().commit()
+    audit(u, "profile_name_changed", {"display_name": name})
+
+
+def update_avatar(u, data, mime):
+    u = norm(u)
+    if not get(u):
+        raise ValueError("ユーザーが見つかりません")
+    with _lock:
+        _c().execute("""INSERT INTO profiles(username,avatar_data,avatar_mime,updated_at)
+            VALUES(?,?,?,?) ON CONFLICT(username) DO UPDATE SET
+            avatar_data=excluded.avatar_data, avatar_mime=excluded.avatar_mime,
+            updated_at=excluded.updated_at""", (u, sqlite3.Binary(data), mime, now()))
+        _c().commit()
+    audit(u, "profile_avatar_changed", {"mime": mime, "bytes": len(data)})
+
+
+def clear_avatar(u):
+    u = norm(u)
+    with _lock:
+        _c().execute("""INSERT INTO profiles(username,updated_at) VALUES(?,?)
+            ON CONFLICT(username) DO UPDATE SET avatar_data=NULL,avatar_mime='',updated_at=excluded.updated_at""",
+            (u, now()))
+        _c().commit()
+    audit(u, "profile_avatar_removed", {})
 
 
 def count():
@@ -301,6 +367,7 @@ def delete(u):
     with _lock:
         c = _c()
         c.execute("DELETE FROM users WHERE username=?", (u,))
+        c.execute("DELETE FROM profiles WHERE username=?", (u,))
         c.execute("DELETE FROM sessions WHERE username=?", (u,))
         c.commit()
     audit(u, "delete", {})

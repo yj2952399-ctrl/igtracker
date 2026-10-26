@@ -202,8 +202,12 @@ def _decorate(rows, me):
             d["other"] = ""
         else:
             other = next((x for x in m if x != me), me)
-            d["title"] = other
+            d["title"] = _u().display_name(other)
             d["other"] = other
+            prof = _u().get_profile(other)
+            d["avatar"] = ("/profile/avatar/" + other) if prof.get("avatar_data") else ""
+        if d.get("last_user"):
+            d["last_user_display"] = _u().display_name(d["last_user"])
         out.append(d)
     return out
 
@@ -372,6 +376,12 @@ def _out(rows, me):
         d = dict(r)
         d["mine"] = (d["user"] == me)
         d["deleted"] = bool(d["deleted"])
+        try:
+            profile = _u().get_profile(d["user"])
+            d["display_name"] = (profile.get("display_name") or "").strip() or d["user"]
+            d["avatar"] = ("/profile/avatar/" + d["user"]) if profile.get("avatar_data") else ""
+        except Exception:
+            d["display_name"], d["avatar"] = d["user"], ""
         out.append(d)
     return out
 
@@ -383,7 +393,8 @@ def _title_of(tid, me):
     if t["kind"] == "group":
         return t["name"] or "グループ"
     ms = _members(tid)
-    return next((x for x in ms if x != me), me)
+    other = next((x for x in ms if x != me), me)
+    return _u().display_name(other)
 
 
 # ---------------- 画面 ----------------
@@ -404,7 +415,9 @@ def thread_page(tid: int, request: Request, u=Depends(_auth)):
     _mark_read(tid, u)
     mem = _members(tid)
     labels = _r().LABELS
-    members = [{"name": n, "label": labels.get(_u().role_of(n), ""),
+    members = [{"name": n, "display_name": _u().display_name(n),
+                "avatar": ("/profile/avatar/" + n) if _u().get_profile(n).get("avatar_data") else "",
+                "label": labels.get(_u().role_of(n), ""),
                 "root": _u().is_root(n)} for n in mem]
     my = _member(tid, u)
     return _m().render("dm_thread.html", request,
@@ -447,9 +460,13 @@ def api_search(request: Request, q: str = "", limit: int = 60, u=Depends(_auth))
     for name in _u().list_usernames():
         if name == me:
             continue
-        if q and q not in name:
+        profile = _u().get_profile(name)
+        shown = (profile.get("display_name") or "").strip()
+        if q and q not in name and q not in shown.lower():
             continue
         rows.append({"name": name,
+                     "display_name": (profile.get("display_name") or "").strip() or name,
+                     "avatar": ("/profile/avatar/" + name) if profile.get("avatar_data") else "",
                      "label": _r().LABELS.get(_u().role_of(name), ""),
                      "lvl": _r().level(_u().role_of(name))})
     rows.sort(key=lambda r: (-r["lvl"], r["name"]))

@@ -142,8 +142,27 @@ def messages(request: Request, since: int = 0, u=Depends(_auth)):
         d = dict(r)
         d["mine"] = (d["user"] == u)
         d["deleted"] = bool(d["deleted"])
+        d.update(_profile_fields(d["user"]))
         out.append(d)
-    return {"ok": True, "msgs": out, "online": _online(), "now": _now()}
+    online_names = _online()
+    online_users = [{"username": n, **_profile_fields(n)} for n in online_names]
+    return {"ok": True, "msgs": out, "online": online_names,
+            "online_users": online_users, "now": _now()}
+
+
+@router.get("/chat/api/heartbeat")
+def heartbeat(request: Request, u=Depends(_auth)):
+    _touch_online(u, request.headers.get("user-agent", ""))
+    return {"ok": True, "online": len(_online(limit=10000))}
+
+
+def _profile_fields(username):
+    try:
+        p = _m().users.get_profile(username)
+        return {"display_name": (p.get("display_name") or "").strip() or username,
+                "avatar": ("/profile/avatar/" + username) if p.get("avatar_data") else ""}
+    except Exception:
+        return {"display_name": username, "avatar": ""}
 
 
 @router.get("/chat/api/online")

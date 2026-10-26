@@ -178,6 +178,8 @@ def _ig_boot_loop():
 def render(name, request, **ctx):
     ctx["request"] = request
     ctx["me"] = getattr(request.state, "user_name", None)
+    ctx["profile_name"] = users.display_name(ctx["me"]) if ctx["me"] else ""
+    ctx["profile"] = users.get_profile(ctx["me"]) if ctx["me"] else {}
     ctx["real_user"] = getattr(request.state, "real_user", None)
     ctx["is_admin"] = getattr(request.state, "is_admin", False)
     ctx["admin_realm"] = getattr(request.state, "admin_ok", False)
@@ -609,7 +611,92 @@ def account_page(request: Request, msg: str = "", err: str = "", u=Depends(auth)
                   breakglass=bool(users.env_breakglass()),
                   sessions=sess, admin_sessions=adms,
                   session_days=users.SESSION_DAYS,
-                  backup=persist.state(), my_backup=persist.user_state(u))
+                  backup=persist.state(), my_backup=persist.user_state(u),
+                  profile=users.get_profile(real), display_name=users.display_name(real))
+
+
+@app.post("/account/profile")
+async def account_profile(request: Request, u=Depends(auth)):
+    real = request.state.real_user
+    form = await request.form()
+    name = str(form.get("display_name") or "")
+    try:
+        users.update_profile(real, name)
+    except ValueError as e:
+        return RedirectResponse("/account?err=" + quote(str(e)), 303)
+    return RedirectResponse("/account?msg=" + quote("表示名を保存しました"), 303)
+
+
+@app.post("/account/avatar")
+async def account_avatar(request: Request, u=Depends(auth)):
+    real = request.state.real_user
+    form = await request.form()
+    upload = form.get("avatar")
+    if not upload or not hasattr(upload, "read"):
+        return RedirectResponse("/account?err=" + quote("画像ファイルを選択してください"), 303)
+    data = await upload.read(2 * 1024 * 1024 + 1)
+    if not data:
+        return RedirectResponse("/account?err=" + quote("画像ファイルが空です"), 303)
+    if len(data) > 2 * 1024 * 1024:
+        return RedirectResponse("/account?err=" + quote("画像は2MB以下にしてください"), 303)
+    mime = ""
+    if data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+        mime = "image/png"
+    elif data.startswith(b"\\xff\\xd8\\xff"):
+        mime = "image/jpeg"
+    elif data.startswith((b"GIF87a", b"GIF89a")):
+        mime = "image/gif"
+    elif len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        mime = "image/webp"
+    if not mime:
+        return RedirectResponse("/account?err=" + quote("PNG/JPEG/GIF/WebP画像のみ設定できます"), 303)
+    users.update_avatar(real, data, mime)
+    return RedirectResponse("/account?msg=" + quote("アイコンを保存しました"), 303)
+
+
+@app.post("/account/avatar/delete")
+def account_avatar_delete(request: Request, u=Depends(auth)):
+    users.clear_avatar(request.state.real_user)
+    return RedirectResponse("/account?msg=" + quote("アイコンを削除しました"), 303)
+
+
+@app.get("/profile/avatar/{username}")
+def profile_avatar(username: str, u=Depends(auth)):
+    profile = users.get_profile(username)
+    data = profile.get("avatar_data")
+    mime = profile.get("avatar_mime") or ""
+    if not data or mime not in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+        raise HTTPException(404, "avatar not found")
+    return Response(content=bytes(data), media_type=mime,
+                    headers={"Cache-Control": "private, max-age=300",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/members/count")
+def members_count(u=Depends(auth)):
+    return {"ok": True, "count": len(users.list_usernames())}
+
+
+@app.get("/members", response_class=HTMLResponse)
+def members_page(request: Request, online: int = 0, u=Depends(auth)):
+    names = users.list_usernames()
+    try:
+        from . import chat
+        online_names = set(chat._online(limit=10000))
+    except Exception:
+        online_names = set()
+    rows = []
+    for name in names:
+        profile = users.get_profile(name)
+        rows.append({"username": name, "display_name": users.display_name(name),
+                     "has_avatar": bool(profile.get("avatar_data")),
+                     "online": name in online_names,
+                     "role_label": roles.LABELS.get(users.role_of(name), "")})
+    rows.sort(key=lambda r: (not r["online"], r["display_name"].lower()))
+    if online:
+        rows = [r for r in rows if r["online"]]
+    return render("members.html", request, rows=rows, online_only=bool(online),
+                  member_count=len(names), online_count=len(online_names))
 
 
 @app.post("/account/password")
@@ -846,6 +933,9 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
             d["visitors"] = tdb.q1("SELECT COUNT(*) c FROM visitors")["c"]
         except Exception:
             d["targets"] = d["known"] = d["links"] = d["hits"] = d["visitors"] = "-"
+        prof = users.get_profile(r["username"])
+        d["display_name"] = users.display_name(r["username"])
+        d["avatar"] = ("/profile/avatar/" + r["username"]) if prof.get("avatar_data") else ""
         d["ig_user"] = config.load(t).get("instagram", {}).get("username") or ""
         d["size_mb"] = round(_tenant_size(t) / 1048576, 2)
         d["sessions"] = len(users.list_sessions(r["username"], "user"))
@@ -860,7 +950,10 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
                   env_user=users.env_admin()[0],
                   breakglass=bool(users.env_breakglass()),
                   tenant_root=tenancy.ROOT,
-                  audits=users.list_audit(200),
+                  audits=[dict(a) | {"display_actor": users.display_name(a.get("actor", "")),
+                                      "actor_avatar": ("/profile/avatar/" + a.get("actor", "")
+                                                       if users.get_profile(a.get("actor", "")).get("avatar_data") else "")}
+                          for a in users.list_audit(200)],
                   me=me, me_root=me_root, my_label=roles.LABELS.get(me_role, me_role),
                   assignable=assign, labels=roles.LABELS, levels=roles.LEVEL,
                   can_purge=can_purge, can_switch=me_root or roles.has(me_role, "view_as"))
@@ -869,7 +962,14 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
 @admin.get("/audit", response_class=HTMLResponse)
 def admin_audit(request: Request, u=Depends(admin_auth)):
     _perm(request, "audit.view")
-    return render("admin_audit.html", request, rows=users.list_audit(1000),
+    audit_rows = []
+    for item in users.list_audit(1000):
+        row = dict(item)
+        row["display_actor"] = users.display_name(row.get("actor", ""))
+        row["actor_avatar"] = ("/profile/avatar/" + row["actor"]
+                               if users.get_profile(row.get("actor", "")).get("avatar_data") else "")
+        audit_rows.append(row)
+    return render("admin_audit.html", request, rows=audit_rows,
                   tenant_root=tenancy.ROOT)
 
 
