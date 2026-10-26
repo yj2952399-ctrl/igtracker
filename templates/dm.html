@@ -1,0 +1,176 @@
+{% extends "base.html" %}{% block title %}💬 DM{% endblock %}{% block content %}
+<h1>💬 DM / グループチャット</h1>
+<p class="dim">相手はユーザー一覧から検索して選べます。各スレッドの 🔔/🔕 で通知のON/OFF。
+  スレッド内の「招待コード」を渡せばグループに参加できます。</p>
+
+<div class="card">
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <input id="q" placeholder="ユーザー検索（名前の一部）" style="flex:1;min-width:170px"
+           autocomplete="off">
+    <button id="newg" type="button">＋ グループ作成</button>
+    <button id="notif" type="button" class="mini">🔔 通知を許可</button>
+    <button id="reload" type="button" class="mini">↻</button>
+  </div>
+  <div id="hits" class="dim" style="font-size:13px;margin-top:8px"></div>
+
+  <div id="gform" style="display:none;margin-top:10px;border-top:1px solid #262b36;padding-top:10px">
+    <input id="gname" placeholder="グループ名（例: 捜査本部）" style="width:100%" maxlength="60">
+    <div class="dim" style="font-size:12px;margin:6px 0">
+      メンバー（上の検索結果の「＋」で追加 / 自分は自動で入ります）</div>
+    <div id="chips"></div>
+    <button id="gmake" type="button" style="margin-top:8px">作成</button>
+    <button id="gcancel" type="button" class="mini">やめる</button>
+    <div class="dim" id="gstat" style="font-size:12px;min-height:16px"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div id="list" class="dim" style="font-size:14px">読み込み中…</div>
+</div>
+
+<div class="dim" style="font-size:12px">
+  参加コード入力: <input id="jcode" placeholder="コード" style="width:110px">
+  <button id="jgo" type="button" class="mini">参加</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var q = document.getElementById('q'), hits = document.getElementById('hits'),
+      list = document.getElementById('list'), chips = {}, gform = document.getElementById('gform'),
+      chipBox = document.getElementById('chips'), gstat = document.getElementById('gstat');
+  var timer = null;
+
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+  function api(url, body) {
+    return fetch(url, {
+      method: body ? 'POST' : 'GET',
+      headers: body ? { 'Content-Type': 'application/json' } : { 'Accept': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json(); });
+  }
+
+  /* ---- 通知許可 ---- */
+  var nb = document.getElementById('notif');
+  function paint() {
+    if (!('Notification' in window)) { nb.textContent = '🔕 非対応'; return; }
+    nb.textContent = Notification.permission === 'granted' ? '🔔 通知ON'
+      : (Notification.permission === 'denied' ? '🔕 拒否' : '🔔 通知を許可');
+  }
+  nb.onclick = function () {
+    if (!('Notification' in window)) return;
+    Notification.requestPermission().then(paint);
+  };
+  paint();
+
+  /* ---- ユーザー検索 ---- */
+  function drawHits(users) {
+    if (!users.length) { hits.innerHTML = '<span>該当なし</span>'; return; }
+    hits.innerHTML = '';
+    users.forEach(function (u) {
+      var row = document.createElement('div');
+      row.style.cssText = 'padding:4px 2px;border-bottom:1px solid #1c2029';
+      row.innerHTML = '<b>' + esc(u.name) + '</b>' +
+        (u.label ? ' <span class="dim" style="font-size:11px">(' + esc(u.label) + ')</span>' : '');
+      var dm = document.createElement('button');
+      dm.textContent = 'DM'; dm.className = 'mini'; dm.style.marginLeft = '8px';
+      dm.onclick = function () {
+        api('/dm/api/start', { user: u.name }).then(function (j) {
+          if (j && j.ok) location.href = '/dm/t/' + j.id;
+        });
+      };
+      var add = document.createElement('button');
+      add.textContent = '＋'; add.className = 'mini'; add.style.marginLeft = '4px';
+      add.onclick = function () { chips[u.name] = 1; drawChips(); gform.style.display = ''; };
+      row.appendChild(dm); row.appendChild(add);
+      hits.appendChild(row);
+    });
+  }
+  function search() {
+    api('/dm/search?q=' + encodeURIComponent(q.value)).then(function (j) {
+      if (j && j.ok) drawHits(j.users || []);
+    });
+  }
+  q.addEventListener('input', function () {
+    clearTimeout(timer); timer = setTimeout(search, 200);
+  });
+
+  function drawChips() {
+    chipBox.innerHTML = '';
+    Object.keys(chips).forEach(function (n) {
+      var s = document.createElement('span');
+      s.style.cssText = 'display:inline-block;background:#243049;border:1px solid #35405a;' +
+        'border-radius:999px;padding:2px 9px;margin:2px;font-size:12px';
+      s.innerHTML = esc(n) + ' <a href="#" data-x="' + esc(n) + '" style="color:#8fb4ff;text-decoration:none">×</a>';
+      chipBox.appendChild(s);
+    });
+  }
+  chipBox.onclick = function (e) {
+    var a = e.target && e.target.getAttribute && e.target.getAttribute('data-x');
+    if (a) { delete chips[a]; drawChips(); e.preventDefault(); }
+  };
+
+  document.getElementById('newg').onclick = function () {
+    gform.style.display = gform.style.display === 'none' ? '' : 'none';
+    if (gform.style.display === '') q.focus();
+  };
+  document.getElementById('gcancel').onclick = function () {
+    gform.style.display = 'none'; chips = {}; drawChips();
+  };
+  document.getElementById('gmake').onclick = function () {
+    var nm = document.getElementById('gname').value.trim();
+    gstat.textContent = '';
+    api('/dm/api/group', { name: nm, members: Object.keys(chips) }).then(function (j) {
+      if (j && j.ok) location.href = '/dm/t/' + j.id;
+      else gstat.textContent = (j && j.why) || '作成できませんでした';
+    });
+  };
+
+  /* ---- スレッド一覧 ---- */
+  function drawList(rows) {
+    if (!rows.length) { list.innerHTML = '<span class="dim">まだスレッドがありません</span>'; return; }
+    list.innerHTML = '';
+    rows.forEach(function (t) {
+      var d = document.createElement('div');
+      d.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 2px;' +
+        'border-bottom:1px solid #1c2029';
+      var link = document.createElement('a');
+      link.href = '/dm/t/' + t.id;
+      link.style.cssText = 'flex:1;text-decoration:none;color:#e6e9ef;min-width:0';
+      link.innerHTML = (t.kind === 'group' ? '👥 ' : '💬 ') + '<b>' + esc(t.title) + '</b>' +
+        (t.n && t.kind === 'group' ? ' <span class="dim" style="font-size:11px">' + t.n + '人</span>' : '') +
+        (t.unread ? ' <span style="background:#e5484d;color:#fff;border-radius:999px;' +
+          'padding:1px 7px;font-size:11px">' + t.unread + '</span>' : '') +
+        '<div class="dim" style="font-size:12px;white-space:nowrap;overflow:hidden;' +
+        'text-overflow:ellipsis">' + esc(t.last_user ? t.last_user + ': ' : '') +
+        esc(t.last_text || '(まだ発言なし)') + '</div>';
+      d.appendChild(link);
+      var b = document.createElement('button');
+      b.className = 'mini';
+      b.textContent = t.notify ? '🔔' : '🔕';
+      b.title = '通知 ON/OFF';
+      b.onclick = function () {
+        api('/dm/api/t/' + t.id + '/notify', { on: t.notify ? 0 : 1 }).then(function () { load(); });
+      };
+      d.appendChild(b);
+      list.appendChild(d);
+    });
+  }
+  function load() {
+    api('/dm/api/list').then(function (j) {
+      if (j && j.ok) drawList(j.threads || []);
+    });
+  }
+
+  document.getElementById('reload').onclick = load;
+  document.getElementById('jgo').onclick = function () {
+    var c = document.getElementById('jcode').value.trim();
+    if (!c) return;
+    location.href = '/dm/join/' + encodeURIComponent(c);
+  };
+
+  load(); setInterval(load, 10000);
+})();
+</script>
+{% endblock %}
