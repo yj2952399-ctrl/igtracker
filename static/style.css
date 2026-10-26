@@ -63,3 +63,18 @@ ul{padding-left:18px}
 .small{font-size:13px}
 .subrow{background:#181818}
 button.mini{padding:2px 8px;font-size:12px}
+/* Shared profile avatars and member indicators */
+.avatar{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  width:30px;height:30px;border-radius:50%;object-fit:cover;overflow:hidden;
+  background:#252b38;border:1px solid var(--line);vertical-align:middle}
+.avatar-sm{width:28px;height:28px;font-size:17px}
+.avatar-lg{width:42px;height:42px;font-size:23px}
+.avatar-fallback{line-height:1}
+.profile-who{display:inline-flex;align-items:center;gap:7px}
+.member-count-link{white-space:nowrap;text-decoration:none;color:var(--dim);
+  padding:5px 8px;border:1px solid var(--line);border-radius:8px}
+.member-count-link:hover{background:#20242e;color:var(--fg)}
+.user-row{display:flex;align-items:center;gap:9px;padding:9px 2px;border-bottom:1px solid var(--line)}
+.user-row .user-label{min-width:0;overflow-wrap:anywhere}
+.user-online{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px}
+@media(max-width:700px){.topbar{gap:5px}.member-count-link{font-size:11px;padding:4px}.who{max-width:100%;}}
