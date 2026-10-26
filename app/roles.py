@@ -10,6 +10,9 @@
 - 権限の既定は DEFAULT。roles.json の差分で上書きされ、
   管理コンソール（/console/roles）から変更できる。
 - 循環 import を避けるため、このモジュールは app 内の他モジュールに依存しない。
+- _GRANT_IF_ABSENT: 後から足した権限キーは、保存済み roles.json に
+  一度も出てこない間だけ既定に追従させる（新機能が全員に配られる）。
+  管理者が権限マトリクスを保存すると固定される。
 """
 from __future__ import annotations
 
@@ -73,13 +76,16 @@ FEATURES: List[str] = [
     "feature.usb", "feature.gps", "feature.tracks", "feature.visitors",
     "feature.together", "feature.campaigns", "feature.tools", "feature.targets",
     "feature.runs", "feature.accounts", "feature.activity", "feature.dms",
-    "feature.chat", "feature.settings", "feature.snsx",
+    "feature.dm", "feature.chat", "feature.settings", "feature.snsx",
 ]
 
 PERMS += [{"key": k, "label": "機能: " + k.split(".", 1)[1],
            "desc": "ナビの該当メニューを出す"} for k in FEATURES]
 
 _BASE: List[str] = ["console.view"] + FEATURES
+
+# 後から足したキー。保存済み roles.json に現れない間だけ既定に追従させる。
+_GRANT_IF_ABSENT: List[str] = ["feature.dm"]
 
 # 既定の権限（役職 → 許可キー）
 DEFAULT: Dict[str, List[str]] = {
@@ -145,6 +151,7 @@ def load() -> Dict[str, Set[str]]:
             return _cache["data"]
 
     out: Dict[str, Set[str]] = {r: set(DEFAULT.get(r, [])) for r in ROLES}
+    raw_seen: Set[str] = set()
     if mt != -1:
         try:
             with open(p, "r", encoding="utf-8") as f:
@@ -154,8 +161,17 @@ def load() -> Dict[str, Set[str]]:
                 for r, keys in over.items():
                     if r in out and isinstance(keys, list):
                         out[r] = {str(k) for k in keys if str(k)}
+                        raw_seen |= out[r]
         except Exception:
             pass
+
+    # 後から足したキーは、保存ファイルに一度も出てこない間だけ既定に追従
+    for k in _GRANT_IF_ABSENT:
+        if k in raw_seen:
+            continue
+        for r in ROLES:
+            if k in DEFAULT.get(r, []):
+                out[r].add(k)
 
     with _lock:
         _cache["mtime"] = mt
