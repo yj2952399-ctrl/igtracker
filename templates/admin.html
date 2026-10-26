@@ -47,7 +47,10 @@
     <th>最終ログイン</th><th>操作</th></tr>
 {% for r in rows %}
 <tr>
-  <td><b>{{ r.username }}</b>{% if r.same %} ★{% endif %}
+  <td>{% if r.avatar %}<img class="avatar avatar-sm" src="{{ r.avatar }}" alt="">
+      {% else %}<span class="avatar avatar-sm avatar-fallback">👤</span>{% endif %}
+      <b>{{ r.display_name or r.username }}</b>{% if r.same %} ★{% endif %}
+      {% if r.display_name and r.display_name != r.username %}<br><span class="dim tiny">{{ r.username }}</span>{% endif %}
       {% if r.root %} <span class="ok">ルート</span>{% endif %}
       {% if r.note %}<br><span class="dim tiny">{{ r.note }}</span>{% endif %}</td>
   <td>{{ labels[r.role] }}</td>
@@ -98,7 +101,10 @@
 <table class="small">
 <tr><th>時刻</th><th>実行者</th><th>操作</th><th>詳細</th></tr>
 {% for a in audits %}
-<tr><td class="dim">{{ a.ts }}</td><td>{{ a.actor }}</td>
+<tr><td class="dim">{{ a.ts }}</td><td>
+    {% if a.actor_avatar %}<img class="avatar avatar-sm" src="{{ a.actor_avatar }}" alt="">
+    {% else %}<span class="avatar avatar-sm avatar-fallback">👤</span>{% endif %}
+    {{ a.display_actor or a.actor }}</td>
     <td><code>{{ a.action }}</code></td><td class="dim">{{ a.detail }}</td></tr>
 {% endfor %}
 </table>

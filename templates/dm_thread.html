@@ -9,7 +9,11 @@
   <button id="leave" type="button" class="mini">{{ '脱退' if is_group else '一覧から隠す' }}</button>
 </div>
 <p class="dim" style="font-size:12px">
-  参加者: {% for m in members %}<b>{{ m.name }}</b>{% if m.root %}（ルート）{% elif m.label %}（{{ m.label }}）{% endif %}{{ ' / ' if not loop.last }}{% endfor %}
+  参加者: {% for m in members %}
+    {% if m.avatar %}<img class="avatar avatar-sm" src="{{ m.avatar }}" alt="">
+    {% else %}<span class="avatar avatar-sm avatar-fallback">👤</span>{% endif %}
+    <b>{{ m.display_name }}</b>{% if m.root %}（ルート）{% elif m.label %}（{{ m.label }}）{% endif %}{{ ' / ' if not loop.last }}
+  {% endfor %}
   {% if is_group and code %}／ 招待コード <b>{{ code }}</b>
     <a href="/dm/join/{{ code }}">参加リンク</a>{% endif %}
 </p>
@@ -51,8 +55,10 @@
       ? '<span style="color:#8b93a7;text-decoration:line-through">' + esc(m.text) + '</span>'
       : esc(m.text);
     d.innerHTML = '<span style="color:#8b93a7;font-family:ui-monospace,monospace">' + t + '</span> ' +
+      (m.avatar ? '<img class="avatar avatar-sm" src="' + esc(m.avatar) + '" alt="">' :
+       '<span class="avatar avatar-sm avatar-fallback">👤</span>') +
       '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' +
-      esc(m.mine ? '自分' : m.user) + '</b> ' + body;
+      esc(m.display_name || m.user) + '</b> ' + body;
     if (!m.deleted && m.mine) {
       var b = document.createElement('button');
       b.textContent = '×'; b.className = 'mini';

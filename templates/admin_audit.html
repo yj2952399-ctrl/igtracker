@@ -4,7 +4,10 @@
 <table class="small">
 <tr><th>時刻</th><th>実行者</th><th>操作</th><th>詳細</th></tr>
 {% for a in rows %}
-<tr><td class="dim">{{ a.ts }}</td><td>{{ a.actor }}</td>
+<tr><td class="dim">{{ a.ts }}</td><td>
+    {% if a.actor_avatar %}<img class="avatar avatar-sm" src="{{ a.actor_avatar }}" alt="">
+    {% else %}<span class="avatar avatar-sm avatar-fallback">👤</span>{% endif %}
+    {{ a.display_actor or a.actor }}</td>
     <td><code>{{ a.action }}</code></td><td class="dim">{{ a.detail }}</td></tr>
 {% endfor %}
 </table>

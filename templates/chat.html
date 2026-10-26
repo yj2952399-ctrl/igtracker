@@ -39,7 +39,10 @@
       ? '<span style="color:#8b93a7;text-decoration:line-through">' + esc(m.text) + '</span>'
       : esc(m.text);
     d.innerHTML = '<span style="color:#8b93a7;font-family:ui-monospace,monospace">' + t + '</span> ' +
-      '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' + esc(m.mine ? '自分' : m.user) + '</b> ' + body;
+      (m.avatar ? '<img class="avatar avatar-sm" src="' + esc(m.avatar) + '" alt="">' :
+       '<span class="avatar avatar-sm avatar-fallback">👤</span>') +
+      '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' +
+      esc(m.display_name || m.user) + '</b> ' + body;
     if (!m.deleted && (m.mine || ADMIN)) {
       var b = document.createElement('button');
       b.textContent = '×'; b.className = 'mini';
@@ -58,7 +61,9 @@
         if (!j || !j.ok) return;
         var near = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
         (j.msgs || []).forEach(function (m) { last = Math.max(last, m.id); line(m); });
-        online.innerHTML = (j.online || []).map(function (n) { return '・' + esc(n); }).join('<br>');
+        online.innerHTML = (j.online_users || (j.online || []).map(function(n){return {username:n,display_name:n};}))
+          .map(function (n) { return (n.avatar ? '<img class="avatar avatar-sm" src="' + esc(n.avatar) + '" alt="">' :
+            '<span class="avatar avatar-sm avatar-fallback">👤</span>') + ' ' + esc(n.display_name || n.username); }).join('<br>');
         cnt.textContent = (j.online || []).length;
         if ((j.msgs || []).length && near) log.scrollTop = log.scrollHeight;
       }).catch(function () {});

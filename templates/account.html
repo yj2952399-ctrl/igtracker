@@ -16,6 +16,37 @@
 </div>
 
 <div class="card">
+  <h2>プロフィール設定</h2>
+  <form method="post" action="/account/profile">
+    <label>表示名（最大40文字）
+      <input type="text" name="display_name" value="{{ display_name if display_name != real_user else '' }}"
+             placeholder="{{ real_user }}" maxlength="40" autocomplete="nickname">
+    </label>
+    <p class="dim" style="font-size:12px">空欄にするとログイン用ユーザー名を表示します。ログインID自体は変更されません。</p>
+    <button>表示名を保存</button>
+  </form>
+  <hr>
+  <h3>プロフィールアイコン</h3>
+  <div style="display:flex;align-items:center;gap:12px;margin:10px 0">
+    {% if profile and profile.avatar_data %}
+      <img class="avatar avatar-lg" src="/profile/avatar/{{ real_user }}" alt="現在のアイコン">
+    {% else %}
+      <span class="avatar avatar-lg avatar-fallback">👤</span>
+    {% endif %}
+    <span class="dim">PNG / JPEG / GIF / WebP、2MB以下。円形に切り抜いて表示します。</span>
+  </div>
+  <form method="post" action="/account/avatar" enctype="multipart/form-data">
+    <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" required>
+    <button>アイコンを設定</button>
+  </form>
+  {% if profile and profile.avatar_data %}
+  <form method="post" action="/account/avatar/delete" style="margin-top:8px">
+    <button class="mini">アイコンを削除</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card">
   <h2>パスワード変更</h2>
   <p class="dim">変更すると <b>他の全端末のセッションが即座に無効</b>になります。</p>
   <form method="post" action="/account/password">

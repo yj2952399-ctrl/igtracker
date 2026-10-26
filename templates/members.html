@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% block title %}メンバー一覧{% endblock %}{% block content %}
+<h1>👥 {{ 'オンラインユーザー' if online_only else 'メンバー一覧' }}</h1>
+<p class="dim">メンバー {{ member_count }} 人 ／ オンライン {{ online_count }} 人</p>
+<div class="card">
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+    <a class="mini" href="/members">全メンバー</a>
+    <a class="mini" href="/members?online=1">オンラインのみ</a>
+  </div>
+  {% if rows %}
+    {% for r in rows %}
+    <div class="user-row">
+      {% if r.has_avatar %}<img class="avatar" src="/profile/avatar/{{ r.username }}" alt="">
+      {% else %}<span class="avatar avatar-fallback">👤</span>{% endif %}
+      <div class="user-label" style="flex:1">
+        <b>{{ r.display_name }}</b>
+        {% if r.online %}<span class="user-online" title="オンライン"></span><span class="dim" style="font-size:12px">オンライン</span>{% endif %}
+        {% if r.role_label %}<div class="dim" style="font-size:12px">{{ r.role_label }}</div>{% endif %}
+      </div>
+      {% if perms['feature.dm'] or is_root %}<a class="mini" href="/dm">DM</a>{% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="dim">該当するユーザーはいません。</p>
+  {% endif %}
+</div>
+{% endblock %}

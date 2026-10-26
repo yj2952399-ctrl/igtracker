@@ -9,8 +9,14 @@
 
 {% if me %}
 <div class="topbar">
-  <span class="who">👤 {{ me }}{% if is_root %} <b>（ルート）</b>
+  <span class="who profile-who">
+    {% if profile and profile.avatar_data %}<img class="avatar avatar-sm" src="/profile/avatar/{{ me }}" alt="">
+    {% else %}<span class="avatar avatar-sm avatar-fallback">👤</span>{% endif %}
+    <span>{{ profile_name }}{% if is_root %} <b>（ルート）</b>
     {% elif role_label %} <b>（{{ role_label }}）</b>{% endif %}</span>
+  </span>
+  <a class="member-count-link" href="/members">👥 メンバー <b id="top-member-count">—</b></a>
+  <a class="member-count-link" href="/members?online=1">🟢 オンライン <b id="top-online-count">—</b></a>
   <span class="spacer"></span>
   <a href="/console">🧭 コンソール</a>
   <a href="/backup">💾 バックアップ</a>
@@ -63,6 +69,24 @@
 {% endif %}
 
 <main>{% block content %}{% endblock %}</main>
+
+{% if me %}
+<script>
+(function () {
+  function update() {
+    fetch('/chat/api/heartbeat', {headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ var e=document.getElementById('top-online-count'); if(e && j && j.ok) e.textContent=j.online; })
+      .catch(function(){});
+  }
+  fetch('/members/count', {headers:{'Accept':'application/json'}})
+    .then(function(r){return r.json();})
+    .then(function(j){var e=document.getElementById('top-member-count');if(e&&j&&j.ok)e.textContent=j.count;})
+    .catch(function(){});
+  update(); setInterval(update, 20000);
+})();
+</script>
+{% endif %}
 
 {% if me and (perms['feature.dm'] or is_root) %}
 <script>

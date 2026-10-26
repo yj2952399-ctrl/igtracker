@@ -71,7 +71,9 @@
     users.forEach(function (u) {
       var row = document.createElement('div');
       row.style.cssText = 'padding:4px 2px;border-bottom:1px solid #1c2029';
-      row.innerHTML = '<b>' + esc(u.name) + '</b>' +
+      row.innerHTML = (u.avatar ? '<img class="avatar avatar-sm" src="' + esc(u.avatar) + '" alt="">' :
+        '<span class="avatar avatar-sm avatar-fallback">👤</span>') +
+        '<b>' + esc(u.display_name || u.name) + '</b>' +
         (u.label ? ' <span class="dim" style="font-size:11px">(' + esc(u.label) + ')</span>' : '');
       var dm = document.createElement('button');
       dm.textContent = 'DM'; dm.className = 'mini'; dm.style.marginLeft = '8px';
@@ -138,12 +140,14 @@
       var link = document.createElement('a');
       link.href = '/dm/t/' + t.id;
       link.style.cssText = 'flex:1;text-decoration:none;color:#e6e9ef;min-width:0';
-      link.innerHTML = (t.kind === 'group' ? '👥 ' : '💬 ') + '<b>' + esc(t.title) + '</b>' +
+      link.innerHTML = (t.kind === 'group' ? '<span class="avatar avatar-sm avatar-fallback">👥</span>' :
+        (t.avatar ? '<img class="avatar avatar-sm" src="' + esc(t.avatar) + '" alt="">' :
+         '<span class="avatar avatar-sm avatar-fallback">👤</span>')) + ' <b>' + esc(t.title) + '</b>' +
         (t.n && t.kind === 'group' ? ' <span class="dim" style="font-size:11px">' + t.n + '人</span>' : '') +
         (t.unread ? ' <span style="background:#e5484d;color:#fff;border-radius:999px;' +
           'padding:1px 7px;font-size:11px">' + t.unread + '</span>' : '') +
         '<div class="dim" style="font-size:12px;white-space:nowrap;overflow:hidden;' +
-        'text-overflow:ellipsis">' + esc(t.last_user ? t.last_user + ': ' : '') +
+        'text-overflow:ellipsis">' + esc(t.last_user_display ? t.last_user_display + ': ' : (t.last_user ? t.last_user + ': ' : '')) +
         esc(t.last_text || '(まだ発言なし)') + '</div>';
       d.appendChild(link);
       var b = document.createElement('button');
