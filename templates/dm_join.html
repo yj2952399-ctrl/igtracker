@@ -1,0 +1,38 @@
+{% extends "base.html" %}{% block title %}参加{% endblock %}{% block content %}
+<h1>👥 グループに参加</h1>
+{% if err %}<div class="card" style="border-color:#7a3b3b">{{ err }}</div>{% endif %}
+{% if msg %}<div class="card" style="border-color:#3b6b45">{{ msg }}</div>{% endif %}
+
+<div class="card">
+  <h2 style="margin:0 0 6px">{{ t.name or 'グループ' }}</h2>
+  <div class="dim" style="font-size:12px">参加者 {{ members|length }} 人</div>
+  <div style="font-size:13px;margin:8px 0">
+    {% for m in members %}<span style="background:#243049;border:1px solid #35405a;
+      border-radius:999px;padding:2px 9px;margin:2px;display:inline-block">{{ m }}</span>{% endfor %}
+  </div>
+  {% if already %}
+    <a href="/dm/t/{{ t.id }}"><button type="button">開く</button></a>
+  {% else %}
+    <button id="go" type="button">参加する</button>
+  {% endif %}
+  <div class="dim" id="stat" style="font-size:12px;min-height:16px"></div>
+</div>
+<p><a href="/dm">← DM一覧へ</a></p>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var go = document.getElementById('go');
+  if (!go) return;
+  go.onclick = function () {
+    fetch('/dm/api/join', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: {{ code|tojson }} }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) location.href = '/dm/t/' + j.id;
+        else document.getElementById('stat').textContent = (j && j.why) || '参加できませんでした';
+      }).catch(function () { document.getElementById('stat').textContent = '通信エラー'; });
+  };
+})();
+</script>
+{% endblock %}
