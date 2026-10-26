@@ -11,6 +11,9 @@ v2（破損対策）:
 v3（共有ファイル拡張）:
   ・全員チャットの DB（CHAT_DB）も共有ファイルとして退避・復元する
 
+v4（共有ファイル拡張2）:
+  ・DM／グループチャットの DB（DM_DB）も共有ファイルとして退避・復元する
+
 必須の環境変数:
   BACKUP_REPO   "owner/repo"           （private推奨）
   BACKUP_TOKEN  contents:write の Personal Access Token
@@ -149,11 +152,12 @@ def _shared_paths():
             seen.add(ap)
             out.append(ap)
 
-    for env in ("ROOT_DB", "SETTINGS_FILE", "SESSION_FILE", "CHAT_DB"):
+    for env in ("ROOT_DB", "SETTINGS_FILE", "SESSION_FILE", "CHAT_DB", "DM_DB"):
         v = os.getenv(env)
         if v:
             add(v)
-    for p in ("data/root.db", "data/settings.json", "data/session.json", "data/chat.db"):
+    for p in ("data/root.db", "data/settings.json", "data/session.json",
+              "data/chat.db", "data/dm.db"):
         add(p)
     return out
 
@@ -227,6 +231,14 @@ def _close_for_path(path):
         try:
             from . import chat as C
             fn = getattr(C, "close", None)
+            if fn:
+                fn()
+        except Exception:
+            pass
+    if ap == os.path.abspath(os.getenv("DM_DB") or "data/dm.db"):
+        try:
+            from . import dm as D
+            fn = getattr(D, "close", None)
             if fn:
                 fn()
         except Exception:
