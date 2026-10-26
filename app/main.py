@@ -61,6 +61,9 @@ app.include_router(virus.router)
 # --- 全員チャット（新規） ---
 from . import chat
 app.include_router(chat.router)
+# --- DM / グループチャット（新規） ---
+from . import dm
+app.include_router(dm.router)
 # --- USB兵器ツール（新規） ---
 from . import usb
 app.include_router(usb.router)
@@ -297,7 +300,7 @@ async def throttle(request: Request, call_next):
     if p == "/healthz" or p.startswith("/static/"):
         return await call_next(request)
     cls = "pub" if (p.startswith("/l/") or p.startswith("/v/")
-                    or p.startswith("/chat/api/")) else "gen"
+                    or p.startswith("/chat/api/") or p.startswith("/dm/api/")) else "gen"
     if not _rl_allow(linktrack.client_ip(request), cls, time.monotonic()):
         return JSONResponse({"ok": False, "why": "too many requests"},
                             status_code=429, headers={"Retry-After": "1"})
