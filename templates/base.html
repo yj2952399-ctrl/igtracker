@@ -52,7 +52,10 @@
   {% if perms['feature.runs'] or is_root %}<a href="/runs">🗂 履歴</a>{% endif %}
   {% if perms['feature.accounts'] or is_root %}<a href="/accounts">🆔 台帳</a>{% endif %}
   {% if perms['feature.activity'] or is_root %}<a href="/activity">📜 ログ</a>{% endif %}
-  {% if perms['feature.dms'] or is_root %}<a href="/dms">💬 DM</a>{% endif %}
+  {% if perms['feature.dms'] or is_root %}<a href="/dms">💬 DM記録</a>{% endif %}
+  {% if perms['feature.dm'] or is_root %}<a href="/dm">💬 DM<span id="dmbadge"
+     style="display:none;background:#e5484d;color:#fff;border-radius:999px;
+     padding:1px 6px;font-size:11px;margin-left:2px"></span></a>{% endif %}
   {% if perms['feature.chat'] or is_root %}<a href="/chat">🗣 全員チャット</a>{% endif %}
   {% if perms['feature.settings'] or is_root %}<a href="/settings">⚙️ 設定</a>{% endif %}
   {% if perms['feature.snsx'] or is_root %}<a href="/snsx">マルチSNS</a>{% endif %}
@@ -60,5 +63,65 @@
 {% endif %}
 
 <main>{% block content %}{% endblock %}</main>
+
+{% if me and (perms['feature.dm'] or is_root) %}
+<script>
+/* DM 未読バッジ＋ブラウザ通知（全ページ共通）。12秒ごと。 */
+(function () {
+  var badge = document.getElementById('dmbadge');
+  var KEY = 'dm_last_seen';
+  var last = parseInt(localStorage.getItem(KEY) || '0', 10) || 0;
+  var first = true;
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+  function pop(t, b) {
+    try {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+      var o = { body: b, tag: 'dm', renotify: false };
+      function fb() { try { new Notification(t, o); } catch (e) {} }
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+        navigator.serviceWorker.getRegistration().then(function (r) {
+          if (r && r.showNotification) { try { r.showNotification(t, o); } catch (e) { fb(); } }
+          else fb();
+        }).catch(fb);
+      } else fb();
+    } catch (e) {}
+  }
+  function toast(t, b) {
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147482000;' +
+      'background:#1b2130;border:1px solid #35405a;color:#e6e9ef;padding:10px 14px;' +
+      'border-radius:10px;font:13px/1.6 system-ui;max-width:76vw;box-shadow:0 6px 24px rgba(0,0,0,.5);' +
+      'opacity:0;transition:opacity .25s';
+    d.innerHTML = '<b>' + esc(t) + '</b><br>' + esc(b);
+    document.body.appendChild(d);
+    setTimeout(function () { d.style.opacity = '1'; }, 30);
+    setTimeout(function () { d.style.opacity = '0'; setTimeout(function () { d.remove(); }, 300); }, 6000);
+  }
+  function tick() {
+    fetch('/dm/api/ping?since=' + last, { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) return;
+        if (j.max) { last = j.max; localStorage.setItem(KEY, String(last)); }
+        var n = j.unread || 0;
+        if (badge) {
+          badge.textContent = n ? n : '';
+          badge.style.display = n ? 'inline-block' : 'none';
+        }
+        var base = document.title.replace(/^\(\d+\)\s*/, '');
+        document.title = n ? ('(' + n + ') ' + base) : base;
+        if (first) { first = false; return; }
+        (j.items || []).forEach(function (m) {
+          pop(m.from + ' → ' + (m.title || 'DM'), m.text || '');
+          toast(m.from + ' → ' + (m.title || 'DM'), m.text || '');
+        });
+      }).catch(function () {});
+  }
+  tick();
+  setInterval(tick, 12000);
+})();
+</script>
+{% endif %}
+
 {% block scripts %}{% endblock %}
 </body></html>
