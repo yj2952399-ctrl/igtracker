@@ -1,0 +1,143 @@
+{% extends "base.html" %}{% block title %}{{ title }}{% endblock %}{% block content %}
+<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+  <h1 style="margin:0">{{ '👥' if is_group else '💬' }} {{ title }}</h1>
+  <a href="/dm" class="mini" style="text-decoration:none">← 一覧</a>
+  <button id="notift" type="button" class="mini">{{ '🔔 通知ON' if notify else '🔕 通知OFF' }}</button>
+  {% if is_group %}<button id="inv" type="button" class="mini">＋ 招待</button>{% endif %}
+  {% if is_group and owner %}<button id="ren" type="button" class="mini">✏ 名前変更</button>{% endif %}
+  {% if is_group and owner %}<button id="regcode" type="button" class="mini">↻ コード再発行</button>{% endif %}
+  <button id="leave" type="button" class="mini">{{ '脱退' if is_group else '一覧から隠す' }}</button>
+</div>
+<p class="dim" style="font-size:12px">
+  参加者: {% for m in members %}<b>{{ m.name }}</b>{% if m.root %}（ルート）{% elif m.label %}（{{ m.label }}）{% endif %}{{ ' / ' if not loop.last }}{% endfor %}
+  {% if is_group and code %}／ 招待コード <b>{{ code }}</b>
+    <a href="/dm/join/{{ code }}">参加リンク</a>{% endif %}
+</p>
+
+<div class="card">
+  <div id="log" style="height:56vh;overflow:auto;background:#11141a;
+    border:1px solid #262b36;border-radius:8px;padding:8px"></div>
+  <form method="post" action="/dm/t/{{ t.id }}/send" id="frm"
+        style="display:flex;gap:6px;margin-top:8px">
+    <input id="txt" name="text" placeholder="Enterで送信（最大{{ max_len }}字）" style="flex:1"
+           maxlength="{{ max_len }}" autocomplete="off">
+    <button id="send" type="submit">送信</button>
+  </form>
+  <div class="dim" id="stat" style="font-size:12px;min-height:16px"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var log = document.getElementById('log'), txt = document.getElementById('txt'),
+      stat = document.getElementById('stat'), frm = document.getElementById('frm');
+  var TID = {{ t.id }}, ME = {{ me|tojson }}, NOTIFY = {{ notify|tojson }};
+  var last = 0, busy = false;
+
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+  function line(m) {
+    var d = document.createElement('div');
+    d.dataset.id = m.id;
+    if (m.kind === 'sys') {
+      d.style.cssText = 'text-align:center;color:#8b93a7;font-size:12px;padding:4px';
+      d.innerHTML = esc(m.text);
+      log.appendChild(d); return;
+    }
+    d.style.cssText = 'padding:3px 2px;border-bottom:1px solid #1c2029;font-size:13px;line-height:1.6';
+    var t = (m.ts || '').replace('T', ' ').slice(5, 19);
+    var body = m.deleted
+      ? '<span style="color:#8b93a7;text-decoration:line-through">' + esc(m.text) + '</span>'
+      : esc(m.text);
+    d.innerHTML = '<span style="color:#8b93a7;font-family:ui-monospace,monospace">' + t + '</span> ' +
+      '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' +
+      esc(m.mine ? '自分' : m.user) + '</b> ' + body;
+    if (!m.deleted && m.mine) {
+      var b = document.createElement('button');
+      b.textContent = '×'; b.className = 'mini';
+      b.style.cssText = 'float:right;padding:1px 7px';
+      b.onclick = function () {
+        fetch('/dm/api/t/' + TID + '/del', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: m.id }) }).then(function () { reset(); });
+      };
+      d.appendChild(b);
+    }
+    log.appendChild(d);
+  }
+
+  function reset() { last = 0; log.innerHTML = ''; pull(); }
+
+  function pull() {
+    fetch('/dm/api/t/' + TID + '?since=' + last, { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) return;
+        var near = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
+        (j.msgs || []).forEach(function (m) { last = Math.max(last, m.id); line(m); });
+        if ((j.msgs || []).length && near) log.scrollTop = log.scrollHeight;
+      }).catch(function () {});
+  }
+
+  function send() {
+    var v = txt.value.trim();
+    if (!v || busy) return;
+    busy = true; stat.textContent = '';
+    fetch('/dm/api/t/' + TID + '/send', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: v }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        busy = false;
+        if (j && j.ok) { txt.value = ''; pull(); }
+        else { stat.textContent = (j && j.why) || '送信できませんでした'; }
+      }).catch(function () { busy = false; stat.textContent = '通信エラー'; });
+  }
+
+  frm.onsubmit = function (e) { e.preventDefault(); send(); };
+  txt.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); send(); }
+  });
+
+  var nt = document.getElementById('notift');
+  nt.onclick = function () {
+    fetch('/dm/api/t/' + TID + '/notify', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: NOTIFY ? 0 : 1 }) }).then(function () {
+      NOTIFY = !NOTIFY;
+      nt.textContent = NOTIFY ? '🔔 通知ON' : '🔕 通知OFF';
+    });
+  };
+
+  document.getElementById('leave').onclick = function () {
+    fetch('/dm/api/t/' + TID + '/leave', { method: 'POST' })
+      .then(function () { location.href = '/dm'; });
+  };
+
+  var inv = document.getElementById('inv');
+  if (inv) inv.onclick = function () {
+    var n = prompt('追加するユーザー名（カンマ区切りで複数OK）');
+    if (!n) return;
+    fetch('/dm/api/t/' + TID + '/invite', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ users: n }) }).then(function () { reset(); });
+  };
+  var ren = document.getElementById('ren');
+  if (ren) ren.onclick = function () {
+    var n = prompt('新しいグループ名', {{ title|tojson }});
+    if (!n) return;
+    fetch('/dm/api/t/' + TID + '/rename', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: n }) }).then(function () { location.reload(); });
+  };
+  var rc = document.getElementById('regcode');
+  if (rc) rc.onclick = function () {
+    fetch('/dm/api/t/' + TID + '/code', { method: 'POST' }).then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.ok) location.reload(); });
+  };
+
+  pull(); setInterval(pull, 2500);
+})();
+</script>
+{% endblock %}
