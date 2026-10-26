@@ -1,0 +1,80 @@
+:root{
+  --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#e6e9ef;
+  --dim:#9aa3b2; --acc:#4c8dff; --ok:#2ecc71; --warn:#f1c40f; --bad:#e74c3c;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;
+  font-size:14px;line-height:1.6}
+nav{display:flex;flex-wrap:wrap;gap:2px;padding:8px 12px;
+  background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:9}
+nav a{color:var(--dim);text-decoration:none;padding:6px 10px;border-radius:6px}
+nav a:hover{color:var(--fg);background:#20242e}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:12px 0}
+h2{font-size:16px;margin:22px 0 8px;border-left:3px solid var(--acc);padding-left:8px}
+h3{font-size:14px;margin:0 0 6px}
+a{color:var(--acc)}
+table{width:100%;border-collapse:collapse;margin:8px 0;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;
+  word-break:break-word}
+th{color:var(--dim);font-weight:600;background:#1c2029;width:1%;white-space:nowrap}
+tr:last-child th,tr:last-child td{border-bottom:none}
+form{margin:8px 0}
+label{display:block;margin:6px 0;color:var(--dim)}
+label.inline{display:inline-block;margin-right:12px}
+input,textarea,select{width:100%;padding:6px 8px;margin-top:2px;background:#11141a;
+  color:var(--fg);border:1px solid var(--line);border-radius:6px;font:inherit}
+input[type=checkbox]{width:auto;margin-right:6px}
+button{padding:6px 12px;margin:2px 0;background:var(--acc);color:#fff;border:0;
+  border-radius:6px;cursor:pointer;font:inherit}
+button:hover{filter:brightness(1.1)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:12px;margin:10px 0}
+.score{font-weight:700;color:var(--ok);margin-left:6px}
+.badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;
+  background:#3a2a2a;color:var(--warn);border:1px solid #5a3f3f;margin-left:4px}
+small{color:var(--dim)}
+.dim{color:var(--dim)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.ok{color:var(--ok)}
+.err{color:var(--bad);white-space:pre-wrap;word-break:break-all}
+.warn{color:var(--warn);font-size:12px}
+.botrow{opacity:.45}
+code{background:#11141a;padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+ul{padding-left:18px}
+#map{height:340px;border-radius:8px;border:1px solid var(--line);margin:8px 0}
+.imp{background:#3a2f00;color:#ffe9a8;padding:8px 12px;font-size:14px}
+.imp a{color:#ffe9a8}
+.card{border:1px solid #444;padding:12px;margin:12px 0;border-radius:6px}
+.topbar{display:flex;align-items:center;gap:10px;background:#111;color:#ddd;
+  padding:8px 12px;font-size:14px}
+.topbar .spacer{flex:1}
+.topbar a{color:#8cf}
+.imp{background:#3a2f00;color:#ffe9a8;padding:8px 12px;font-size:14px}
+.imp a{color:#ffe9a8}
+.authwrap{max-width:420px;margin:40px auto}
+.authcard{display:flex;flex-direction:column;gap:12px;border:1px solid #444;
+  padding:20px;border-radius:8px}
+.card{border:1px solid #444;padding:12px;margin:12px 0;border-radius:6px}
+.dim{opacity:.7}
+.tiny{font-size:12px}
+.small{font-size:13px}
+.subrow{background:#181818}
+button.mini{padding:2px 8px;font-size:12px}
+/* Shared profile avatars and member indicators */
+.avatar{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  width:30px;height:30px;border-radius:50%;object-fit:cover;overflow:hidden;
+  background:#252b38;border:1px solid var(--line);vertical-align:middle}
+.avatar-sm{width:28px;height:28px;font-size:17px}
+.avatar-lg{width:42px;height:42px;font-size:23px}
+.avatar-fallback{line-height:1}
+.profile-who{display:inline-flex;align-items:center;gap:7px}
+.member-count-link{white-space:nowrap;text-decoration:none;color:var(--dim);
+  padding:5px 8px;border:1px solid var(--line);border-radius:8px}
+.member-count-link:hover{background:#20242e;color:var(--fg)}
+.user-row{display:flex;align-items:center;gap:9px;padding:9px 2px;border-bottom:1px solid var(--line)}
+.user-row .user-label{min-width:0;overflow-wrap:anywhere}
+.user-online{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px}
+@media(max-width:700px){.topbar{gap:5px}.member-count-link{font-size:11px;padding:4px}.who{max-width:100%;}}
