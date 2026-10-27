@@ -75,6 +75,7 @@ app.include_router(lockdown.router)
 
 # --- 安全なクイズ・育成ゲーム ---
 from . import arcade
+from . import robot_arena
 # ---------- Instagram 接続の状態管理 ----------
 
 _IG_LOCK = threading.RLock()
@@ -1071,6 +1072,30 @@ def arcade_answer(request: Request, answer: int = Form(...), u=Depends(auth)):
         raise HTTPException(status_code=400, detail="回答が不正です")
     result = arcade.submit_answer(username, question, answer)
     return RedirectResponse("/arcade?result=" + quote(result), status_code=303)
+
+
+# ---------- ロボットアリーナ ----------
+@app.get("/robots", response_class=HTMLResponse)
+def robots_home(request: Request, u=Depends(auth)):
+    username = request.state.real_user or u
+    state = robot_arena.state(username)
+    robots = [dict(r, owned=r["id"] in state["owned"], equipped=r["id"] == state["loadout"],
+                   available=(not r.get("root_only") or state["root"])) for r in robot_arena.ROBOTS]
+    return render("robot_arena.html", request, robots=robots, state=state, stages=robot_arena.STAGES,
+                  notice=request.query_params.get("notice", ""))
+
+@app.post("/robots/buy")
+def robots_buy(request: Request, robot_id: str = Form(...), u=Depends(auth)):
+    username = request.state.real_user or u
+    ok, msg = robot_arena.buy(username, robot_id)
+    return RedirectResponse("/robots?notice=" + quote(msg), status_code=303)
+
+@app.post("/robots/equip")
+def robots_equip(request: Request, robot_id: str = Form(...), u=Depends(auth)):
+    username = request.state.real_user or u
+    ok = robot_arena.equip(username, robot_id)
+    return RedirectResponse("/robots?notice=" + quote("機体を選択しました" if ok else "この機体は選択できません"), status_code=303)
+
 
 # ---------- ダッシュボード ----------
 
