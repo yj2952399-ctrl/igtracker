@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}クイズ＆ペット{% endblock %}
+{% block head %}
+<style>
+.arcade{max-width:900px;margin:0 auto}.hero{padding:22px;border-radius:18px;background:linear-gradient(135deg,#172554,#6d28d9);color:#fff;margin-bottom:16px}.hero h1{margin:0 0 8px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.stat,.panel{background:var(--card,#fff);border:1px solid var(--border,#ddd);border-radius:14px;padding:15px}.stat b{display:block;font-size:1.4rem}.pet{font-size:4rem;text-align:center;padding:12px}.bar{height:10px;background:#ddd;border-radius:20px;overflow:hidden}.bar span{display:block;height:100%;background:#8b5cf6}.choices{display:grid;grid-template-columns:1fr 1fr;gap:10px}.choices button{min-height:48px}.note{padding:12px;border-radius:10px;background:rgba(139,92,246,.12);margin:12px 0}@media(max-width:600px){.stats{grid-template-columns:1fr 1fr}.choices{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="arcade">
+  <section class="hero"><h1>🎮 クイズ＆ペット</h1><p>今日の一問に挑戦してXPを集めよう。正解するとペットも成長！</p><small>毎日1回挑戦・正解で10 XP。日付が変わると新しい問題になります。</small></section>
+  <section class="stats">
+    <div class="stat">⭐ XP<b>{{ progress.xp }}</b></div>
+    <div class="stat">🏅 レベル<b>{{ progress.level }}</b></div>
+    <div class="stat">✨ 正解数<b>{{ progress.correct }}</b></div>
+    <div class="stat">🎖 称号<b style="font-size:1rem">{{ title }}</b></div>
+  </section>
+  <section class="panel">
+    <h2>🐣 あなたのペット</h2>
+    <div class="pet">{% if progress.pet_stage >= 4 %}🐉{% elif progress.pet_stage == 3 %}🦊{% elif progress.pet_stage == 2 %}🐱{% elif progress.pet_stage == 1 %}🐥{% else %}🥚{% endif %}</div>
+    <p style="text-align:center"><b>{% if progress.pet_stage >= 4 %}伝説のドラゴン{% elif progress.pet_stage == 3 %}きつねの相棒{% elif progress.pet_stage == 2 %}ふしぎなネコ{% elif progress.pet_stage == 1 %}ひよこ{% else %}ふ化待ちのタマゴ{% endif %}</b></p>
+    <p>次のレベルまであと {{ progress.next_level_xp }} XP</p><div class="bar"><span style="width:{{ (progress.xp % 50) * 2 }}%"></span></div>
+    <small>XP 30でひよこ、100でネコ、250できつね、500でドラゴンに進化。</small>
+  </section>
+  <section class="panel" style="margin-top:16px">
+    <h2>🧠 今日の一問 <small>（{{ question.topic }}）</small></h2>
+    <p style="font-size:1.1rem">{{ question.q }}</p>
+    {% if today_result %}
+      <div class="note">{% if today_result.correct %}🎉 正解！ +{{ today_result.xp_awarded }} XP 獲得済みです。{% else %}今日は回答済みです。明日また挑戦してね！{% endif %}</div>
+    {% else %}
+      <form method="post" action="/arcade/answer" class="choices">
+      {% for choice in question.choices %}<button type="submit" name="answer" value="{{ loop.index0 }}">{{ loop.index }}. {{ choice }}</button>{% endfor %}
+      </form>
+    {% endif %}
+    {% if request.query_params.get('result') == 'correct' %}<div class="note">🎉 正解！ 10 XP 獲得！</div>{% elif request.query_params.get('result') == 'wrong' %}<div class="note">惜しい！また明日チャレンジしよう。</div>{% elif request.query_params.get('result') == 'already' %}<div class="note">今日はすでに回答済みです。</div>{% endif %}
+  </section>
+  <section class="panel" style="margin-top:16px"><h2>🏆 称号一覧</h2><p>見習い：0 XP ／ 挑戦者：10 XP ／ 知識ハンター：40 XP ／ ひらめき名人：100 XP ／ 雑学マスター：250 XP ／ クイズ伝説：500 XP</p></section>
+</div>
+{% endblock %}
