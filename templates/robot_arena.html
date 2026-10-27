@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}ロボットアリーナ{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/robot_arena.css">{% endblock %}
+{% block content %}
+<div class="robot-page">
+ <header class="robot-hero"><div><p class="eyebrow">TACTICAL COMBAT SIMULATOR</p><h1>🤖 ROBOT ARENA</h1><p>機体を選んで出撃。訓練場・ボットバトル・フレンド対戦の操作感を試そう。</p></div><div class="xp-pill">⭐ {{ state.xp }} XP</div></header>
+ {% if notice %}<p class="robot-notice">{{ notice }}</p>{% endif %}
+ <section class="arena-wrap"><div class="arena-top"><div><b id="mode-title">BOT BATTLE</b><small>ステージ：<span id="stage-name">ランダム選択</span></small></div><div class="mode-buttons"><button data-mode="bot" class="active">ボットバトル</button><button data-mode="training">訓練場</button><button data-mode="friend">フレンド対戦</button></div></div>
+ <canvas id="arena" width="1000" height="570" aria-label="ロボットアリーナゲーム画面"></canvas>
+ <div class="arena-hud"><span>WASD / 左スティック：移動</span><span>マウス / 右スティック：照準・攻撃</span><span>SPACE / U：ウルト</span><button id="start-match">出撃 / 再出撃</button></div>
+ <div class="mobile-controls"><div class="pad" id="move-pad"><span>MOVE</span><i></i></div><div class="pad aim" id="aim-pad"><span>AIM / FIRE</span><i></i></div><button id="ult-button">ULT</button></div>
+ <div class="friend-room"><label>フレンド部屋コード <input id="room-code" maxlength="12" placeholder="例: R7K2P9"></label><button id="make-room">コードを作る</button><button id="copy-room">コピー</button><p>※このパッケージの部屋コードはローカル試作です。インターネット越しの同期対戦にはWebSocket等のサーバー実装が別途必要です。</p></div>
+ </section>
+ <h2>機体ガレージ</h2><p class="subtext">機体ごとに価格・HP・速度・武器・必殺技が異なります。万能な最強機体ではなく、役割の違いを活かそう。</p>
+ <section class="robot-grid">{% for r in robots %}<article class="robot-card {% if r.equipped %}equipped{% endif %}" style="--robot-color:{{ r.color }}"><div class="robot-model"><div class="tank-track"></div><div class="tank-body"></div><div class="tank-turret"></div><div class="tank-barrel"></div><div class="tank-glow"></div></div><div class="robot-name">{{ r.name }}</div><p>{{ r.desc }}</p><div class="robot-stats"><span>HP <b>{{ r.hp }}</b></span><span>速度 <b>{{ r.speed }}</b></span><span>攻撃 <b>{{ r.damage }}</b></span><span>射程 <b>{{ r.range }}</b></span></div><div class="weapon">通常：{{ r.weapon }}<br>ULT：{{ r.ultimate }}</div><div class="robot-actions">{% if r.owned %}{% if r.equipped %}<button disabled>選択中</button>{% else %}<form method="post" action="/robots/equip"><input type="hidden" name="robot_id" value="{{ r.id }}"><button>この機体を選択</button></form>{% endif %}{% elif r.available %}<form method="post" action="/robots/buy"><input type="hidden" name="robot_id" value="{{ r.id }}"><button {% if state.xp < r.price %}disabled{% endif %}>購入 · {{ r.price }} XP</button></form>{% else %}<button disabled>ルート専用</button>{% endif %}</div></article>{% endfor %}</section>
+</div><script src="/static/robot_arena.js" defer></script>
+{% endblock %}
