@@ -250,25 +250,44 @@ def perms_of(role: Optional[str]) -> Dict[str, bool]:
 
 def can_act(actor_role: str, target_role: str, actor_is_root: bool = False,
             target_is_root: bool = False, same: bool = False) -> bool:
-    """actor が target を操作（削除・降格・停止・PW変更）できるか。"""
-    if actor_is_root:
-        return True
-    if target_is_root:
+    """対象が自分より下位で、ルート本人でない場合だけ操作可能。"""
+    if same or target_is_root:
         return False
-    if same:
+    if actor_is_root:
         return True
     return level(actor_role) > level(target_role)
 
 
 def assignable(actor_role: str, actor_is_root: bool = False) -> List[str]:
-    """通常は直下の1役職だけ付与可能。rootのみ全役職を付与できる。"""
-    # Even root follows least-privilege when creating/changing another account:
-    # exactly one rank below the actor. Root-only recovery is an out-of-band task.
+    """新規作成は原則として直下の1役職だけ。ルートは管理者を作成可能。"""
+    if actor_is_root:
+        return ["admin"]
     if actor_role not in LEVEL:
         return []
-    next_lower = [r for r in ROLES if LEVEL[r] == LEVEL[actor_role] - 10]
-    return next_lower
+    return [r for r in ROLES if LEVEL[r] == LEVEL[actor_role] - 10]
+
+
+def changeable_roles(actor_role: str, actor_is_root: bool = False) -> List[str]:
+    """既存アカウントの変更先。自分の直下までの役職を選択可能。"""
+    if actor_is_root:
+        return list(ROLES)  # ルートは管理者以下を管理できる
+    if actor_role not in LEVEL:
+        return []
+    ceiling = LEVEL[actor_role] - 10
+    return [r for r in ROLES if LEVEL[r] <= ceiling]
 
 
 def can_assign(actor_role: str, new_role: str, actor_is_root: bool = False) -> bool:
+    """新規アカウント作成用。作成者の直下1役職のみ許可。"""
     return new_role in assignable(actor_role, actor_is_root)
+
+
+def can_change_role(actor_role: str, target_role: str, new_role: str,
+                    actor_is_root: bool = False, target_is_root: bool = False,
+                    same: bool = False) -> bool:
+    """対象は自分より下位に限り、変更先は自分の直下以下まで。"""
+    if same or target_is_root:
+        return False
+    if not actor_is_root and level(actor_role) <= level(target_role):
+        return False
+    return new_role in changeable_roles(actor_role, actor_is_root)

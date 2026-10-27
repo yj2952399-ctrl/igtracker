@@ -72,6 +72,9 @@ from . import hijack
 app.include_router(hijack.router)
 # --- 封鎖（新規） ---
 app.include_router(lockdown.router)
+
+# --- 安全なクイズ・育成ゲーム ---
+from . import arcade
 # ---------- Instagram 接続の状態管理 ----------
 
 _IG_LOCK = threading.RLock()
@@ -322,8 +325,8 @@ def _guard(request: Request, target: str, key: str, purge: bool = False) -> str:
         _perm(request, "users.purge")
     if users.norm(target) == users.norm(me):
         raise HTTPException(403, "自分自身への権限・アカウント操作は禁止されています")
-    if users.is_root(target) and not users.is_root(me):
-        raise HTTPException(403, "ルート管理者は触れません")
+    if users.is_root(target):
+        raise HTTPException(403, "ルート管理者アカウントは変更できません")
     if not users.is_root(me):
         if roles.level(users.role_of(me)) <= roles.level(users.role_of(target)):
             raise HTTPException(403, "同格以上には触れません")
@@ -887,7 +890,7 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
         d["root"] = users.is_root(r["username"])
         d["same"] = users.norm(r["username"]) == users.norm(me)
         d["can_act"] = roles.can_act(me_role, r["role"], me_root, d["root"], d["same"])
-        d["role_options"] = sorted(set(assign + [r["role"]]),
+        d["role_options"] = sorted(roles.changeable_roles(me_role, me_root),
                                    key=lambda x: -roles.LEVEL.get(x, 0))
         rows.append(d)
     # --- 監査ログ：sqlite3.Row を先に dict 化してから .get() を使う（AttributeError 対策） ---
@@ -985,8 +988,12 @@ def admin_set_adminpw(request: Request, target: str, password: str = Form(...),
 def admin_role(request: Request, target: str, role: str = Form(...),
                u=Depends(admin_auth)):
     me = _guard(request, target, "users.role")
-    if not roles.can_assign(users.role_of(me), role, users.is_root(me)):
-        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("その役職にはできません"), 303)
+    target_row = users.get(target)
+    if not target_row or not roles.can_change_role(
+            users.role_of(me), target_row["role"], role,
+            users.is_root(me), users.is_root(target),
+            users.norm(target) == users.norm(me)):
+        return RedirectResponse(ADMIN_PATH + "/?err=" + quote("対象の役職または変更先の役職が許可されていません"), 303)
     try:
         users.set_role(target, role)
         users.audit(me, "admin_role", {"username": target, "role": role})
@@ -1045,6 +1052,25 @@ def request_actor(_):
     return tenancy.get_current() or ""
 
 app.include_router(admin)
+
+# ---------- クイズ・XP・称号・ペット育成 ----------
+@app.get("/arcade", response_class=HTMLResponse)
+def arcade_home(request: Request, u=Depends(auth)):
+    username = request.state.real_user or u
+    question = arcade.daily_question()
+    progress = arcade.get_progress(username)
+    today_result = arcade.get_today_result(username)
+    return render("arcade.html", request, question=question, progress=progress,
+                  today_result=today_result, title=arcade.title_for(progress["xp"]))
+
+@app.post("/arcade/answer")
+def arcade_answer(request: Request, answer: int = Form(...), u=Depends(auth)):
+    username = request.state.real_user or u
+    question = arcade.daily_question()
+    if answer < 0 or answer >= len(question["choices"]):
+        raise HTTPException(status_code=400, detail="回答が不正です")
+    result = arcade.submit_answer(username, question, answer)
+    return RedirectResponse("/arcade?result=" + quote(result), status_code=303)
 
 # ---------- ダッシュボード ----------
 
