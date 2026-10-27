@@ -168,22 +168,13 @@ def _ident(form: Dict[str, str]) -> str:
 
 
 def _admin(request: Request) -> bool:
+    """封鎖設定はルート管理者だけが変更できる。ロールや表示用フラグを信用しない。"""
     try:
-        if bool(getattr(request.state, "is_admin", False)):
-            return True
-        if bool(getattr(request.state, "console_ok", False)):
-            return True
-        if bool(getattr(request.state, "is_root", False)):
-            return True
+        from . import users
+        actor = getattr(request.state, "real_user", None) or getattr(request.state, "user_name", None)
+        return bool(actor and users.is_root(str(actor)))
     except Exception:
-        pass
-    try:
-        u = getattr(request.state, "user_name", None)
-        if u and is_admin_ident(str(u)):
-            return True
-    except Exception:
-        pass
-    return False
+        return False
 
 
 # ---------------- 表示 ----------------
@@ -351,7 +342,9 @@ async def api_set(request: Request, u=Depends(_auth)):
 
 
 @router.post("/lock/toggle")
-def api_toggle(u=Depends(_auth)):
+def api_toggle(request: Request, u=Depends(_auth)):
+    if not _admin(request):
+        raise HTTPException(403, "ルート管理者のみ")
     st = load()
     st["on"] = 0 if st["on"] else 1
     st["at"] = _now()

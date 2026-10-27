@@ -87,6 +87,11 @@ _BASE: List[str] = ["console.view"] + FEATURES
 # 後から足したキー。保存済み roles.json に現れない間だけ既定に追従させる。
 _GRANT_IF_ABSENT: List[str] = ["feature.dm"]
 
+# These capabilities can alter privilege boundaries, erase data, or expose backups.
+# They are hard-denied to non-admin roles regardless of roles.json contents.
+ROOT_ONLY_PERMS = {"roles.edit", "users.purge", "backup.all"}
+ADMIN_ONLY_PERMS = {"users.role", "users.setadminpw"}
+
 # 既定の権限（役職 → 許可キー）
 DEFAULT: Dict[str, List[str]] = {
     "user": sorted(set(_BASE)),
@@ -94,12 +99,10 @@ DEFAULT: Dict[str, List[str]] = {
     "mid": sorted(set(_BASE + ["users.view", "audit.view", "view_as"])),
     "upper": sorted(set(_BASE + ["users.view", "audit.view", "view_as",
                                  "users.create", "users.setpw", "users.disable",
-                                 "lockdown", "backup.all"])),
+                                 "lockdown"])),
     "deputy": sorted(set(_BASE + ["users.view", "audit.view", "view_as",
                                   "users.create", "users.setpw", "users.disable",
-                                  "lockdown", "backup.all", "users.role",
-                                  "users.setadminpw", "users.delete",
-                                  "tenants.view"])),
+                                  "lockdown", "users.delete", "tenants.view"])) ,
     "admin": sorted({p["key"] for p in PERMS}),
 }
 
@@ -165,6 +168,10 @@ def load() -> Dict[str, Set[str]]:
         except Exception:
             pass
 
+    # Never trust persisted matrix for critical privilege-boundary permissions.
+    for r in ROLES:
+        if r != "admin":
+            out[r].difference_update(ROOT_ONLY_PERMS | ADMIN_ONLY_PERMS)
     # 後から足したキーは、保存ファイルに一度も出てこない間だけ既定に追従
     for k in _GRANT_IF_ABSENT:
         if k in raw_seen:
@@ -172,6 +179,10 @@ def load() -> Dict[str, Set[str]]:
         for r in ROLES:
             if k in DEFAULT.get(r, []):
                 out[r].add(k)
+
+    for r in ROLES:
+        if r != "admin":
+            out[r].difference_update(ROOT_ONLY_PERMS | ADMIN_ONLY_PERMS)
 
     with _lock:
         _cache["mtime"] = mt
@@ -181,15 +192,19 @@ def load() -> Dict[str, Set[str]]:
 
 def save_perms(mapping: Dict[str, List[str]]) -> None:
     p = _path()
-    doc = {"perms": {r: sorted({str(k) for k in mapping.get(r, []) if str(k)})
-                     for r in ROLES}}
+    normalized = {r: {str(k) for k in mapping.get(r, []) if str(k) in
+                      {p["key"] for p in PERMS}} for r in ROLES}
+    for r in ROLES:
+        if r != "admin":
+            normalized[r].difference_update(ROOT_ONLY_PERMS | ADMIN_ONLY_PERMS)
+    doc = {"perms": {r: sorted(normalized[r]) for r in ROLES}}
     try:
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
         os.replace(tmp, p)
-    except Exception:
-        pass
+    except Exception as e:
+        raise OSError(f"権限マトリクスを保存できません: {e}") from e
     _bust()
 
 
@@ -246,13 +261,13 @@ def can_act(actor_role: str, target_role: str, actor_is_root: bool = False,
 
 
 def assignable(actor_role: str, actor_is_root: bool = False) -> List[str]:
-    """actor が付与できる役職（強い順）。自分と同格は付与できない。"""
-    if actor_is_root:
-        return list(ROLES)
-    if actor_role == "admin":
-        return [r for r in ROLES if r != "admin"]
-    lv = level(actor_role)
-    return [r for r in ROLES if level(r) < lv]
+    """通常は直下の1役職だけ付与可能。rootのみ全役職を付与できる。"""
+    # Even root follows least-privilege when creating/changing another account:
+    # exactly one rank below the actor. Root-only recovery is an out-of-band task.
+    if actor_role not in LEVEL:
+        return []
+    next_lower = [r for r in ROLES if LEVEL[r] == LEVEL[actor_role] - 10]
+    return next_lower
 
 
 def can_assign(actor_role: str, new_role: str, actor_is_root: bool = False) -> bool:

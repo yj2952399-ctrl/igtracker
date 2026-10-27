@@ -306,6 +306,11 @@ def _perm(request: Request, key: str) -> str:
         raise HTTPException(401, "ログインしてください")
     if users.is_root(u):
         return u
+    # Matrix settings can never grant root-only or admin-only capabilities.
+    if key in roles.ROOT_ONLY_PERMS:
+        raise HTTPException(403, "この操作はルート管理者専用です")
+    if key in roles.ADMIN_ONLY_PERMS and users.role_of(u) != "admin":
+        raise HTTPException(403, "この操作は管理者専用です")
     if not roles.has(users.role_of(u), key):
         raise HTTPException(403, f"権限がありません: {roles.label(key)}")
     return u
@@ -316,7 +321,7 @@ def _guard(request: Request, target: str, key: str, purge: bool = False) -> str:
     if purge:
         _perm(request, "users.purge")
     if users.norm(target) == users.norm(me):
-        return me
+        raise HTTPException(403, "自分自身への権限・アカウント操作は禁止されています")
     if users.is_root(target) and not users.is_root(me):
         raise HTTPException(403, "ルート管理者は触れません")
     if not users.is_root(me):
@@ -747,7 +752,8 @@ def _console_ctx():
             "levels": roles.LEVEL, "links": _CONSOLE_LINKS}
 
 def _can_edit_roles(me: str) -> bool:
-    return users.is_root(me) or roles.has(users.role_of(me), "roles.edit")
+    # A non-root administrator must not be able to grant themselves privileges.
+    return users.is_root(me)
 
 @app.get("/console", response_class=HTMLResponse)
 def console_page(request: Request, u=Depends(auth)):
@@ -771,7 +777,10 @@ async def console_roles_save(request: Request, u=Depends(auth)):
     new = {}
     for r in roles.ROLES:
         new[r] = [p["key"] for p in roles.PERMS if form.get(f"p.{r}.{p['key']}")]
-    roles.save_perms(new)
+    try:
+        roles.save_perms(new)
+    except OSError:
+        return RedirectResponse("/console/roles?err=" + quote("保存に失敗しました。サーバーログを確認してください"), 303)
     users.audit(me, "roles_save", {r: len(v) for r, v in new.items()})
     return RedirectResponse("/console/roles?msg=" + quote("権限を保存しました"), 303)
 
@@ -1003,6 +1012,8 @@ def admin_delete(request: Request, target: str, purge: str = Form(""),
     if users.norm(target) == users.norm(request.state.real_user):
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote("自分自身は削除できません"), 303)
     me = _guard(request, target, "users.delete", purge=bool(purge))
+    if purge and not users.is_root(me):
+        raise HTTPException(403, "データ完全削除はルート管理者専用です")
     try:
         users.delete(target)
     except ValueError as e:
@@ -1012,6 +1023,11 @@ def admin_delete(request: Request, target: str, purge: str = Form(""),
                       ignore_errors=True)
         tenancy.close(target)
     users.audit(me, "admin_delete", {"username": target, "purge": bool(purge)})
+    # Persist the tombstone and post-deletion account index immediately when backup is configured.
+    try:
+        persist.push(force=True)
+    except Exception as e:
+        print("[backup] 削除後の共有バックアップに失敗:", repr(e))
     return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{target} を削除しました"), 303)
 
 @admin.get("/switch")

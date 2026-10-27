@@ -275,6 +275,55 @@ def is_admin(u):
 
 # ---------- 作成・更新 ----------
 
+def _tombstone_path():
+    return os.getenv("DELETED_USERS_FILE", "data/deleted_users.json")
+
+
+def _mark_deleted(u):
+    path = _tombstone_path()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    try:
+        with open(path, encoding="utf-8") as f:
+            items = json.load(f)
+        if not isinstance(items, list):
+            items = []
+    except Exception:
+        items = []
+    if norm(u) not in items:
+        items.append(norm(u))
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(sorted(set(items)), f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def is_tombstoned(u):
+    try:
+        with open(_tombstone_path(), encoding="utf-8") as f:
+            items = json.load(f)
+        return norm(u) in {norm(x) for x in items} if isinstance(items, list) else False
+    except Exception:
+        return False
+
+
+def _clear_tombstone(u):
+    path = _tombstone_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            items = json.load(f)
+        items = [x for x in items if norm(x) != norm(u)] if isinstance(items, list) else []
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except FileNotFoundError:
+        pass
+
+
 def create(u, pw, role="user", note="", must_change=0):
     u = norm(u)
     if not valid(u):
@@ -284,20 +333,21 @@ def create(u, pw, role="user", note="", must_change=0):
     if len(pw or "") < 8:
         raise ValueError("パスワードは8文字以上にしてください")
     if role not in roles.ROLES:
-        role = "user"
+        raise ValueError("未知の役職です")
     salt = secrets.token_bytes(16)
     with _lock:
         c = _c()
-        c.execute("""INSERT INTO users(username,pwd_salt,pwd_hash,pw_epoch,role,
-            disabled,must_change,created_at,note) VALUES(?,?,?,1,?,0,?,?,?)
-            ON CONFLICT(username) DO UPDATE SET pwd_salt=excluded.pwd_salt,
-            pwd_hash=excluded.pwd_hash, pw_epoch=users.pw_epoch+1,
-            role=excluded.role, disabled=0, must_change=excluded.must_change,
-            note=excluded.note""",
-            (u, base64.b64encode(salt).decode(), _hash(pw, salt),
-             role, int(bool(must_change)), now(), note))
-        c.execute("DELETE FROM sessions WHERE username=? AND realm='user'", (u,))
+        if c.execute("SELECT 1 FROM users WHERE username=?", (u,)).fetchone():
+            raise ValueError("そのユーザー名は既に使用されています")
+        try:
+            c.execute("""INSERT INTO users(username,pwd_salt,pwd_hash,pw_epoch,role,
+                disabled,must_change,created_at,note) VALUES(?,?,?,1,?,0,?,?,?)""",
+                (u, base64.b64encode(salt).decode(), _hash(pw, salt),
+                 role, int(bool(must_change)), now(), note))
+        except sqlite3.IntegrityError as e:
+            raise ValueError("そのユーザー名は既に使用されています") from e
         c.commit()
+    _clear_tombstone(u)
     audit(u, "create", {"role": role})
     return u
 
@@ -364,6 +414,7 @@ def delete(u):
     u = norm(u)
     if is_root(u):
         raise ValueError("ルート管理者は削除できません")
+    _mark_deleted(u)
     with _lock:
         c = _c()
         c.execute("DELETE FROM users WHERE username=?", (u,))

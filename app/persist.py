@@ -152,13 +152,22 @@ def _shared_paths():
             seen.add(ap)
             out.append(ap)
 
+    # Deletion tombstones must be restored before root.db/account snapshots.
+    tomb = os.getenv("DELETED_USERS_FILE", "data/deleted_users.json")
+    add(tomb)
     for env in ("ROOT_DB", "SETTINGS_FILE", "SESSION_FILE", "CHAT_DB", "DM_DB"):
         v = os.getenv(env)
         if v:
             add(v)
     for p in ("data/root.db", "data/settings.json", "data/session.json",
-              "data/chat.db", "data/dm.db"):
+              "data/chat.db", "data/dm.db", "data/lockdown.json"):
         add(p)
+    try:
+        from . import tenancy
+        add(os.path.join(tenancy.ROOT, "roles.json"))
+        add(os.path.join(tenancy.ROOT, "lockdown.json"))
+    except Exception:
+        pass
     return out
 
 
@@ -378,6 +387,9 @@ def _restore_account(user, row):
     except Exception:
         return False
     u = U.norm(user)
+    # A deleted account must never be resurrected from an older remote snapshot.
+    if U.is_tombstoned(u):
+        return False
     with U._lock:
         c = U._c()
         if c.execute("SELECT 1 FROM users WHERE username=?", (u,)).fetchone():
@@ -582,6 +594,12 @@ def pull_accounts():
             name = item["name"]
             doc = _json_get(f"{root}/{name}/meta.json")
             if not doc or not doc.get("account"):
+                continue
+            try:
+                from . import users as U
+                if U.is_tombstoned(doc["account"]["username"]):
+                    continue
+            except Exception:
                 continue
             if _restore_account(doc["account"]["username"], doc["account"]):
                 out.append(doc["account"]["username"])
