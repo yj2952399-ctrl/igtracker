@@ -1,107 +1,51 @@
 {% extends "base.html" %}{% block title %}🗣 全員チャット{% endblock %}{% block content %}
 <h1>🗣 全員チャット</h1>
-<p class="dim">ログイン中の全員が同じ部屋で喋れます。2.5秒ごとに自動更新。
-  在室 <b id="cnt">{{ online|length }}</b> 人。</p>
-
+<p class="dim">ログイン中の全員が同じ部屋で喋れます。2.5秒ごとに自動更新。画像・動画は1ファイル20MBまで。 在室 <b id="cnt">{{ online|length }}</b> 人。</p>
 <div class="card" style="display:flex;gap:12px;flex-wrap:wrap">
   <div style="flex:1;min-width:250px">
-    <div id="log" style="height:52vh;overflow:auto;background:#11141a;
-      border:1px solid #262b36;border-radius:8px;padding:8px"></div>
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <input id="txt" placeholder="Enterで送信（最大{{ max_len }}字）" style="flex:1"
-             maxlength="{{ max_len }}" autocomplete="off">
+    <div id="log" style="height:52vh;overflow:auto;background:#11141a;border:1px solid #262b36;border-radius:8px;padding:8px"></div>
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
+      <input id="txt" placeholder="Enterで送信（最大{{ max_len }}字）" style="flex:1;min-width:130px" maxlength="{{ max_len }}" autocomplete="off">
+      <input id="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mov" hidden>
+      <button id="pick" type="button" class="mini">📎 画像/動画</button>
       <button id="send" type="button">送信</button>
       {% if chat_admin %}<button id="clear" type="button" class="mini">全消去</button>{% endif %}
     </div>
+    <div id="chosen" class="dim" style="font-size:12px;min-height:16px"></div>
     <div class="dim" id="stat" style="font-size:12px;min-height:16px"></div>
   </div>
-  <div style="min-width:140px">
-    <b style="font-size:12px">在室者</b>
-    <div id="online" class="dim" style="font-size:12px;line-height:1.9"></div>
-  </div>
+  <div style="min-width:140px"><b style="font-size:12px">在室者</b><div id="online" class="dim" style="font-size:12px;line-height:1.9"></div></div>
 </div>
+<style>
+.chat-media{display:block;max-width:min(100%,520px);max-height:360px;border-radius:10px;margin:7px 0;border:1px solid #343b49;background:#090b10}.chat-caption{white-space:pre-wrap;overflow-wrap:anywhere}.chat-file-name{font-size:11px;color:#aeb7c9}
+</style>
 {% endblock %}
 {% block scripts %}
 <script>
 (function () {
-  var log = document.getElementById('log'), txt = document.getElementById('txt'),
-      stat = document.getElementById('stat'), online = document.getElementById('online'),
-      cnt = document.getElementById('cnt');
-  var last = 0, ME = {{ me|tojson }}, ADMIN = {{ chat_admin|tojson }}, busy = false;
-
-  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
-
-  function line(m) {
-    var d = document.createElement('div');
-    d.style.cssText = 'padding:3px 2px;border-bottom:1px solid #1c2029;font-size:13px;line-height:1.6';
-    var t = (m.ts || '').replace('T', ' ').slice(5, 19);
-    var body = m.deleted
-      ? '<span style="color:#8b93a7;text-decoration:line-through">' + esc(m.text) + '</span>'
-      : esc(m.text);
-    d.innerHTML = '<span style="color:#8b93a7;font-family:ui-monospace,monospace">' + t + '</span> ' +
-      (m.avatar ? '<img class="avatar avatar-sm" src="' + esc(m.avatar) + '" alt="">' :
-       '<span class="avatar avatar-sm avatar-fallback">👤</span>') +
-      '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' +
-      esc(m.display_name || m.user) + '</b> ' + body;
-    if (!m.deleted && (m.mine || ADMIN)) {
-      var b = document.createElement('button');
-      b.textContent = '×'; b.className = 'mini';
-      b.style.cssText = 'float:right;padding:1px 7px';
-      b.onclick = function () { del_(m.id); };
-      d.appendChild(b);
+  var log=document.getElementById('log'),txt=document.getElementById('txt'),stat=document.getElementById('stat'),online=document.getElementById('online'),cnt=document.getElementById('cnt'),media=document.getElementById('media'),chosen=document.getElementById('chosen');
+  var last=0,ADMIN={{ chat_admin|tojson }},busy=false;
+  function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
+  function line(m){
+    if(log.querySelector('[data-id="'+m.id+'"]'))return;
+    var d=document.createElement('div');d.dataset.id=m.id;d.style.cssText='padding:5px 2px 8px;border-bottom:1px solid #1c2029;font-size:13px;line-height:1.6';
+    var t=document.createElement('span');t.style.cssText='color:#8b93a7;font-family:ui-monospace,monospace';t.textContent=(m.ts||'').replace('T',' ').slice(5,19)+' ';
+    var av=document.createElement('span');if(m.avatar){var ai=document.createElement('img');ai.className='avatar avatar-sm';ai.src=m.avatar;ai.alt='';av.appendChild(ai);}else{av.className='avatar avatar-sm avatar-fallback';av.textContent='👤';}
+    var user=document.createElement('b');user.style.color=m.mine?'#7ee08a':'#8fb4ff';user.textContent=' '+(m.display_name||m.user)+' ';
+    d.append(t,av,user);
+    if(m.deleted){var gone=document.createElement('span');gone.style.cssText='color:#8b93a7;text-decoration:line-through';gone.textContent='削除済み';d.appendChild(gone);}
+    else {
+      if(m.text){var body=document.createElement('div');body.className='chat-caption';body.textContent=m.text;d.appendChild(body);}
+      if(m.media_url){var mediaEl;if(m.media_type==='video'){mediaEl=document.createElement('video');mediaEl.controls=true;mediaEl.preload='metadata';mediaEl.playsInline=true;}else{mediaEl=document.createElement('img');mediaEl.alt=m.media_name||'送信画像';mediaEl.loading='lazy';}mediaEl.className='chat-media';mediaEl.src=m.media_url;d.appendChild(mediaEl);var fn=document.createElement('div');fn.className='chat-file-name';fn.textContent=m.media_name||'';d.appendChild(fn);}
     }
-    d.dataset.id = m.id;
-    log.appendChild(d);
+    if(!m.deleted&&(m.mine||ADMIN)){var b=document.createElement('button');b.textContent='×';b.className='mini';b.style.cssText='float:right;padding:1px 7px';b.onclick=function(){del_(m.id);};d.appendChild(b);}log.appendChild(d);
   }
-
-  function pull() {
-    fetch('/chat/api/messages?since=' + last, { headers: { 'Accept': 'application/json' } })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (!j || !j.ok) return;
-        var near = log.scrollHeight - log.scrollTop - log.clientHeight < 90;
-        (j.msgs || []).forEach(function (m) { last = Math.max(last, m.id); line(m); });
-        online.innerHTML = (j.online_users || (j.online || []).map(function(n){return {username:n,display_name:n};}))
-          .map(function (n) { return (n.avatar ? '<img class="avatar avatar-sm" src="' + esc(n.avatar) + '" alt="">' :
-            '<span class="avatar avatar-sm avatar-fallback">👤</span>') + ' ' + esc(n.display_name || n.username); }).join('<br>');
-        cnt.textContent = (j.online || []).length;
-        if ((j.msgs || []).length && near) log.scrollTop = log.scrollHeight;
-      }).catch(function () {});
-  }
-
-  function send() {
-    var v = txt.value.trim();
-    if (!v || busy) return;
-    busy = true; stat.textContent = '';
-    fetch('/chat/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: v }) })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        busy = false;
-        if (j && j.ok) { txt.value = ''; pull(); }
-        else { stat.textContent = (j && j.why) || '送信できませんでした'; }
-      }).catch(function () { busy = false; stat.textContent = '通信エラー'; });
-  }
-
-  function del_(id) {
-    fetch('/chat/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: id }) }).then(function () {
-      last = 0; log.innerHTML = ''; pull();
-    }).catch(function () {});
-  }
-
-  document.getElementById('send').onclick = send;
-  txt.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { e.preventDefault(); send(); }
-  });
-  var cb = document.getElementById('clear');
-  if (cb) cb.onclick = function () {
-    if (confirm('全部消しますか？'))
-      fetch('/chat/api/clear', { method: 'POST' }).then(function () {
-        last = 0; log.innerHTML = ''; pull(); });
-  };
-
-  pull(); setInterval(pull, 2500);
+  function pull(){fetch('/chat/api/messages?since='+last,{headers:{'Accept':'application/json'}}).then(function(r){return r.json();}).then(function(j){if(!j||!j.ok)return;var near=log.scrollHeight-log.scrollTop-log.clientHeight<90;(j.msgs||[]).forEach(function(m){last=Math.max(last,m.id);line(m);});online.innerHTML=(j.online_users||(j.online||[]).map(function(n){return{username:n,display_name:n};})).map(function(n){return(n.avatar?'<img class="avatar avatar-sm" src="'+esc(n.avatar)+'" alt="">':'<span class="avatar avatar-sm avatar-fallback">👤</span>')+' '+esc(n.display_name||n.username);}).join('<br>');cnt.textContent=(j.online||[]).length;if((j.msgs||[]).length&&near)log.scrollTop=log.scrollHeight;}).catch(function(){});}
+  function send(){var v=txt.value.trim(),f=media.files[0];if((!v&&!f)||busy)return;busy=true;stat.textContent='送信中…';var url=f?'/chat/api/upload':'/chat/api/send',opts;if(f){var fd=new FormData();fd.append('file',f);fd.append('caption',v);opts={method:'POST',body:fd};}else{opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:v})};}fetch(url,opts).then(function(r){return r.json().then(function(j){return{ok:r.ok,data:j};});}).then(function(x){busy=false;if(x.ok&&x.data&&x.data.ok){txt.value='';media.value='';chosen.textContent='';stat.textContent='';pull();}else{stat.textContent=(x.data&&x.data.detail)||(x.data&&x.data.why)||'送信できませんでした';}}).catch(function(){busy=false;stat.textContent='通信エラー';});}
+  function del_(id){fetch('/chat/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})}).then(function(){last=0;log.innerHTML='';pull();}).catch(function(){});}
+  document.getElementById('pick').onclick=function(){media.click();};media.onchange=function(){chosen.textContent=media.files[0]?'選択中: '+media.files[0].name+'（20MB以下）':'';};document.getElementById('send').onclick=send;txt.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();send();}});
+  var cb=document.getElementById('clear');if(cb)cb.onclick=function(){if(confirm('全部消しますか？'))fetch('/chat/api/clear',{method:'POST'}).then(function(){last=0;log.innerHTML='';pull();});};
+  pull();setInterval(pull,2500);
 })();
 </script>
 {% endblock %}

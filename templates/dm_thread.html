@@ -23,19 +23,23 @@
     border:1px solid #262b36;border-radius:8px;padding:8px"></div>
   <form method="post" action="/dm/t/{{ t.id }}/send" id="frm"
         style="display:flex;gap:6px;margin-top:8px">
-    <input id="txt" name="text" placeholder="Enterで送信（最大{{ max_len }}字）" style="flex:1"
+    <input id="txt" name="text" placeholder="Enterで送信（最大{{ max_len }}字）" style="flex:1;min-width:120px"
            maxlength="{{ max_len }}" autocomplete="off">
+    <input id="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mov" hidden>
+    <button id="pick" type="button" class="mini">📎 画像/動画</button>
     <button id="send" type="submit">送信</button>
   </form>
+  <div class="dim" id="chosen" style="font-size:12px;min-height:16px"></div>
   <div class="dim" id="stat" style="font-size:12px;min-height:16px"></div>
 </div>
 {% endblock %}
 
+<style>.chat-media{display:block;max-width:min(100%,520px);max-height:360px;border-radius:10px;margin:7px 0;background:#090b10}</style>
 {% block scripts %}
 <script>
 (function () {
   var log = document.getElementById('log'), txt = document.getElementById('txt'),
-      stat = document.getElementById('stat'), frm = document.getElementById('frm');
+      stat = document.getElementById('stat'), frm = document.getElementById('frm'), media = document.getElementById('media'), chosen = document.getElementById('chosen');
   var TID = {{ t.id }}, ME = {{ me|tojson }}, NOTIFY = {{ notify|tojson }};
   var last = 0, busy = false;
 
@@ -51,14 +55,15 @@
     }
     d.style.cssText = 'padding:3px 2px;border-bottom:1px solid #1c2029;font-size:13px;line-height:1.6';
     var t = (m.ts || '').replace('T', ' ').slice(5, 19);
-    var body = m.deleted
-      ? '<span style="color:#8b93a7;text-decoration:line-through">' + esc(m.text) + '</span>'
-      : esc(m.text);
-    d.innerHTML = '<span style="color:#8b93a7;font-family:ui-monospace,monospace">' + t + '</span> ' +
+    d.innerHTML = '<span style="color:#8b93a7;font-family:ui-monospace,monospace">' + esc(t) + '</span> ' +
       (m.avatar ? '<img class="avatar avatar-sm" src="' + esc(m.avatar) + '" alt="">' :
        '<span class="avatar avatar-sm avatar-fallback">👤</span>') +
-      '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' +
-      esc(m.display_name || m.user) + '</b> ' + body;
+      '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' + esc(m.display_name || m.user) + '</b> ';
+    if (m.deleted) { var gone=document.createElement('span'); gone.style.cssText='color:#8b93a7;text-decoration:line-through'; gone.textContent='削除済み'; d.appendChild(gone); }
+    else {
+      if (m.text) { var body=document.createElement('div'); body.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere'; body.textContent=m.text; d.appendChild(body); }
+      if (m.media_url) { var el; if(m.media_type==='video'){el=document.createElement('video');el.controls=true;el.preload='metadata';el.playsInline=true;}else{el=document.createElement('img');el.alt=m.media_name||'送信画像';el.loading='lazy';} el.src=m.media_url;el.style.cssText='display:block;max-width:min(100%,520px);max-height:360px;border-radius:10px;margin:7px 0;background:#090b10';d.appendChild(el); }
+    }
     if (!m.deleted && m.mine) {
       var b = document.createElement('button');
       b.textContent = '×'; b.className = 'mini';
@@ -87,20 +92,17 @@
   }
 
   function send() {
-    var v = txt.value.trim();
-    if (!v || busy) return;
-    busy = true; stat.textContent = '';
-    fetch('/dm/api/t/' + TID + '/send', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: v }) })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        busy = false;
-        if (j && j.ok) { txt.value = ''; pull(); }
-        else { stat.textContent = (j && j.why) || '送信できませんでした'; }
-      }).catch(function () { busy = false; stat.textContent = '通信エラー'; });
+    var v = txt.value.trim(), f=media.files[0];
+    if ((!v && !f) || busy) return;
+    busy = true; stat.textContent = '送信中…';
+    var url=f?('/dm/api/t/'+TID+'/upload'):('/dm/api/t/'+TID+'/send'), opts;
+    if(f){var fd=new FormData();fd.append('file',f);fd.append('caption',v);opts={method:'POST',body:fd};}
+    else{opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:v})};}
+    fetch(url,opts).then(function(r){return r.json().then(function(j){return{ok:r.ok,data:j};});}).then(function(x){busy=false;if(x.ok&&x.data&&x.data.ok){txt.value='';media.value='';chosen.textContent='';stat.textContent='';pull();}else{stat.textContent=(x.data&&x.data.detail)||(x.data&&x.data.why)||'送信できませんでした';}}).catch(function(){busy=false;stat.textContent='通信エラー';});
   }
 
+  document.getElementById('pick').onclick=function(){media.click();};
+  media.onchange=function(){chosen.textContent=media.files[0]?'選択中: '+media.files[0].name+'（20MB以下）':'';};
   frm.onsubmit = function (e) { e.preventDefault(); send(); };
   txt.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { e.preventDefault(); send(); }
