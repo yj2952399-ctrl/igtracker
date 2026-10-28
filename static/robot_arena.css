@@ -23,3 +23,39 @@
 .final-action-label{color:#ffe76b}
 .robot-card.equipped .tank-body,.robot-card.equipped .tank-turret{filter:drop-shadow(0 0 7px var(--robot-color))}
 @media(max-width:1100px){.mobile-controls{display:flex}}
+
+/* Brawl-like tablet combat HUD: left movement stick, right aim/fire stick, gadget and super above it. */
+.arena-stage{position:relative;width:100%;isolation:isolate;overflow:hidden;border-radius:12px;touch-action:none;background:#101b2a}
+.arena-stage #arena{position:relative;z-index:0}
+.arena-controls{position:absolute;z-index:4;inset:0;display:block;padding:0;pointer-events:none;touch-action:none;user-select:none;-webkit-user-select:none}
+.arena-controls .pad,.arena-controls .combat-button{position:absolute;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}
+.arena-controls .pad{width:clamp(88px,13vw,142px);height:clamp(88px,13vw,142px);border:2px solid #c2e9ff85;background:radial-gradient(circle at 35% 25%,#d8f3ff2a,#09182a9c 70%);box-shadow:inset 0 0 18px #0008,0 3px 16px #0006;backdrop-filter:blur(2px);color:#effaff;font-size:clamp(10px,1.1vw,13px);letter-spacing:.03em}
+.arena-controls .pad i{width:43%;height:43%;background:radial-gradient(circle at 35% 28%,#d8f6ffdf,#4c92c4b8 70%,#1c3857);border:2px solid #d9f4ff;box-shadow:0 3px 9px #0008;transform:translate(0,0)}
+.arena-controls .move-pad{left:3%;bottom:4%}
+.arena-controls .aim{right:3%;bottom:4%;border-color:#ffd5a4a8;background:radial-gradient(circle at 35% 25%,#fff1d72b,#28170e9e 70%)}
+.arena-controls .aim i{background:radial-gradient(circle at 35% 28%,#fff0d9,#e89a5ac9 70%,#743d24);border-color:#fff0d9}
+.aim-stack{display:contents}
+.combat-buttons{display:contents}
+.arena-controls .combat-button{min-width:clamp(58px,7vw,78px);min-height:clamp(58px,7vw,78px);width:clamp(58px,7vw,78px);height:clamp(58px,7vw,78px);padding:5px;border-radius:50%;display:grid;place-items:center;text-align:center;font-size:clamp(10px,1.05vw,13px);line-height:1.15;border:3px solid #e7f4ffb5;box-shadow:0 5px 14px #0009,inset 0 0 0 3px #ffffff1a;white-space:normal}
+.arena-controls .gadget-control{right:21%;bottom:23%;background:radial-gradient(circle at 30% 25%,#c9aaff,#7046bd 52%,#34205f);border-color:#e3d4ff}
+.arena-controls .ult-control{right:11%;bottom:23%;background:radial-gradient(circle at 30% 25%,#fff2a6,#f2a927 55%,#875019);border-color:#fff2b2;color:#201408}
+.arena-controls .final-action{right:11%;bottom:39%;background:radial-gradient(circle at 30% 25%,#fff2a6,#e34a31 55%,#641b24)!important;border-color:#ffe76b!important;color:#fff5c2!important}
+.overlay-control{position:absolute;z-index:7;top:12px;min-height:38px;padding:8px 12px;border-radius:10px;background:#071321d9;color:#eff8ff;border:1px solid #9ab7d7a8;box-shadow:0 3px 12px #0007;font-weight:800;font-size:12px;touch-action:manipulation}
+.touch-toggle{left:12px}.pause-button{right:12px;width:42px;font-size:20px;line-height:1}
+.arena-controls.controls-hidden{display:none}
+.arena-controls.editing-controls{outline:2px dashed #72e7ff;outline-offset:-4px;pointer-events:auto}
+.arena-controls.editing-controls .pad,.arena-controls.editing-controls .combat-button{outline:2px dashed #fff;cursor:move;touch-action:none}
+.pause-overlay{position:absolute;z-index:10;inset:0;display:grid;place-items:center;padding:18px;background:#030813c9;backdrop-filter:blur(7px)}
+.pause-overlay[hidden],.control-settings[hidden]{display:none!important}
+.pause-panel{width:min(420px,95%);max-height:92%;overflow:auto;padding:22px;border:1px solid #6686a7;border-radius:20px;background:linear-gradient(150deg,#1b2c43,#0b1321);box-shadow:0 20px 70px #000b;color:#f3f8ff}
+.pause-panel h2{margin:0 0 8px;font-size:1.6rem}.pause-panel p{color:#b2c5da;font-size:.9rem;line-height:1.5}
+.pause-actions{display:grid;grid-template-columns:1fr;gap:8px;margin:16px 0}.pause-actions button{min-height:44px}.pause-actions #resume-button{background:#1b7b8d;border-color:#8cecff}
+.control-settings{border-top:1px solid #405873;padding-top:12px}.control-settings h3{margin:4px 0}.settings-row{display:flex;align-items:center;gap:10px;padding:10px 0;color:#e4effa}.settings-row input{width:20px;height:20px;accent-color:#5dddf7}
+.control-settings.editing{border:1px dashed #6ce6ff;border-radius:10px;padding:12px;margin-top:10px}
+.arena-hud .desktop-hint{flex:1;min-width:220px}
+@media(max-width:700px){.arena-controls .pad{width:clamp(78px,22vw,104px);height:clamp(78px,22vw,104px)}.arena-controls .combat-button{width:clamp(52px,14vw,66px);height:clamp(52px,14vw,66px);min-width:clamp(52px,14vw,66px);min-height:clamp(52px,14vw,66px);font-size:10px}.arena-controls .gadget-control{right:22%;bottom:27%}.arena-controls .ult-control{right:8%;bottom:27%}.arena-controls .final-action{right:8%;bottom:43%}.overlay-control{top:7px;min-height:34px;padding:6px 9px;font-size:10px}.touch-toggle{left:7px}.pause-button{right:7px;width:36px}.arena-hud .desktop-hint{display:none}}
+@media(min-width:1101px) and (hover:hover) and (pointer:fine){.arena-controls{opacity:.9}.arena-controls .pad{width:100px;height:100px}.arena-controls .combat-button{width:56px;height:56px;min-width:56px;min-height:56px}}
+.pause-overlay.layout-editing{display:block;padding:0;background:transparent;backdrop-filter:none;pointer-events:none}
+.pause-overlay.layout-editing .pause-panel{position:absolute;top:10%;left:50%;transform:translateX(-50%);width:min(390px,82%);max-height:68%;pointer-events:auto;opacity:.96}
+.pause-overlay.layout-editing .pause-panel{width:min(390px,56%);max-height:45%;top:5%}
+@media(max-width:700px){.pause-overlay.layout-editing .pause-panel{width:70%;max-height:48%;top:4%}}
