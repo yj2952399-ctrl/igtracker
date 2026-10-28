@@ -14,3 +14,12 @@
 @media(min-width:701px) and (max-width:1100px){.mobile-controls{justify-content:space-around}.pad{width:118px;height:118px}.arena-hud span{font-size:.76rem}}
 @media(min-width:1101px) and (hover:hover) and (pointer:fine){.mobile-controls{display:none}}
 @media(max-width:700px){.mobile-controls{display:flex;gap:8px;justify-content:space-between}.pad{width:clamp(78px,23vw,100px);height:clamp(78px,23vw,100px)}.touch-actions{gap:6px}#ult-button,#gadget-button{min-width:76px;min-height:42px;padding:8px;font-size:.75rem}.ammo-status{width:100%}}
+
+/* Visible combat actions on desktop, mobile and tablets. */
+#gadget-button{background:linear-gradient(135deg,#3b286b,#214e78);border-color:#a58bff;color:#fff;min-height:42px}
+#gadget-button.cooling{opacity:.65;filter:saturate(.55)}
+.final-action{background:linear-gradient(135deg,#7b1d29,#c74624)!important;border-color:#ffe76b!important;color:#fff5c2!important;box-shadow:0 0 14px #ff8b3d55}
+.final-action:disabled{filter:grayscale(.7);box-shadow:none}
+.final-action-label{color:#ffe76b}
+.robot-card.equipped .tank-body,.robot-card.equipped .tank-turret{filter:drop-shadow(0 0 7px var(--robot-color))}
+@media(max-width:1100px){.mobile-controls{display:flex}}
