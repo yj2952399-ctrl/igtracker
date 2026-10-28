@@ -25,10 +25,11 @@ import secrets
 import string
 import datetime as dt
 
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi import APIRouter, Request, Depends, Form, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 router = APIRouter()
+from .chat_media import save_upload, MEDIA_DIR
 
 DB = os.getenv("DM_DB", "data/dm.db")
 MAX_LEN = int(os.getenv("DM_MAX_LEN", "2000"))
@@ -61,7 +62,7 @@ CREATE TABLE IF NOT EXISTS dm_members(
 CREATE TABLE IF NOT EXISTS dm_msgs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   thread_id INTEGER, ts TEXT, user TEXT, text TEXT,
-  kind TEXT DEFAULT 'msg', deleted INTEGER DEFAULT 0);
+  kind TEXT DEFAULT 'msg', deleted INTEGER DEFAULT 0, media_url TEXT DEFAULT '', media_type TEXT DEFAULT '', media_name TEXT DEFAULT '', media_size INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS dm_msgs_t ON dm_msgs(thread_id, id);
 CREATE INDEX IF NOT EXISTS dm_mem_u ON dm_members(user);
 CREATE INDEX IF NOT EXISTS dm_thr_code ON dm_threads(code);
@@ -79,6 +80,11 @@ def _c():
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA busy_timeout=8000")
         _conn.executescript(SCHEMA)
+        cols = {r["name"] for r in _conn.execute("PRAGMA table_info(dm_msgs)")}
+        for name, typ in (("media_url", "TEXT DEFAULT ''"), ("media_type", "TEXT DEFAULT ''"),
+                          ("media_name", "TEXT DEFAULT ''"), ("media_size", "INTEGER DEFAULT 0")):
+            if name not in cols:
+                _conn.execute(f"ALTER TABLE dm_msgs ADD COLUMN {name} {typ}")
         _conn.commit()
     return _conn
 
@@ -317,11 +323,12 @@ def _join(code, user):
     return None
 
 
-def _post(tid, user, text, kind="msg"):
+def _post(tid, user, text, kind="msg", media=None):
     with _lock:
         c = _c()
-        cur = c.execute("""INSERT INTO dm_msgs(thread_id,ts,user,text,kind)
-            VALUES(?,?,?,?,?)""", (tid, _now(), user, text, kind))
+        media = media or {}
+        cur = c.execute("""INSERT INTO dm_msgs(thread_id,ts,user,text,kind,media_url,media_type,media_name,media_size)
+            VALUES(?,?,?,?,?,?,?,?,?)""", (tid, _now(), user, text, kind, media.get("url", ""), media.get("type", ""), media.get("name", ""), media.get("size", 0)))
         mid = cur.lastrowid
         c.execute("UPDATE dm_threads SET last_at=?, last_text=?, last_user=? WHERE id=?",
                   (_now(), text[:140], user, tid))
@@ -529,6 +536,21 @@ async def api_send(tid: int, request: Request, u=Depends(_auth)):
     if not ok:
         return JSONResponse({"ok": False, "why": why}, status_code=429)
     return {"ok": True, "id": _post(tid, _u().norm(u), text)}
+
+
+@router.post("/dm/api/t/{tid}/upload")
+async def api_upload(tid: int, request: Request, file: UploadFile = File(...), caption: str = Form(""), u=Depends(_auth)):
+    _ok(request)
+    _need(tid, u)
+    saved = await save_upload(file)
+    caption = (caption or "").strip()[:MAX_LEN]
+    ok, why = _rate_ok(_u().norm(u))
+    if not ok:
+        try: (MEDIA_DIR / saved["filename"]).unlink(missing_ok=True)
+        except Exception: pass
+        return JSONResponse({"ok": False, "why": why}, status_code=429)
+    mid = _post(tid, _u().norm(u), caption, media=saved)
+    return {"ok": True, "id": mid}
 
 
 @router.post("/dm/t/{tid}/send")

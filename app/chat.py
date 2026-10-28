@@ -16,6 +16,10 @@ import sqlite3
 import threading
 import time
 import datetime as dt
+from pathlib import Path
+from fastapi import UploadFile, File, Form
+from fastapi.responses import FileResponse
+from .chat_media import save_upload, MEDIA_DIR
 
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -39,7 +43,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_msgs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT, user TEXT, text TEXT, kind TEXT DEFAULT 'msg',
-  deleted INTEGER DEFAULT 0);
+  deleted INTEGER DEFAULT 0, media_url TEXT DEFAULT '', media_type TEXT DEFAULT '', media_name TEXT DEFAULT '', media_size INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS chat_msgs_id ON chat_msgs(id);
 CREATE TABLE IF NOT EXISTS chat_online(
   user TEXT PRIMARY KEY, ts REAL, ua TEXT);
@@ -57,6 +61,11 @@ def _c():
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA busy_timeout=8000")
         _conn.executescript(SCHEMA)
+        cols = {r["name"] for r in _conn.execute("PRAGMA table_info(chat_msgs)")}
+        for name, typ in (("media_url", "TEXT DEFAULT ''"), ("media_type", "TEXT DEFAULT ''"),
+                          ("media_name", "TEXT DEFAULT ''"), ("media_size", "INTEGER DEFAULT 0")):
+            if name not in cols:
+                _conn.execute(f"ALTER TABLE chat_msgs ADD COLUMN {name} {typ}")
         _conn.commit()
     return _conn
 
@@ -191,6 +200,52 @@ async def send(request: Request, u=Depends(_auth)):
         c.commit()
     _touch_online(u, request.headers.get("user-agent", ""))
     return {"ok": True, "id": mid}
+
+
+@router.post("/chat/api/upload")
+async def upload_message(request: Request, file: UploadFile = File(...), caption: str = Form(""), u=Depends(_auth)):
+    saved = await save_upload(file)
+    caption = (caption or "").strip()[:MAX_LEN]
+    ok, why = _rate_ok(u)
+    if not ok:
+        try: (MEDIA_DIR / saved["filename"]).unlink(missing_ok=True)
+        except Exception: pass
+        return JSONResponse({"ok": False, "why": why}, status_code=429)
+    with _lock:
+        c = _c()
+        cur = c.execute("INSERT INTO chat_msgs(ts,user,text,kind,media_url,media_type,media_name,media_size) VALUES(?,?,?,?,?,?,?,?)",
+                        (_now(), u, caption, "msg", saved["url"], saved["type"], saved["name"], saved["size"]))
+        mid = cur.lastrowid
+        c.execute("DELETE FROM chat_msgs WHERE id<=?", (mid - KEEP,))
+        c.commit()
+    _touch_online(u, request.headers.get("user-agent", ""))
+    return {"ok": True, "id": mid}
+
+
+@router.get("/chat/media/{filename}")
+def media_file(filename: str, u=Depends(_auth)):
+    # Only serve files referenced by a chat message; DM files are restricted to thread members.
+    if not filename or "/" in filename or "\\" in filename or filename.startswith("."):
+        raise HTTPException(404, "not found")
+    with _lock:
+        row = _c().execute("SELECT media_type FROM chat_msgs WHERE media_url=? AND deleted=0 LIMIT 1",
+                           ("/chat/media/" + filename,)).fetchone()
+    if not row:
+        try:
+            from . import dm
+            with dm._lock:
+                row = dm._c().execute("SELECT m.media_type, m.thread_id FROM dm_msgs m JOIN dm_members mem ON mem.thread_id=m.thread_id WHERE m.media_url=? AND m.deleted=0 AND mem.user=? LIMIT 1",
+                                      ("/chat/media/" + filename, dm._u().norm(u))).fetchone()
+        except Exception:
+            row = None
+    if not row:
+        raise HTTPException(404, "not found")
+    path = (MEDIA_DIR / filename).resolve()
+    if path.parent != MEDIA_DIR.resolve() or not path.is_file():
+        raise HTTPException(404, "not found")
+    ext = path.suffix.lower()
+    mime = {".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".gif":"image/gif", ".webp":"image/webp", ".mp4":"video/mp4", ".webm":"video/webm", ".mov":"video/quicktime"}.get(ext, "application/octet-stream")
+    return FileResponse(path, media_type=mime, headers={"X-Content-Type-Options":"nosniff", "Cache-Control":"private, max-age=3600"})
 
 
 @router.post("/chat/api/delete")
