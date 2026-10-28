@@ -59,19 +59,24 @@
       (m.avatar ? '<img class="avatar avatar-sm" src="' + esc(m.avatar) + '" alt="">' :
        '<span class="avatar avatar-sm avatar-fallback">👤</span>') +
       '<b style="color:' + (m.mine ? '#7ee08a' : '#8fb4ff') + '">' + esc(m.display_name || m.user) + '</b> ';
-    if (m.deleted) { var gone=document.createElement('span'); gone.style.cssText='color:#8b93a7;text-decoration:line-through'; gone.textContent='削除済み'; d.appendChild(gone); }
+    if (m.deleted) { var gone=document.createElement('span'); gone.style.cssText='color:#8b93a7'; gone.textContent='このメッセージは削除されました'; d.appendChild(gone); }
     else {
       if (m.text) { var body=document.createElement('div'); body.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere'; body.textContent=m.text; d.appendChild(body); }
       if (m.media_url) { var el; if(m.media_type==='video'){el=document.createElement('video');el.controls=true;el.preload='metadata';el.playsInline=true;}else{el=document.createElement('img');el.alt=m.media_name||'送信画像';el.loading='lazy';} el.src=m.media_url;el.style.cssText='display:block;max-width:min(100%,520px);max-height:360px;border-radius:10px;margin:7px 0;background:#090b10';d.appendChild(el); }
     }
     if (!m.deleted && m.mine) {
       var b = document.createElement('button');
-      b.textContent = '×'; b.className = 'mini';
+      b.textContent = '削除 ▾'; b.className = 'mini';
       b.style.cssText = 'float:right;padding:1px 7px';
       b.onclick = function () {
+        var choice = prompt('削除方法を選んでください\n1：履歴から完全削除（全員の履歴から消えます・復元不可）\n2：削除済み表示にする', '1');
+        if (choice === null) return;
+        var mode = choice.trim() === '1' ? 'permanent' : (choice.trim() === '2' ? 'soft' : '');
+        if (!mode) { alert('1 または 2 を入力してください'); return; }
+        if (mode === 'permanent' && !confirm('このメッセージを履歴から完全に削除します。元に戻せません。続けますか？')) return;
         fetch('/dm/api/t/' + TID + '/del', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: m.id }) }).then(function () { reset(); });
+          body: JSON.stringify({ id: m.id, mode: mode }) }).then(function (r) { return r.json(); }).then(function (j) { if (!j.ok) { alert(j.why || '削除できませんでした'); return; } reset(); }).catch(function () { alert('削除中に通信エラーが発生しました'); });
       };
       d.appendChild(b);
     }
