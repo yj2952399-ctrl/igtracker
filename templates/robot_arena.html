@@ -6,9 +6,25 @@
  <header class="robot-hero"><div><p class="eyebrow">TACTICAL COMBAT SIMULATOR</p><h1>🤖 ROBOT ARENA</h1><p>機体を選んで出撃。訓練場・ボットバトル・フレンド対戦の操作感を試そう。</p></div><div class="xp-pill">⭐ {{ state.xp }} XP</div></header>
  {% if notice %}<p class="robot-notice">{{ notice }}</p>{% endif %}
  <section class="arena-wrap"><div class="arena-top"><div><b id="mode-title">BOT BATTLE</b><small>ステージ：<span id="stage-name">ランダム選択</span></small></div><div class="mode-buttons"><button data-mode="bot" class="active">ボットバトル</button><button data-mode="training">訓練場</button><button data-mode="friend">フレンド対戦</button></div></div>
+ <div class="arena-stage" id="arena-stage">
  <canvas id="arena" width="1000" height="570" aria-label="ロボットアリーナゲーム画面"></canvas>
- <div class="arena-hud"><span>WASD / 左スティック：移動</span><span>マウス / 右スティック：照準・攻撃</span><span>SPACE / U：ウルト</span><button id="gadget-button" type="button">ガジェット</button>{% if state.loadout == 'root_overlord' %}<button id="final-action-button" type="button" class="final-action">最終手段</button>{% endif %}<span class="ammo-status"><b id="ammo-count">3/3</b> <small id="reload-status">装填完了</small></span><button id="start-match">出撃 / 再出撃</button></div>
- <div class="mobile-controls"><div class="pad" id="move-pad"><span>MOVE</span><i></i></div><div class="pad aim" id="aim-pad"><span>AIM / FIRE</span><i></i></div><div class="touch-actions"><button id="ult-button">ULT</button>{% if state.loadout == 'root_overlord' %}<button id="final-action-mobile" type="button" class="final-action">最終手段</button>{% endif %}</div></div>
+ <button id="touch-toggle" class="overlay-control touch-toggle" type="button" aria-pressed="true">タッチ操作：表示</button>
+ <button id="pause-button" class="overlay-control pause-button" type="button" aria-label="一時停止">Ⅱ</button>
+ <div class="mobile-controls arena-controls" id="arena-controls" aria-label="タブレット操作">
+   <div class="pad move-pad" id="move-pad" aria-label="移動スティック"><span>移動</span><i></i></div>
+   <div class="aim-stack"><div class="pad aim" id="aim-pad" aria-label="照準と射撃スティック"><span>照準 / 射撃</span><i></i></div>
+     <div class="combat-buttons"><button id="gadget-button" class="combat-button gadget-control" type="button">ガジェット</button><button id="ult-button" class="combat-button ult-control" type="button">ULT</button>{% if state.loadout == 'root_overlord' %}<button id="final-action-mobile" type="button" class="combat-button final-action">最終手段</button>{% endif %}</div>
+   </div>
+ </div>
+ <div id="pause-overlay" class="pause-overlay" hidden>
+   <section class="pause-panel" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+     <h2 id="pause-title">一時停止</h2><p>戦闘を一時停止しています。</p>
+     <div class="pause-actions"><button id="resume-button" type="button">戦闘に戻る</button><button id="restart-button" type="button">リスタート</button><button id="settings-button" type="button">操作設定</button></div>
+     <div id="control-settings" class="control-settings" hidden><h3>操作設定</h3><p>「位置を調整」を押してから、スティックやボタンをドラッグしてください。位置はこの端末に保存されます。</p><label class="settings-row"><input id="edit-controls" type="checkbox"> 位置を調整</label><label class="settings-row"><input id="settings-controls-visible" type="checkbox" checked> タッチ操作を表示</label><button id="reset-control-layout" type="button">位置を初期化</button></div>
+   </section>
+ </div>
+ </div>
+ <div class="arena-hud"><span>WASD / 左スティック：移動</span><span>マウス / 右スティック：照準・攻撃</span><span>SPACE / U：ウルト</span><span class="desktop-hint">タブレット：左スティックで移動／右スティックで照準・射撃</span>{% if state.loadout == 'root_overlord' %}<button id="final-action-button" type="button" class="final-action">最終手段</button>{% endif %}<span class="ammo-status"><b id="ammo-count">3/3</b> <small id="reload-status">装填完了</small></span><button id="start-match">出撃 / 再出撃</button></div>
  <div class="friend-room"><label>フレンド部屋コード <input id="room-code" maxlength="12" placeholder="例: R7K2P9"></label><button id="make-room">コードを作る</button><button id="copy-room">コピー</button><p>※このパッケージの部屋コードはローカル試作です。インターネット越しの同期対戦にはWebSocket等のサーバー実装が別途必要です。</p></div>
  </section>
  <h2>機体ガレージ</h2><p class="subtext">機体ごとに価格・HP・速度・武器・必殺技が異なります。万能な最強機体ではなく、役割の違いを活かそう。</p>
