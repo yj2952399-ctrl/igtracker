@@ -645,18 +645,31 @@ async def api_del(tid: int, request: Request, u=Depends(_auth)):
     _need(tid, u)
     b = await _body(request)
     mid = int(b.get("id") or 0)
+    mode = str(b.get("mode") or "soft").lower()
+    if mode not in ("soft", "permanent"):
+        return {"ok": False, "why": "削除方法が不正です"}
     me = _u().norm(u)
     with _lock:
         c = _c()
-        r = c.execute("SELECT user FROM dm_msgs WHERE id=? AND thread_id=?",
+        r = c.execute("SELECT user, media_url FROM dm_msgs WHERE id=? AND thread_id=?",
                       (mid, tid)).fetchone()
         if not r:
-            return {"ok": False}
+            return {"ok": False, "why": "既に削除されています"}
         if r["user"] != me and not _u().is_root(u):
             return JSONResponse({"ok": False, "why": "他人の発言です"}, status_code=403)
-        c.execute("UPDATE dm_msgs SET deleted=1 WHERE id=?", (mid,))
+        media_url = r["media_url"] or ""
+        if mode == "permanent":
+            c.execute("DELETE FROM dm_msgs WHERE id=? AND thread_id=?", (mid, tid))
+        else:
+            c.execute("UPDATE dm_msgs SET deleted=1, text='', media_url='', media_type='', media_name='', media_size=0 WHERE id=? AND thread_id=?", (mid, tid))
         c.commit()
-    return {"ok": True}
+    if media_url:
+        try:
+            from . import chat
+            chat._remove_media_if_unused(media_url)
+        except Exception:
+            pass
+    return {"ok": True, "mode": mode}
 
 
 @router.post("/dm/api/t/{tid}/leave")

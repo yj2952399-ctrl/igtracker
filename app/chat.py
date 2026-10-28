@@ -257,16 +257,44 @@ async def delete(request: Request, u=Depends(_auth)):
     mid = int((body or {}).get("id") or 0)
     if not mid:
         return {"ok": False}
+    mode = str((body or {}).get("mode") or "soft").lower()
+    if mode not in ("soft", "permanent"):
+        return {"ok": False, "why": "削除方法が不正です"}
     with _lock:
         c = _c()
-        r = c.execute("SELECT user FROM chat_msgs WHERE id=?", (mid,)).fetchone()
+        r = c.execute("SELECT user, media_url FROM chat_msgs WHERE id=?", (mid,)).fetchone()
         if not r:
-            return {"ok": False, "why": "無い"}
+            return {"ok": False, "why": "既に削除されています"}
         if r["user"] != u and not _m().users.is_admin(u):
-            return {"ok": False, "why": "他人の発言です"}
-        c.execute("UPDATE chat_msgs SET deleted=1 WHERE id=?", (mid,))
+            raise HTTPException(403, "他人の発言は削除できません")
+        media_url = r["media_url"] or ""
+        if mode == "permanent":
+            c.execute("DELETE FROM chat_msgs WHERE id=?", (mid,))
+        else:
+            c.execute("UPDATE chat_msgs SET deleted=1, text='', media_url='', media_type='', media_name='', media_size=0 WHERE id=?", (mid,))
         c.commit()
-    return {"ok": True}
+    if media_url:
+        _remove_media_if_unused(media_url)
+    return {"ok": True, "mode": mode}
+
+
+def _remove_media_if_unused(media_url: str):
+    """Delete an uploaded file only after no chat/DM message references it."""
+    name = media_url.rsplit("/", 1)[-1]
+    if not name or "/" in name or "\\" in name:
+        return
+    try:
+        used_chat = _c().execute("SELECT 1 FROM chat_msgs WHERE media_url=? LIMIT 1", (media_url,)).fetchone()
+        from . import dm
+        used_dm = dm._c().execute("SELECT 1 FROM dm_msgs WHERE media_url=? LIMIT 1", (media_url,)).fetchone()
+        if used_chat or used_dm:
+            return
+        path = (MEDIA_DIR / name).resolve()
+        if path.parent == MEDIA_DIR.resolve() and path.is_file():
+            path.unlink()
+    except Exception:
+        # Keep the message deletion successful if best-effort file cleanup fails.
+        pass
 
 
 @router.post("/chat/api/clear")
