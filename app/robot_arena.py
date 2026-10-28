@@ -12,7 +12,7 @@ ROBOTS = [
  {"id":"volt","name":"VOLT-R","price":650,"hp":850,"speed":5.0,"damage":100,"range":220,"fire_rate":0.35,"weapon":"Chain arc","ultimate":"EMP field","color":"#7dffbc","desc":"連射と妨害に特化。","reload_time":0.48,"gadget":"EMPパルス","gadget_type":"emp"},
  {"id":"siege","name":"SIEGE-09","price":900,"hp":1900,"speed":2.4,"damage":160,"range":280,"fire_rate":0.8,"weapon":"Siege cannon","ultimate":"Ground breaker","color":"#ff845d","desc":"重装甲と範囲攻撃。","reload_time":1.45,"gadget":"震撃ウェーブ","gadget_type":"shockwave"},
  {"id":"phantom","name":"PHANTOM","price":1250,"hp":780,"speed":5.8,"damage":145,"range":270,"fire_rate":0.65,"weapon":"Cloak blaster","ultimate":"Phase strike","color":"#79a5ff","desc":"高速機動と奇襲。","reload_time":0.82,"gadget":"フェイズクローク","gadget_type":"cloak"},
- {"id":"root_overlord","name":"Ω-ROOT OVERLORD","price":0,"hp":99999,"speed":6.5,"damage":9999,"range":600,"fire_rate":0.12,"weapon":"Omni arsenal","ultimate":"ROOT singularity","color":"#ffe76b","desc":"ルート管理者専用機。全ギミック解放。","root_only":True,"reload_time":0.22,"gadget":"オーバーロード","gadget_type":"overload"},
+ {"id":"root_overlord","name":"Ω-ROOT OVERLORD","price":0,"hp":99999,"speed":6.5,"damage":9999,"range":600,"fire_rate":0.12,"weapon":"Omni arsenal","ultimate":"ROOT singularity","color":"#ffe76b","desc":"ルート管理者専用機。全ギミック解放。","root_only":True,"reload_time":0.22,"gadget":"オーバーロード","gadget_type":"overload","final_action":"ROOT APOCALYPSE"},
 ]
 STAGES = ["溶鉱炉ヤード","氷結採掘場","ネオン遺跡","ダストキャニオン"]
 def _db():
