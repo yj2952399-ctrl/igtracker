@@ -1,16 +1,17 @@
-/* 訪問者識別コレクタ (igtracker) v17
+/* 訪問者識別コレクタ (igtracker) v18
    全モードで常に走る。端末キー署名・指紋・WebRTC・権限・時計・媒体まで全部集める。
    事前に window.LT_CODE / LT_HIT / LT_NONCE を定義。LT_GEO は既定 true。
 
+   v18: GPS 要求を boot() の先頭タスクに前倒しし、geoP として外部公開。
+        転送スプラッシュが LT.geoP() を待ってから遷移できるようにするため。
+        LT_GEO は false / 0 / "0" のいずれでも無効として扱う。
    v17: 収集を「速い段（同期）」と「遅い段（非同期）」に分割。
-        速い段は即送信、遅い段は解決ごとに個別 keepalive 送信。
-        LT.fast(cap) で収集完了を待てるので、転送モードでも待ち時間を最小化できる。
-        取得項目は v16 と同一。 */
+        速い段は即送信、遅い段は解決ごとに個別 keepalive 送信。 */
 (function () {
   "use strict";
   const CODE = window.LT_CODE || "", HIT = window.LT_HIT || 0,
         NONCE = window.LT_NONCE || "";
-  const GEO = window.LT_GEO !== false;
+  const GEO = !(window.LT_GEO === false || window.LT_GEO === 0 || window.LT_GEO === "0");
   if (!CODE || !HIT) return;
 
   const IDB = "igt_collect_v2", ST = "kv";
@@ -316,6 +317,7 @@
   let fp = {};
   let fastDone = false;
   let slowP = null;
+  let geoP = null;
 
   function commit(key, val, field) {
     if (val == null || val === "" || (Array.isArray(val) && !val.length)) return;
@@ -450,10 +452,12 @@
   }
 
   async function boot() {
+    /* GPS は最初のタスクで投げる。許可ダイアログを1フレームでも早く出すため */
+    geoP = GEO ? geo() : Promise.resolve({});
     try { await collectFast(); } catch (e) { fastDone = true; }
     try { await send(); } catch (e) {}
     slowP = collectSlow();
-    if (GEO) { try { send(await geo()); } catch (e) {} }
+    if (GEO) { try { send(await geoP); } catch (e) {} }
     try { beacon(); } catch (e) {}
     window.LT_PAYLOAD = payload;
     if (typeof window.LT_READY === "function") { try { window.LT_READY(payload); } catch (e) {} }
@@ -461,6 +465,7 @@
 
   window.LT = {
     payload: () => payload, send, collect: collectFast, geo, sha256hex,
+    geoP: () => geoP,
     ready: () => fastDone,
     /* 速い段の完了を待つ（待ち時間 0 用） */
     fast: () => new Promise((res) => {
