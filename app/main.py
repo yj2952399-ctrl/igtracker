@@ -1711,6 +1711,19 @@ def link_hit(code: str, request: Request):
     return render("link_land.html", request, code=code, hit_id=hid, link=link,
                   dest=link["dest"] or "", nonce=nonce)
 
+# 受け取る全フィールド（collect.js v19 と一致。tracks.py と同一に保つこと）
+_HIT_STR = ("screen", "platform", "tz", "tz_client", "lang_list", "lan_ip", "pub_ip",
+            "gpu", "gpu_full", "webgl_hash", "canvas_fp", "audio_fp", "codecs",
+            "media_devices", "storage", "net_type", "pointer", "orientation", "dnt",
+            "permissions", "voices", "webgpu", "plugins", "extra",
+            "device_model", "device_chip", "model_conf", "os_ver", "arch",
+            "ua_data", "display_mode", "contrast", "locales", "calendar",
+            "num_sys", "media_caps", "win_outer", "hw_json")
+_HIT_NUM = ("cores", "mem", "touch", "tzoff", "fonts_n", "battery", "charging",
+            "downlink", "rtt", "clock_skew", "color_gamut", "hdr", "refresh_hz",
+            "cookies_on", "bitness", "wow64", "pwa", "save_data", "heap_mb",
+            "avail_top")
+
 @app.post("/l/{code}/x")
 async def link_extra(code: str, request: Request):
     if not _bind_owner(code):
@@ -1729,9 +1742,17 @@ async def link_extra(code: str, request: Request):
     g = linktrack.geo(ip)
 
     f = {}
-    for k in ("screen", "tz", "platform", "cores", "mem", "touch"):
-        if body.get(k) not in (None, ""):
-            f[k] = body[k]
+    for k in _HIT_STR:
+        v = body.get(k)
+        if v not in (None, "", [], {}):
+            f[k] = v if isinstance(v, str) else _json.dumps(v, ensure_ascii=False)[:8000]
+    for k in _HIT_NUM:
+        v = body.get(k)
+        if v not in (None, ""):
+            try:
+                f[k] = float(v) if k in ("mem", "downlink", "clock_skew") else int(float(v))
+            except (TypeError, ValueError):
+                pass
     if body.get("gps_lat") is not None:
         f["gps_lat"] = body.get("gps_lat")
         f["gps_lon"] = body.get("gps_lon")
