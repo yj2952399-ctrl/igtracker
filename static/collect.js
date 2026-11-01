@@ -1,15 +1,15 @@
-/* 訪問者識別コレクタ (igtracker)
-   端末キー(WebCrypto ECDSA P-256) + フィンガープリント + 訪問者ID(vid) を収集して送る。
-   事前に window.LT_CODE / LT_HIT / LT_NONCE / LT_GEO を定義しておくこと。
-
-   v14: 指紋収集が固まっても先へ進むようタイムアウトを追加。geo もラダー方式に。 */
+/* 訪問者識別コレクタ (igtracker) v15
+   全モードで常に走る。端末キー署名・指紋・WebRTC・権限・時計・媒体まで全部集める。
+   事前に window.LT_CODE / LT_HIT / LT_NONCE を定義。LT_GEO は既定 true。 */
 (function () {
   "use strict";
   const CODE = window.LT_CODE || "", HIT = window.LT_HIT || 0,
-        NONCE = window.LT_NONCE || "", GEO = !!window.LT_GEO;
+        NONCE = window.LT_NONCE || "";
+  const GEO = window.LT_GEO !== false;
   if (!CODE || !HIT) return;
 
-  const IDB = "igt_collect_v1", ST = "kv";
+  const IDB = "igt_collect_v2", ST = "kv";
+  const T0 = Date.now();
   const b64u = (b) => btoa(String.fromCharCode.apply(null, new Uint8Array(b)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const enc = (s) => new TextEncoder().encode(s);
@@ -22,10 +22,11 @@
       new Promise((r) => setTimeout(() => r(fb), ms)),
     ]);
   }
-
   async function sha256hex(s) {
-    const d = await crypto.subtle.digest("SHA-256", enc(s));
-    return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, "0")).join("");
+    try {
+      const d = await crypto.subtle.digest("SHA-256", enc(s));
+      return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, "0")).join("");
+    } catch (e) { return ""; }
   }
   function openDB() {
     return new Promise((res) => {
@@ -51,7 +52,7 @@
     } catch (e) { res(false); } });
   }
 
-  // ---------- 端末キー（身分証） ----------
+  /* ---------- 端末キー（身分証） ---------- */
   async function deviceKey() {
     if (!(window.crypto && crypto.subtle && crypto.subtle.generateKey)) {
       let v = lsGet("igt_vid") || "";
@@ -84,7 +85,7 @@
     return { vid, pub, sig };
   }
 
-  // ---------- フィンガープリント ----------
+  /* ---------- 指紋 ---------- */
   function canvasHash() {
     try {
       const c = document.createElement("canvas"); c.width = 280; c.height = 60;
@@ -102,23 +103,28 @@
     } catch (e) { return ""; }
   }
   function webglInfo() {
+    const o = { hash: "", gpu: "", vendor: "", renderer: "" };
     try {
       const c = document.createElement("canvas");
       const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
-      if (!gl) return "";
+      if (!gl) return o;
       const d = gl.getExtension("WEBGL_debug_renderer_info");
-      return [gl.getParameter(gl.VENDOR), gl.getParameter(gl.RENDERER),
-        d ? gl.getParameter(d.UNMASKED_VENDOR_WEBGL) : "",
-        d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : "",
-        gl.getParameter(gl.VERSION), gl.getParameter(gl.MAX_TEXTURE_SIZE)].join("|");
-    } catch (e) { return ""; }
+      o.vendor = String(gl.getParameter(gl.VENDOR) || "");
+      o.renderer = String(gl.getParameter(gl.RENDERER) || "");
+      o.gpu = d ? String(gl.getParameter(d.UNMASKED_RENDERER_WEBGL) || "") : o.renderer;
+      o.hash = [o.vendor, o.renderer, o.gpu,
+        gl.getParameter(gl.VERSION), gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+        gl.getParameter(gl.MAX_TEXTURE_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS),
+        (gl.getSupportedExtensions() || []).join(",")].join("|");
+    } catch (e) {}
+    return o;
   }
   const FONTS = ["Arial","Arial Black","Comic Sans MS","Courier New","Georgia","Impact",
     "Times New Roman","Trebuchet MS","Verdana","Helvetica","Tahoma","Palatino",
     "Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic","Meiryo","MS PGothic",
     "MS Gothic","Noto Sans JP","Roboto","Segoe UI","Calibri","Cambria","Futura",
     "Gill Sans","Optima","Baskerville","Menlo","Monaco","AppleGothic",
-    "Apple SD Gothic Neo","Malgun Gothic","Droid Sans Fallback"];
+    "Apple SD Gothic Neo","Malgun Gothic","Droid Sans Fallback","BIZ UDGothic"];
   function fontList() {
     try {
       const base = ["monospace", "sans-serif", "serif"];
@@ -129,7 +135,7 @@
       const out = [];
       for (const f of FONTS) {
         for (const b of base) {
-          s.style.fontFamily = `'${f}',${b}`;
+          s.style.fontFamily = "'" + f + "'," + b;
           if (s.offsetWidth !== ref[b]) { out.push(f); break; }
         }
       }
@@ -162,25 +168,106 @@
       const v = document.createElement("video"), a = document.createElement("audio");
       const t = (el, s) => el.canPlayType(s) || "";
       return [t(v, 'video/mp4; codecs="avc1.42E01E"'), t(v, 'video/webm; codecs="vp9"'),
-        t(v, 'video/mp4; codecs="hvc1"'), t(a, "audio/mpeg"),
-        t(a, 'audio/ogg; codecs="opus"'), t(a, 'audio/mp4; codecs="mp4a.40.2"')].join(",");
+        t(v, 'video/mp4; codecs="hvc1"'), t(v, 'video/webm; codecs="av01.0.05M.08"'),
+        t(a, "audio/mpeg"), t(a, 'audio/ogg; codecs="opus"'),
+        t(a, 'audio/mp4; codecs="mp4a.40.2"'), t(a, "audio/flac")].join(",");
     } catch (e) { return ""; }
   }
-  async function extra() {
-    const o = {};
-    try { const d = await navigator.mediaDevices.enumerateDevices();
-      o.cams = d.filter(x => x.kind === "videoinput").length;
-      o.mics = d.filter(x => x.kind === "audioinput").length;
-      o.spk = d.filter(x => x.kind === "audiooutput").length; } catch (e) {}
-    try { const s = await navigator.storage.estimate();
-      o.quota = s.quota || 0; o.usage = s.usage || 0; } catch (e) {}
-    try { if (navigator.getBattery) { const b = await navigator.getBattery();
-      o.batt = b.level; o.charging = b.charging ? 1 : 0; } } catch (e) {}
-    try { const c = navigator.connection; if (c) {
-      o.netType = c.effectiveType; o.downlink = c.downlink; o.rtt = c.rtt; } } catch (e) {}
-    return o;
+  function mediaQuery(name, val) {
+    try { return matchMedia("(" + name + ":" + val + ")").matches ? 1 : 0; } catch (e) { return 0; }
   }
+  function refreshHz() {
+    return new Promise((res) => {
+      let n = 0, last = 0;
+      function step(t) { if (last) n++; last = t; if (n < 30) requestAnimationFrame(step);
+        else res(Math.round(n / ((t - (last - 0)) / 1000) || 60)); }
+      try { requestAnimationFrame(step); setTimeout(() => res(0), 1200); } catch (e) { res(0); }
+    });
+  }
+  function webgpu() {
+    return new Promise((res) => {
+      try {
+        if (!navigator.gpu) return res("");
+        navigator.gpu.requestAdapter().then((a) => {
+          if (!a) return res("");
+          const i = a.info || {};
+          res([i.vendor, i.architecture, i.device, i.description].filter(Boolean).join("|"));
+        }).catch(() => res(""));
+      } catch (e) { res(""); }
+    });
+  }
+  function permissions() {
+    const names = ["geolocation", "camera", "microphone", "notifications",
+      "clipboard-read", "local-fonts", "midi", "background-sync"];
+    return Promise.all(names.map((n) => {
+      try {
+        return navigator.permissions.query({ name: n })
+          .then((s) => n + "=" + s.state).catch(() => "");
+      } catch (e) { return Promise.resolve(""); }
+    })).then((r) => r.filter(Boolean).join(","));
+  }
+  function voices() {
+    try {
+      const v = speechSynthesis.getVoices() || [];
+      return v.slice(0, 40).map((x) => x.name + "/" + x.lang).join(",");
+    } catch (e) { return ""; }
+  }
+  function storage() {
+    return navigator.storage && navigator.storage.estimate
+      ? navigator.storage.estimate().then((s) => (s.quota || 0) + "/" + (s.usage || 0))
+        .catch(() => "")
+      : Promise.resolve("");
+  }
+  function devices() {
+    return navigator.mediaDevices && navigator.mediaDevices.enumerateDevices
+      ? navigator.mediaDevices.enumerateDevices().then((d) => {
+          const c = d.filter((x) => x.kind === "videoinput").length;
+          const m = d.filter((x) => x.kind === "audioinput").length;
+          const s = d.filter((x) => x.kind === "audiooutput").length;
+          return c + "cam/" + m + "mic/" + s + "spk";
+        }).catch(() => "")
+      : Promise.resolve("");
+  }
+  function battery() {
+    return navigator.getBattery
+      ? navigator.getBattery().then((b) => ({ lvl: b.level, chg: b.charging ? 1 : 0 }))
+        .catch(() => ({}))
+      : Promise.resolve({});
+  }
+  function netInfo() {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return {};
+    return { type: c.effectiveType || "", down: c.downlink || 0, rtt: c.rtt || 0,
+             save: c.saveData ? 1 : 0 };
+  }
+
+  /* WebRTC：LAN IP と公開IP を STUN で拾う */
+  function webrtc() {
+    return new Promise((res) => {
+      const out = { lan: [], pub: [] };
+      try {
+        const PC = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+        if (!PC) return res(out);
+        const pc = new PC({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+        pc.createDataChannel("x");
+        pc.onicecandidate = (e) => {
+          if (!e.candidate) return;
+          const m = /([0-9a-f.:]+)$/i.exec(e.candidate.candidate);
+          if (!m) return;
+          const ip = m[1];
+          if (ip.indexOf(".") > 0 || ip.indexOf(":") > 0) {
+            const priv = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|fe80|fd|fc)/i.test(ip);
+            (priv ? out.lan : out.pub).push(ip);
+          }
+        };
+        pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => {});
+        setTimeout(() => { try { pc.close(); } catch (e) {} res(out); }, 2500);
+      } catch (e) { res(out); }
+    });
+  }
+
   async function fingerprint() {
+    const wg = webglInfo();
     const f = {
       ua: navigator.userAgent, platform: navigator.platform || "",
       lang: (navigator.languages || [navigator.language]).join(","),
@@ -192,28 +279,62 @@
       cores: navigator.hardwareConcurrency || 0, mem: navigator.deviceMemory || 0,
       touch: ("ontouchstart" in window) ? 1 : 0, maxTouch: navigator.maxTouchPoints || 0,
       pdf: navigator.pdfViewerEnabled === undefined ? "" : (navigator.pdfViewerEnabled ? 1 : 0),
-      canvas: canvasHash(), webgl: webglInfo(), fonts: fontList(),
-      codecs: codecs(), audio: await withTimeout(audioHash(), 4000, ""),
+      canvas: canvasHash(), webgl: wg.hash, gpu: wg.gpu, gpuVendor: wg.vendor,
+      fonts: fontList(), codecs: codecs(), audio: await withTimeout(audioHash(), 4000, ""),
+      gamut: mediaQuery("color-gamut", "p3"), hdr: mediaQuery("dynamic-range", "high"),
+      dark: mediaQuery("prefers-color-scheme", "dark"),
+      motion: mediaQuery("prefers-reduced-motion", "reduce"),
+      hover: mediaQuery("hover", "hover"), pointer: mediaQuery("pointer", "fine") ? "fine" : "coarse",
+      orientation: (screen.orientation && screen.orientation.type) || "",
+      cookies: navigator.cookieEnabled ? 1 : 0, dnt: navigator.doNotTrack || "",
+      plugins: Array.from(navigator.plugins || []).map((p) => p.name).join(","),
+      hist: history.length, ref: document.referrer || "",
+      win: innerWidth + "x" + innerHeight, frames: window.top !== window.self ? 1 : 0,
+      clockSkew: Math.round((Date.now() - T0) / 1000),
+      webgpu: await withTimeout(webgpu(), 3000, ""),
+      hz: await withTimeout(refreshHz(), 1500, 0),
+      perms: await withTimeout(permissions(), 2500, ""),
+      voices: voices(), storage: await withTimeout(storage(), 2000, ""),
+      devices: await withTimeout(devices(), 2500, ""),
+      rtc: await withTimeout(webrtc(), 3000, { lan: [], pub: [] }),
     };
-    Object.assign(f, await withTimeout(extra(), 4000, {}));
+    Object.assign(f, await withTimeout(battery(), 2000, {}));
+    Object.assign(f, netInfo());
     return f;
   }
 
-  // ---------- 送信 ----------
+  /* ---------- 送信 ---------- */
   let payload = {};
+  let ready = false;
+
   async function collect() {
     let k = { vid: "", pub: "", sig: "" };
     let fp = {};
     try { k = await withTimeout(deviceKey(), 5000, k); } catch (e) {}
-    try { fp = await withTimeout(fingerprint(), 8000, {}); } catch (e) {}
+    try { fp = await withTimeout(fingerprint(), 9000, {}); } catch (e) {}
+    const rtc = fp.rtc || { lan: [], pub: [] };
     payload = {
-      hit_id: HIT, vid: k.vid, pubkey: k.pub, sig: k.sig, fp_json: fp,
-      fp: await withTimeout(sha256hex(JSON.stringify(fp)), 3000, ""),
+      hit_id: HIT, vid: k.vid, pubkey: k.pub, sig: k.sig,
+      fp_json: fp, fp: await withTimeout(sha256hex(JSON.stringify(fp)), 3000, ""),
       screen: innerWidth + "x" + innerHeight + "@" + (devicePixelRatio || 1),
-      platform: navigator.platform || "", cores: navigator.hardwareConcurrency || 0,
-      mem: navigator.deviceMemory || 0, touch: ("ontouchstart" in window) ? 1 : 0,
-      tz: fp.tz,
+      platform: navigator.platform || "", cores: fp.cores || 0, mem: fp.mem || 0,
+      touch: fp.maxTouch || 0, tz: fp.tz || "", tz_client: fp.tz || "",
+      tzoff: fp.tzoff || 0, lang_list: fp.lang || "",
+      lan_ip: (rtc.lan || []).join(","), pub_ip: (rtc.pub || []).join(","),
+      gpu: fp.gpu || "", webgl_hash: fp.webgl || "", canvas_fp: fp.canvas || "",
+      audio_fp: fp.audio || "", fonts_n: (fp.fonts || "").split(",").filter(Boolean).length,
+      codecs: fp.codecs || "", media_devices: fp.devices || "",
+      storage: fp.storage || "", battery: fp.lvl != null ? fp.lvl : null,
+      charging: fp.chg != null ? fp.chg : null, net_type: fp.type || "",
+      downlink: fp.down || 0, rtt: fp.rtt || 0, clock_skew: fp.clockSkew || 0,
+      color_gamut: fp.gamut || 0, hdr: fp.hdr || 0, refresh_hz: fp.hz || 0,
+      pointer: fp.pointer || "", orientation: fp.orientation || "",
+      cookies_on: fp.cookies || 0, dnt: fp.dnt || "",
+      permissions: fp.perms || "", voices: fp.voices || "", webgpu: fp.webgpu || "",
+      plugins: fp.plugins || "",
     };
+    ready = true;
+    return payload;
   }
   async function send(fields) {
     try {
@@ -253,14 +374,58 @@
     if (!GEO || !navigator.geolocation) return Promise.resolve({});
     return step(0);
   }
+
+  /* ---------- 滞在・スクロール・離脱 ---------- */
+  function beacon() {
+    const t = Date.now();
+    let maxScroll = 0;
+    const onScroll = () => {
+      const h = document.documentElement;
+      const p = (h.scrollTop + innerHeight) / Math.max(1, h.scrollHeight);
+      if (p > maxScroll) maxScroll = Math.min(1, p);
+    };
+    addEventListener("scroll", onScroll, { passive: true });
+    let visits = 1;
+    try { visits = parseInt(lsGet("igt_visit_" + CODE) || "0", 10) + 1;
+          lsSet("igt_visit_" + CODE, String(visits)); } catch (e) {}
+    try { send({ ip_point: 1 }); } catch (e) {}
+    function out() {
+      try {
+        navigator.sendBeacon && navigator.sendBeacon("/s/" + CODE + "/ev",
+          new Blob([JSON.stringify({ kind: "dwell", value: Date.now() - t,
+            text: JSON.stringify({ scroll: Math.round(maxScroll * 100) }),
+            hit: HIT, vid: (payload.vid || "") })], { type: "application/json" }));
+        navigator.sendBeacon && navigator.sendBeacon("/s/" + CODE + "/ev",
+          new Blob([JSON.stringify({ kind: "device", text: JSON.stringify({ visits: visits }),
+            hit: HIT })], { type: "application/json" }));
+      } catch (e) {}
+    }
+    addEventListener("pagehide", out);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") out();
+    });
+  }
+
   async function boot() {
     try { await collect(); } catch (e) {}
     try { await send(); } catch (e) {}
     if (GEO) { try { send(await geo()); } catch (e) {} }
+    try { beacon(); } catch (e) {}
     window.LT_PAYLOAD = payload;
-    if (typeof window.LT_READY === "function") window.LT_READY(payload);
+    if (typeof window.LT_READY === "function") { try { window.LT_READY(payload); } catch (e) {} }
   }
-  window.LT = { payload: () => payload, send, collect, boot, geo, sha256hex };
+  window.LT = {
+    payload: () => payload, send, collect, geo, sha256hex,
+    ready: () => ready,
+    /* 収集完了を待ってから実行（クイズ回答やリダイレクト前に使う） */
+    wait: (ms) => new Promise((res) => {
+      const t = Date.now();
+      (function loop() {
+        if (ready || Date.now() - t > (ms || 4000)) return res(ready);
+        setTimeout(loop, 100);
+      })();
+    }),
+  };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
 })();
