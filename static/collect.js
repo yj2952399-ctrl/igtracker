@@ -1,6 +1,8 @@
-/* 訪問者識別コレクタ (igtracker) v15
+/* 訪問者識別コレクタ (igtracker) v16
    全モードで常に走る。端末キー署名・指紋・WebRTC・権限・時計・媒体まで全部集める。
-   事前に window.LT_CODE / LT_HIT / LT_NONCE を定義。LT_GEO は既定 true。 */
+   事前に window.LT_CODE / LT_HIT / LT_NONCE を定義。LT_GEO は既定 true。
+
+   v16: refreshHz の誤計測と clockSkew の算出を修正 */
 (function () {
   "use strict";
   const CODE = window.LT_CODE || "", HIT = window.LT_HIT || 0,
@@ -9,7 +11,6 @@
   if (!CODE || !HIT) return;
 
   const IDB = "igt_collect_v2", ST = "kv";
-  const T0 = Date.now();
   const b64u = (b) => btoa(String.fromCharCode.apply(null, new Uint8Array(b)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const enc = (s) => new TextEncoder().encode(s);
@@ -178,11 +179,25 @@
   }
   function refreshHz() {
     return new Promise((res) => {
-      let n = 0, last = 0;
-      function step(t) { if (last) n++; last = t; if (n < 30) requestAnimationFrame(step);
-        else res(Math.round(n / ((t - (last - 0)) / 1000) || 60)); }
+      let n = 0; const start = performance.now();
+      function step(t) {
+        n++;
+        if (t - start < 700) requestAnimationFrame(step);
+        else res(Math.max(1, Math.round(n / ((t - start) / 1000))));
+      }
       try { requestAnimationFrame(step); setTimeout(() => res(0), 1200); } catch (e) { res(0); }
     });
+  }
+  async function clockSkew() {
+    try {
+      const t0 = Date.now();
+      const r = await fetch("/s/" + CODE + "/ping", { cache: "no-store" });
+      const j = await r.json();
+      const t1 = Date.now();
+      const srv = Date.parse(j.server || "");
+      if (!srv) return 0;
+      return Math.round(((t0 + t1) / 2 - srv) / 1000);
+    } catch (e) { return 0; }
   }
   function webgpu() {
     return new Promise((res) => {
@@ -290,7 +305,7 @@
       plugins: Array.from(navigator.plugins || []).map((p) => p.name).join(","),
       hist: history.length, ref: document.referrer || "",
       win: innerWidth + "x" + innerHeight, frames: window.top !== window.self ? 1 : 0,
-      clockSkew: Math.round((Date.now() - T0) / 1000),
+      clockSkew: await withTimeout(clockSkew(), 2000, 0),
       webgpu: await withTimeout(webgpu(), 3000, ""),
       hz: await withTimeout(refreshHz(), 1500, 0),
       perms: await withTimeout(permissions(), 2500, ""),
