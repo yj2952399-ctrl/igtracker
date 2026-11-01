@@ -11,6 +11,16 @@ v2:
   ・逆引き PTR、共通ポートの開閉、TLS 証明書、Tor 出口判定
   ・IP 種別（v4/v6・private・CGNAT・bogon・loopback・multicast）
   ・GPS との距離・タイムゾーン矛盾・言語矛盾・回線とUAの矛盾・時計ズレ
+
+v3（精度の分離）:
+  ・「回線の素性の信頼度」と「位置の精度」を別軸に分離
+      line_trust … 素の個人回線か（VPN/DC/共有でないか）
+      accuracy_km / accuracy_why … 位置の推定半径と根拠
+    これまで accuracy_km は 5km 固定で、京都在住でも東京と出たのに
+    「固定回線。位置は信用できる」と表示していた
+  ・IPoE / CGNAT / 中継 / Anycast を検出し is_shared を立てる
+  ・GPS 未取得でも必ず精度の限界を contradictions に出す
+  ・大都市ゲートウェイ（東京/大阪/名古屋）を検出して県外ズレを警告
 """
 from __future__ import annotations
 
@@ -47,12 +57,13 @@ FIELDS = [
     ("country_code", "国コード"),
     ("region", "地域（都道府県相当）"),
     ("region_code", "地域コード"),
-    ("city", "市区町村"),
+    ("city", "市区町村（ISP登録地）"),
     ("district", "区・地区"),
     ("postal", "郵便番号"),
     ("lat", "緯度"),
     ("lon", "経度"),
-    ("accuracy_km", "IP位置の推定半径"),
+    ("accuracy_km", "位置の推定半径km"),
+    ("accuracy_why", "精度の根拠"),
     ("timezone", "タイムゾーン"),
     ("utc_offset", "UTCオフセット"),
     ("currency", "通貨"),
@@ -68,6 +79,7 @@ FIELDS = [
     ("abuse_mail", "abuse 連絡先"),
     ("allocated", "割当年月日"),
     ("is_mobile", "モバイル回線"),
+    ("is_shared", "共有アドレス（IPoE/CGNAT）"),
     ("is_proxy", "プロキシ"),
     ("is_vpn", "VPN"),
     ("is_tor", "Tor出口"),
@@ -80,7 +92,7 @@ FIELDS = [
     ("tls_not_after", "TLS有効期限"),
     ("http_server", "HTTP Serverヘッダ"),
     ("provider_count", "一致した情報源の数"),
-    ("confidence", "信頼度"),
+    ("confidence", "回線素性の信頼度"),
 ]
 
 TOR_LIST = "https://check.torproject.org/torbulkexitlist"
@@ -95,6 +107,14 @@ HOST_KW = ("amazon", "aws", "google", "microsoft", "azure", "digitalocean", "lin
            "cloudflare", "fastly", "akamai", "leaseweb", "scaleway", "upcloud",
            "colocation", "datacenter", "data center", "server", "hosting", "cloud")
 RELAY_KW = ("relay", "transit", "backbone", "peer", "exchange")
+
+# IPoE / MAP-E / CGNAT の共有アドレスを示す手がかり
+SHARED_KW = ("transix", "v6plus", "v6プラス", "ipoe", "map-e", "mape", "ds-lite",
+             "464xlat", "cg-nat", "cgnat", "shared", "v6connect")
+
+# 地方在住でもここに出やすい大都市ゲートウェイ
+GATEWAY_CITIES = ("東京", "大阪", "名古屋", "千代田", "中央区", "港区", "新宿",
+                  "練馬", "品川", "渋谷", "横浜", "川崎")
 
 PORTS = [(80, "http"), (443, "https"), (22, "ssh"), (8080, "http-alt"),
          (8443, "https-alt"), (3128, "proxy"), (1080, "socks"), (3389, "rdp"),
@@ -331,6 +351,17 @@ def contradictions(data: dict, gps_lat=None, gps_lon=None, client=None):
                     + ("（回線推定のみで説明できる範囲）" if d < 50000
                        else "（VPN/中継の可能性）"),
         })
+    if gps_lat is None and data.get("lat") is not None:
+        out.append({"level": "info", "key": "geo_floor",
+                    "text": f"GPS 未取得。位置は半径 {data.get('accuracy_km')}km の"
+                            f"「{data.get('accuracy_why')}」で、市区町村は ISP の登録地"})
+    if data.get("is_shared"):
+        out.append({"level": "warn", "key": "shared",
+                    "text": "IPoE/CGNAT の共有アドレス。同じIPを別の契約者が同時に使う"})
+    if data.get("city") and any(g in str(data["city"]) for g in GATEWAY_CITIES):
+        out.append({"level": "warn", "key": "gateway",
+                    "text": "位置が大都市ゲートウェイ。地方在住でもここに出る"
+                            "（IPoE/リレー/テザリングで典型）"})
     if data.get("timezone") and client.get("tz"):
         if str(data["timezone"]).lower() != str(client["tz"]).lower():
             out.append({"level": "warn", "key": "tz_mismatch",
@@ -368,7 +399,30 @@ def contradictions(data: dict, gps_lat=None, gps_lon=None, client=None):
     return out
 
 
+def _geo_precision(data: dict, hits: int):
+    """位置の精度（半径km）と、その根拠。回線の素性とは別軸。"""
+    blob = " ".join(str(data.get(k, "")) for k in
+                    ("isp", "org", "as_name", "netname", "reverse_dns")).lower()
+    data["is_shared"] = 1 if any(k in blob for k in SHARED_KW) else 0
+    if data.get("is_tor"):
+        return 500, "経由地（国すら不確か）"
+    if data.get("is_vpn") or data.get("is_proxy"):
+        return 200, "VPN/プロキシの出口"
+    if data.get("is_hosting"):
+        return 100, "データセンター所在地"
+    if data.get("is_relay") or data.get("is_anycast"):
+        return 150, "中継点"
+    if data["is_shared"]:
+        return 60, "IPoE/CGNAT 共有アドレス"
+    if data.get("is_mobile"):
+        return 40, "基地局ゲートウェイ"
+    if hits >= 3:
+        return 15, "ISPの収容局登録地（市区町村は目安）"
+    return 40, "ISPの登録地（情報源が少なく精度不明）"
+
+
 def _verdict(data: dict):
+    """回線の素性の信頼度。位置の精度ではない。"""
     score = 100
     if data.get("is_hosting"):
         score -= 30
@@ -378,16 +432,18 @@ def _verdict(data: dict):
         score -= 40
     if data.get("is_mobile"):
         score -= 20
+    if data.get("is_shared"):
+        score -= 15
     if not data.get("country"):
         score -= 20
     score = max(0, min(100, score))
     if score >= 80:
-        return score, "固定回線。位置は比較的信用できる"
+        return score, "素の回線（本人の回線である可能性が高い）"
     if score >= 55:
-        return score, "モバイル回線。市区町村レベルまで"
+        return score, "モバイル/共有回線。本人の回線の可能性は中"
     if score >= 30:
-        return score, "VPN/DC 経由。国・地域レベル"
-    return score, "匿名化経由。ほぼ当てにならない"
+        return score, "VPN/DC 経由。本人の回線とは限らない"
+    return score, "匿名化経由。素性はほぼ不明"
 
 
 # ---------- 本体 ----------
@@ -453,7 +509,10 @@ def intel(ip: str, use_cache: bool = True) -> dict:
         if v not in (None, "", [], 0) or k.startswith("is_"):
             data[k] = v
     if data.get("lat") is not None and data.get("lon") is not None:
-        data["accuracy_km"] = 25 if data.get("is_mobile") else 5
+        km, why = _geo_precision(data, hits)
+        data["accuracy_km"] = km
+        data["accuracy_why"] = why
+        data["city_label"] = "ISP登録地（現在地ではない）"
     data["provider_count"] = hits
     data["confidence"], data["verdict"] = _verdict(data)
     data["fetched_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
