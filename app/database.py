@@ -12,6 +12,12 @@ v3:
 v4:
   ・追跡リンクの mode に redirect_gps を正式追加（TRACK_IN / TRACK_MODES）
     redirect_gps が snap に落ちて track_get から拾えなくなるのを修正
+
+v5:
+  ・機種・世代の特定列（device_model / device_chip / model_conf / os_ver /
+    arch / bitness / wow64 / ua_data / gpu_full / hw_json）を追加
+  ・無操作で取れる個人色の濃い列（pwa / display_mode / contrast / save_data /
+    heap_mb / locales / calendar / num_sys / media_caps / win_outer / avail_top）を追加
 """
 import sqlite3, json, datetime as dt, os, threading
 from contextlib import contextmanager
@@ -160,7 +166,12 @@ CREATE TABLE IF NOT EXISTS link_hits (
     clock_skew REAL, color_gamut INTEGER, hdr INTEGER, refresh_hz INTEGER,
     pointer TEXT, orientation TEXT, cookies_on INTEGER, dnt TEXT,
     permissions TEXT, voices TEXT, webgpu TEXT, plugins TEXT,
-    tz_client TEXT, tzoff INTEGER, lang_list TEXT
+    tz_client TEXT, tzoff INTEGER, lang_list TEXT,
+    device_model TEXT, device_chip TEXT, model_conf TEXT, os_ver TEXT,
+    arch TEXT, bitness INTEGER, wow64 INTEGER, ua_data TEXT, gpu_full TEXT,
+    hw_json TEXT, pwa INTEGER, display_mode TEXT, contrast TEXT, save_data INTEGER,
+    heap_mb REAL, locales TEXT, calendar TEXT, num_sys TEXT, media_caps TEXT,
+    win_outer TEXT, avail_top INTEGER
 );
 CREATE TABLE IF NOT EXISTS link_questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -417,7 +428,18 @@ class DB:
                           ("permissions", "TEXT"), ("voices", "TEXT"),
                           ("webgpu", "TEXT"), ("plugins", "TEXT"),
                           ("tz_client", "TEXT"), ("tzoff", "INTEGER"),
-                          ("lang_list", "TEXT")],
+                          ("lang_list", "TEXT"),
+                          ("device_model", "TEXT"), ("device_chip", "TEXT"),
+                          ("model_conf", "TEXT"), ("os_ver", "TEXT"),
+                          ("arch", "TEXT"), ("bitness", "INTEGER"),
+                          ("wow64", "INTEGER"), ("ua_data", "TEXT"),
+                          ("gpu_full", "TEXT"), ("hw_json", "TEXT"),
+                          ("pwa", "INTEGER"), ("display_mode", "TEXT"),
+                          ("contrast", "TEXT"), ("save_data", "INTEGER"),
+                          ("heap_mb", "REAL"), ("locales", "TEXT"),
+                          ("calendar", "TEXT"), ("num_sys", "TEXT"),
+                          ("media_caps", "TEXT"), ("win_outer", "TEXT"),
+                          ("avail_top", "INTEGER")],
             "link_questions": [("help", "TEXT"), ("placeholder", "TEXT"),
                                ("required", "INTEGER DEFAULT 0"),
                                ("min", "TEXT"), ("max", "TEXT")],
