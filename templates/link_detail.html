@@ -22,6 +22,7 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 .wrap th{color:#8b93a7;font-weight:500;white-space:nowrap}
 .bot{color:#8b93a7;font-size:10.5px;line-height:1.4}
 .gps{color:#7ee08a}.ip{color:#f0b429}
+.model{color:#7ee08a;font-weight:600}
 .btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:12px;border:0;cursor:pointer}
 .btn.p{background:#4c8dff;color:#fff}
@@ -36,6 +37,7 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
   border-radius:5px;padding:1px 5px;max-width:100%}
 .got .gk{color:#7f879b;white-space:nowrap;font-size:9.5px}
 .got .gv{color:#dfe4ee;word-break:break-all}
+.got .gv.m{color:#7ee08a;font-weight:600}
 .got details.f{flex:0 0 100%;background:#15181f;border-radius:5px;padding:1px 5px;
   margin:1px 0}
 .got details.f summary{cursor:pointer;list-style:none;display:flex;gap:5px;
@@ -60,6 +62,7 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
   <span class="bot">{{ link.mode }} / {{ '有効' if link.active else '停止中' }} / hit {{ link.hit_count }}</span>
   <a class="btn" href="{{ base }}/l/{{ link.code }}" target="_blank">開く</a>
   <a class="btn" href="{{ base }}/track/{{ link.code }}">追跡画面</a>
+  <a class="btn" href="{{ base }}/link/{{ link.code }}/reverse">逆探知</a>
   <a class="btn" href="{{ base }}/link/{{ link.code }}/qr.png" target="_blank">QR</a>
   <a class="btn" href="{{ base }}/link/{{ link.code }}/questions">クイズ</a>
   <a class="btn" href="{{ base }}/link/{{ link.code }}?bots={{ '' if bots else '1' }}">
@@ -85,12 +88,13 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 <h3>内訳</h3>
 <table>
   <tr><th>主な国</th><td>{{ stats.country }}</td><th>地域</th><td>{{ stats.region }}</td>
-      <th>都市</th><td>{{ stats.city }}</td></tr>
+      <th>都市（ISP登録地）</th><td>{{ stats.city }}</td></tr>
   <tr><th>回線</th><td>{{ stats.isp }}</td><th>ASN</th><td>{{ stats.asn }}</td>
       <th>VPN/DC</th><td>{{ stats.proxy }} / {{ stats.hosting }}</td></tr>
 </table>
 <div class="flex" style="margin-top:6px">
   {% for name, n in stats.devices %}<span class="bot">{{ name }}:{{ n }}</span>{% endfor %}
+  {% for name, n in stats.models %}<span class="bot model">{{ name }}:{{ n }}</span>{% endfor %}
   {% for name, n in stats.browsers %}<span class="bot">{{ name }}:{{ n }}</span>{% endfor %}
   {% for name, n in stats.inapps %}<span class="bot">{{ name }}:{{ n }}</span>{% endfor %}
 </div>
@@ -100,24 +104,36 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
   <tr><th>時刻</th><th>端末 / 回線</th><th>場所</th><th>位置</th><th>取得物</th><th>回答</th></tr>
   {% for h in hits %}
   {% set FIELDS = [
+    ("device_model","機種・型番"),("device_chip","SoC/GPU型番"),
+    ("model_conf","機種判定の確度"),("os_ver","OSバージョン"),
+    ("arch","CPUアーキ"),("bitness","ビット幅"),("wow64","WOW64"),
     ("lan_ip","LAN内IP"),("pub_ip","WebRTC公開IP"),("gpu","GPU"),
     ("webgl_hash","WebGL指紋"),("canvas_fp","Canvas指紋"),("audio_fp","Audio指紋"),
     ("fonts_n","フォント数"),("codecs","コーデック"),("media_devices","カメラ/マイク"),
-    ("storage","ストレージ"),("battery","電池残量"),("charging","充電中"),
+    ("media_caps","HDR/AV1"),("storage","ストレージ"),("heap_mb","ヒープ上限MB"),
+    ("battery","電池残量"),("charging","充電中"),
     ("net_type","回線種別"),("downlink","回線速度"),("rtt","RTT"),
-    ("clock_skew","時計ズレ"),("color_gamut","色域"),("refresh_hz","リフレッシュ"),
+    ("save_data","データ節約"),("clock_skew","時計ズレ"),
+    ("color_gamut","色域"),("refresh_hz","リフレッシュ"),
     ("pointer","ポインタ"),("orientation","画面向き"),("cookies_on","Cookie可"),
     ("dnt","DNT"),("permissions","権限状態"),("voices","音声一覧"),
     ("webgpu","WebGPU"),("plugins","プラグイン"),("tz_client","端末TZ"),
-    ("lang_list","言語一覧"),("screen","画面"),("platform","プラットフォーム"),
+    ("lang_list","言語一覧"),("locales","ロケール一覧"),("calendar","暦"),
+    ("num_sys","数字体系"),("pwa","ホーム画面から起動"),("display_mode","表示モード"),
+    ("contrast","コントラスト設定"),("screen","画面"),("win_outer","ウィンドウ外形"),
+    ("avail_top","availTop"),("platform","プラットフォーム"),
     ("cores","コア数"),("mem","メモリGB"),("touch","タッチ点数")
   ] %}
   {% set FOLD = ("webgl_hash","canvas_fp","audio_fp","voices","codecs","plugins",
-                 "permissions","media_devices","gpu","lang_list") %}
+                 "permissions","media_devices","gpu","lang_list","ua_data",
+                 "hw_json","device_chip","media_caps","locales") %}
+  {% set MARK = ("device_model","device_chip","os_ver","arch","pwa") %}
   <tr>
     <td class="bot">{{ (h.ts or '')[:19] }}<br>
       {% if h.is_bot %}<span class="bot">BOT</span>{% endif %}</td>
     <td>{{ h.device }} / {{ h.os }} / {{ h.browser }}
+      {% if h.device_model %}<br><span class="model">{{ h.device_model }}
+        {% if h.model_conf %}<span class="bot">[{{ h.model_conf }}]</span>{% endif %}</span>{% endif %}
       {% if h.inapp %}<br><span class="bot">アプリ内: {{ h.inapp }}</span>{% endif %}
       <br><span class="bot">{{ h.ip }}</span>
       <br><span class="bot">{{ net.get(h.id, '') }}</span>
@@ -147,13 +163,22 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
             <span class="gp">{{ v|string|truncate(30, True, '…') }}</span></summary>
             <pre>{{ v }}</pre></details>
           {% else %}
-          <span class="gl"><span class="gk">{{ label }}</span><span class="gv">{{ v }}</span></span>
+          <span class="gl"><span class="gk">{{ label }}</span>
+            <span class="gv{% if key in MARK %} m{% endif %}">{{ v }}</span></span>
           {% endif %}
         {% endif %}
       {% endfor %}
       {% if h.fp_json %}
       <details class="f"><summary><span class="gk">指紋JSON</span>
         <span class="gp">全項目</span></summary><pre>{{ h.fp_json }}</pre></details>
+      {% endif %}
+      {% if h.ua_data %}
+      <details class="f"><summary><span class="gk">UA-CH</span>
+        <span class="gp">高エントロピー</span></summary><pre>{{ h.ua_data }}</pre></details>
+      {% endif %}
+      {% if h.hw_json %}
+      <details class="f"><summary><span class="gk">機種JSON</span>
+        <span class="gp">判定根拠</span></summary><pre>{{ h.hw_json }}</pre></details>
       {% endif %}
       {% if h.extra %}
       <details class="f"><summary><span class="gk">extra</span>
@@ -225,7 +250,8 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
   if (ipN) {
     var w = document.getElementById('ipwarn');
     w.style.display = 'block';
-    w.textContent = '⚠ IP推定の位置が ' + ipN + ' 件あります。4G/5G回線では数km〜数十kmの誤差が出ます。';
+    w.textContent = '⚠ IP推定の位置が ' + ipN + ' 件あります。市区町村は ISP の登録地で、'
+      + 'IPoE/モバイル回線では数十km〜数百kmずれます（GPSがあれば優先表示）。';
   }
 })();
 </script>
