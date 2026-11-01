@@ -1,7 +1,8 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送）・人物ごとの登録・追跡画面。
 
-v15:
-  ・収集データを必ず「リンク作成者のテナントDB」に保存し、その作成者単位で退避する
+v16:
+  ・機種・世代の特定と無操作収集の項目を受理（_HIT_STR / _HIT_NUM 拡張）
+  ・収集データは必ず「リンク作成者のテナントDB」に保存し、その作成者単位で退避する
       （_save_owner。作成時・ヒット時・座標時・設定変更時・削除時に発火）
   ・ヒット退避は HIT_BACKUP_GAP 秒でデバウンス（既定 8 秒）して GitHub を叩きすぎない
   ・redirect_gps を追跡リンクとして正式に扱う
@@ -572,14 +573,18 @@ def link_hit(code: str, request: Request):
                   deny_redirect=L["deny_redirect"], dest_min=L["dest_min"])
 
 
-# 受け取る全フィールド（collect.js v18 と一致）
+# 受け取る全フィールド（collect.js v19 と一致）
 _HIT_STR = ("screen", "platform", "tz", "tz_client", "lang_list", "lan_ip", "pub_ip",
-            "gpu", "webgl_hash", "canvas_fp", "audio_fp", "codecs", "media_devices",
-            "storage", "net_type", "pointer", "orientation", "dnt", "permissions",
-            "voices", "webgpu", "plugins", "extra")
+            "gpu", "gpu_full", "webgl_hash", "canvas_fp", "audio_fp", "codecs",
+            "media_devices", "storage", "net_type", "pointer", "orientation", "dnt",
+            "permissions", "voices", "webgpu", "plugins", "extra",
+            "device_model", "device_chip", "model_conf", "os_ver", "arch",
+            "ua_data", "display_mode", "contrast", "locales", "calendar",
+            "num_sys", "media_caps", "win_outer", "hw_json")
 _HIT_NUM = ("cores", "mem", "touch", "tzoff", "fonts_n", "battery", "charging",
             "downlink", "rtt", "clock_skew", "color_gamut", "hdr", "refresh_hz",
-            "cookies_on")
+            "cookies_on", "bitness", "wow64", "pwa", "save_data", "heap_mb",
+            "avail_top")
 
 
 @router.post("/l/{code}/x")
