@@ -1,11 +1,13 @@
 """逆探知（IP インテリジェンス）エンジン。
 
 IP から機械的に取れる情報を「全部」取り、GPS と突き合わせて矛盾を検出する。
-取得できる項目は docs/IP_INTEL.md と画面に全列挙してある。
+取得できる項目は FIELDS と画面に全列挙してある。
 
-v1:
-  ・複数プロバイダのラダー（ip-api → ipwho.is → ipapi.co → freeipapi → ipinfo）
-  ・RDAP（ARIN/RIPE/APNIC/…）で CIDR・ネットワーク名・登録組織・ abuse 窓口
+v2:
+  ・Request / Depends をモジュール先頭で import（make_router 内のローカル import だと
+    from __future__ import annotations の文字列注釈を解決できず起動時に落ちる）
+  ・複数プロバイダのラダー（ip-api → ipwho.is → ipapi.co → freeipapi）
+  ・RDAP（ARIN/RIPE/APNIC/…）で CIDR・ネットワーク名・登録組織・abuse 窓口
   ・逆引き PTR、共通ポートの開閉、TLS 証明書、Tor 出口判定
   ・IP 種別（v4/v6・private・CGNAT・bogon・loopback・multicast）
   ・GPS との距離・タイムゾーン矛盾・言語矛盾・回線とUAの矛盾・時計ズレ
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import socket
 import ssl
@@ -22,13 +25,15 @@ import time
 from urllib.parse import quote
 
 import requests
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
 
 TTL = int(os.getenv("REVERSE_TTL", "900"))
 TIMEOUT = float(os.getenv("REVERSE_TIMEOUT", "6"))
 RDAP_ON = os.getenv("REVERSE_RDAP", "1") != "0"
 PORT_ON = os.getenv("REVERSE_PORTS", "1") != "0"
 
-_CACHE: dict[str, tuple[float, dict]] = {}
+_CACHE: dict = {}
 _LOCK = threading.RLock()
 
 # 逆探知で機械的に取れる項目（画面表示用の定義。ここが仕様）
@@ -79,7 +84,7 @@ FIELDS = [
 ]
 
 TOR_LIST = "https://check.torproject.org/torbulkexitlist"
-_tor_cache: tuple[float, set] = (0.0, set())
+_tor_cache = (0.0, set())
 
 # 主要 VPN / クラウド / 中継事業者の ASN・名前の手がかり
 VPN_KW = ("vpn", "nordvpn", "expressvpn", "surfshark", "cyberghost", "private internet",
@@ -100,7 +105,8 @@ PROVIDERS = [
         "country": "country", "country_code": "countryCode", "region": "regionName",
         "region_code": "region", "city": "city", "district": "district",
         "postal": "zip", "lat": "lat", "lon": "lon", "timezone": "timezone",
-        "isp": "isp", "org": "org", "asn": "as", "reverse_dns": "reverse",
+        "isp": "isp", "org": "org", "asn": "as", "as_name": "asname",
+        "reverse_dns": "reverse",
         "is_mobile": "mobile", "is_proxy": "proxy", "is_hosting": "hosting",
     }, {"fields": "status,message,continent,continentCode,country,countryCode,region,"
                   "regionName,city,district,zip,lat,lon,timezone,offset,currency,"
@@ -136,7 +142,7 @@ def valid_ip(ip: str) -> bool:
         return False
 
 
-def ip_kind(ip: str) -> tuple[str, str, int]:
+def ip_kind(ip: str):
     """(version, 種別, グローバルか)"""
     try:
         a = ipaddress.ip_address((ip or "").strip())
@@ -166,7 +172,7 @@ def rdns(ip: str) -> str:
         return ""
 
 
-def _get(d: dict, path: str):
+def _get(d, path):
     cur = d
     for part in path.split("."):
         if not isinstance(cur, dict) or part not in cur:
@@ -175,12 +181,11 @@ def _get(d: dict, path: str):
     return cur
 
 
-def _fetch(provider: tuple) -> dict:
+def _fetch(provider, ip: str) -> dict:
     name, tmpl, map_, params = provider
     try:
-        r = requests.get(tmpl.format(ip=quote(ip_target := _fetch.ip, safe="")),
-                         params=params, timeout=TIMEOUT,
-                         headers={"User-Agent": "igtracker-reverse/1"})
+        r = requests.get(tmpl.format(ip=quote(ip, safe="")), params=params,
+                         timeout=TIMEOUT, headers={"User-Agent": "igtracker-reverse/1"})
         d = r.json()
     except Exception:
         return {}
@@ -215,28 +220,26 @@ def _rdap(ip: str) -> dict:
     if d.get("country"):
         out["registry_country"] = d["country"]
     try:
-        out["registry"] = str(d["port43"] or "")
+        out["registry"] = str(d.get("port43") or "")[:120]
     except Exception:
         pass
     for ev in d.get("events") or []:
-        if ev.get("eventAction") == "registration":
+        if isinstance(ev, dict) and ev.get("eventAction") == "registration":
             out["allocated"] = str(ev.get("eventDate") or "")[:10]
     for ent in d.get("entities") or []:
         roles = ent.get("roles") or []
         if "abuse" in roles:
-            v = ent.get("vcardArray")
             try:
-                for item in v[1]:
+                for item in (ent.get("vcardArray") or [None, []])[1]:
                     if item[0] == "email":
                         out["abuse_mail"] = item[3]
             except Exception:
                 pass
     for c in d.get("cidr0_cidrs") or []:
-        out.setdefault("cidr", f"{c.get('v4prefix') or c.get('v6prefix')}/{c.get('length')}")
-    if not out.get("registry"):
-        for link in d.get("links") or []:
-            if link.get("rel") == "self":
-                out["registry"] = link.get("href", "")[:120]
+        try:
+            out.setdefault("cidr", f"{c.get('v4prefix') or c.get('v6prefix')}/{c.get('length')}")
+        except Exception:
+            pass
     return out
 
 
@@ -256,13 +259,13 @@ def _tor(ip: str) -> int:
         return 0
 
 
-def _ports(ip: str) -> list[str]:
+def _ports(ip: str):
     if not PORT_ON:
         return []
     out = []
+    fam = socket.AF_INET6 if ":" in ip else socket.AF_INET
     for port, label in PORTS:
-        s = socket.socket(socket.AF_INET6 if ":" in ip else socket.AF_INET,
-                          socket.SOCK_STREAM)
+        s = socket.socket(fam, socket.SOCK_STREAM)
         s.settimeout(1.2)
         try:
             if s.connect_ex((ip, port)) == 0:
@@ -309,7 +312,6 @@ def _http_server(ip: str) -> str:
 # ---------- 矛盾検出（GPS との突き合わせ） ----------
 
 def _haversine(a, b, c, d):
-    import math
     R = 6371000.0
     p1, p2 = math.radians(a), math.radians(c)
     dp, dl = p2 - p1, math.radians(d - b)
@@ -317,7 +319,7 @@ def _haversine(a, b, c, d):
     return 2 * R * math.asin(math.sqrt(x))
 
 
-def contradictions(data: dict, gps_lat=None, gps_lon=None, client: dict | None = None) -> list[dict]:
+def contradictions(data: dict, gps_lat=None, gps_lon=None, client=None):
     out = []
     client = client or {}
     if gps_lat is not None and data.get("lat") is not None:
@@ -325,7 +327,7 @@ def contradictions(data: dict, gps_lat=None, gps_lon=None, client: dict | None =
         out.append({
             "level": "warn" if d > 50000 else "info",
             "key": "gps_gap",
-            "text": f"GPS と IP 推定位置の距離 {d/1000:.1f}km"
+            "text": f"GPS と IP 推定位置の距離 {d / 1000:.1f}km"
                     + ("（回線推定のみで説明できる範囲）" if d < 50000
                        else "（VPN/中継の可能性）"),
         })
@@ -366,7 +368,7 @@ def contradictions(data: dict, gps_lat=None, gps_lon=None, client: dict | None =
     return out
 
 
-def _verdict(data: dict) -> tuple[int, str]:
+def _verdict(data: dict):
     score = 100
     if data.get("is_hosting"):
         score -= 30
@@ -403,7 +405,7 @@ def intel(ip: str, use_cache: bool = True) -> dict:
                 return hit[1]
 
     version, kind, glob = ip_kind(ip)
-    data: dict = {"ip": ip, "ip_version": version, "ip_type": kind, "is_global": glob}
+    data = {"ip": ip, "ip_version": version, "ip_type": kind, "is_global": glob}
 
     if not glob:
         data.update({"reverse_dns": rdns(ip) if version == "v4" else "",
@@ -413,11 +415,10 @@ def intel(ip: str, use_cache: bool = True) -> dict:
             _CACHE[ip] = (now, data)
         return data
 
-    merged: dict = {}
+    merged = {}
     hits = 0
     for p in PROVIDERS:
-        _fetch.ip = ip
-        got = _fetch(p)
+        got = _fetch(p, ip)
         if got:
             hits += 1
             for k, v in got.items():
@@ -454,7 +455,6 @@ def intel(ip: str, use_cache: bool = True) -> dict:
     if data.get("lat") is not None and data.get("lon") is not None:
         data["accuracy_km"] = 25 if data.get("is_mobile") else 5
     data["provider_count"] = hits
-    data["sources"] = hits
     data["confidence"], data["verdict"] = _verdict(data)
     data["fetched_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
     if hits == 0:
@@ -465,7 +465,7 @@ def intel(ip: str, use_cache: bool = True) -> dict:
     return data
 
 
-def summarize_ips(ips: list[str], limit: int = 12) -> list[dict]:
+def summarize_ips(ips, limit: int = 12):
     """複数 IP をまとめて逆探知（重複除去・上限あり）。"""
     seen, out = set(), []
     for ip in ips:
@@ -479,7 +479,7 @@ def summarize_ips(ips: list[str], limit: int = 12) -> list[dict]:
     return out
 
 
-def rows_for(code: str, limit: int = 12) -> list[dict]:
+def rows_for(code: str, limit: int = 12):
     """コードに紐づく実ヒット IP を逆探知する。"""
     from .tenancy import db
     ips = [r["ip"] for r in db.q(
@@ -488,34 +488,33 @@ def rows_for(code: str, limit: int = 12) -> list[dict]:
     return summarize_ips(ips, limit=limit)
 
 
-# ---------- ルーター ----------
+# ---------- 共通ヘルパ ----------
 
 def _m():
     from . import main
     return main
 
 
-async def _auth(request):
+async def _auth(request: Request):
     return await _m().auth(request)
 
 
+def _owner(code):
+    from . import users, tenancy
+    o = users.owner_of_link(code)
+    if o:
+        tenancy.set_current(o)
+    return o
+
+
+# ---------- ルーター ----------
+
 def make_router():
-    from fastapi import APIRouter, Depends, HTTPException, Request
-    from fastapi.responses import HTMLResponse
-
     router = APIRouter()
-
-    def _owner(code):
-        from . import users, tenancy
-        o = users.owner_of_link(code)
-        if o:
-            tenancy.set_current(o)
-        return o
 
     @router.get("/link/{code}/reverse", response_class=HTMLResponse)
     def reverse_page(code: str, request: Request, ip: str = "", u=Depends(_auth)):
         from .tenancy import db
-        from . import linktrack
         if not _owner(code):
             raise HTTPException(404)
         link = db.link_get(code)
@@ -527,8 +526,7 @@ def make_router():
         for r in rows:
             r["issues"] = contradictions(
                 r, gps["gps_lat"] if gps else None,
-                gps["gps_lon"] if gps else None,
-                {"tz": r.get("timezone")})
+                gps["gps_lon"] if gps else None, {"tz": r.get("timezone")})
         single = intel(ip) if ip else None
         if single:
             single["issues"] = contradictions(single)
@@ -538,7 +536,6 @@ def make_router():
 
     @router.get("/api/reverse/{code}")
     def api_reverse(code: str, u=Depends(_auth)):
-        from .tenancy import db
         if not _owner(code):
             raise HTTPException(404)
         return {"ok": True, "rows": rows_for(code)}
