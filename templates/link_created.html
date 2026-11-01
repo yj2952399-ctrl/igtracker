@@ -10,6 +10,7 @@
 .done .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
 a.mini{display:inline-block;padding:7px 14px;border-radius:6px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:12px}
+a.mini.p{background:#4c8dff;color:#fff}
 .qr{background:#fff;padding:8px;border-radius:8px;display:inline-block;margin-top:12px}
 .qr img{display:block;width:180px;height:180px}
 </style>
@@ -25,17 +26,20 @@ a.mini{display:inline-block;padding:7px 14px;border-radius:6px;background:#2b334
 
   <div class="row">
     <button type="button" id="copy">URLをコピー</button>
+    {% if link.mode == 'quiz' %}
+    <a class="mini p" href="/link/{{ link.code }}/questions?new=1">❓ 質問を作る（先にこれ）</a>
+    {% endif %}
     <a class="mini" href="{{ url }}" target="_blank">開いてみる</a>
     <a class="mini" href="/link/{{ link.code }}">詳細ページへ</a>
+    <a class="mini" href="/link/{{ link.code }}/reverse">逆探知</a>
     <a class="mini" href="/track/{{ link.code }}">追跡画面へ</a>
     <a class="mini" href="/link/{{ link.code }}/qr.png" target="_blank">QRを別タブで</a>
     <a class="mini" href="/links">一覧へ戻る</a>
-    <a class="mini" href="/links">続けてもう1つ作る</a>
   </div>
 
   <div class="qr"><img src="/link/{{ link.code }}/qr.png" alt="QR"></div>
   <p class="dim" style="margin-top:12px">
-    このリンクを踏ませると記録が始まります。詳細・追跡は上のボタンからいつでも開けます。</p>
+    このリンクを踏ませると記録が始まります。全モードで端末情報・指紋・回線・位置を取得します。</p>
 </div>
 {% endblock %}
 
