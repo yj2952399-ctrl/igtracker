@@ -1,35 +1,76 @@
 {% extends "base.html" %}{% block content %}
 <h1>クイズ編集 — {{ link.name }}</h1>
 <p class="mono">{{ base }}/l/{{ link.code }}</p>
-<p class="dim">選択肢は1行1つ。「ラベル|キー|回答後に出す文」の形式で書きます。
-キーは正解判定に使う文字列で、空なら連番になります。</p>
+{% if msg %}<p style="color:#7ee08a">{{ msg }}</p>{% endif %}
+{% if err %}<p style="color:#f0b429">{{ err }}</p>{% endif %}
+{% if is_new %}<p style="color:#f0b429">質問を1問以上登録すると、リンク先がクイズ画面になります。</p>{% endif %}
+<p class="dim">選択肢は1行1つ、「ラベル|キー|回答後に出す文」の形式。キーは正解判定に使う文字列（空なら連番）。</p>
 
 <form method="post" action="/link/{{ link.code }}/questions/add" class="card">
-  <label>質問文 <input name="prompt" required></label>
+  <label>質問文 <input name="prompt" required maxlength="500"></label>
   <label>種類
     <select name="qtype">
-      <option value="choice">単一選択</option>
-      <option value="multi">複数選択</option>
-      <option value="text">自由記述</option>
+      {% for t in qtypes %}<option value="{{ t }}">{{ qtype_label[t] }}</option>{% endfor %}
     </select></label>
+  <label>補足文（任意）<input name="help" maxlength="300"></label>
+  <label>入力例（任意）<input name="placeholder" maxlength="120"></label>
   <label>選択肢（1行1つ）<br>
-    <textarea name="options" rows="5"
+    <textarea name="options" rows="6"
       placeholder="はい|1|ありがとう&#10;いいえ|0|なるほど"></textarea></label>
   <label>正解キー（空なら採点なし／複数はカンマ区切り）<input name="answer_key"></label>
-  <label>自由記述のときに出す文 <input name="reveal"></label>
+  <label>回答後に出す文 <input name="reveal" maxlength="300"></label>
+  <label>数値の下限 / 上限（number のとき）<input name="min" style="width:90px">
+    <input name="max" style="width:90px"></label>
+  <label><input type="checkbox" name="required" value="1"> 必須にする</label>
   <button>質問を追加</button>
 </form>
 
 <h2>登録済み {{ qs|length }} 問</h2>
-<table><tr><th>#</th><th>種類</th><th>質問</th><th>選択肢</th><th></th></tr>
 {% for q in qs %}
-<tr>
-  <td>{{ q.ord + 1 }}</td><td>{{ q.qtype }}</td><td>{{ q.prompt }}</td>
-  <td><small>{% for o in q.options|fromjson %}{{ o.label }} → {{ o.reveal }}<br>{% endfor %}</small></td>
-  <td><form method="post" action="/link/{{ link.code }}/questions/{{ q.id }}/delete">
-    <button>削除</button></form></td>
-</tr>
-{% endfor %}</table>
+<form method="post" action="/link/{{ link.code }}/questions/{{ q.id }}/edit" class="card">
+  <div class="dim">#{{ q.ord + 1 }} / {{ qtype_label.get(q.qtype, q.qtype) }}
+    {% if q.answer_key %} / 正解: {{ q.answer_key }}{% endif %}
+    {% if q.required %} / 必須{% endif %}</div>
+  <label>質問文 <input name="prompt" value="{{ q.prompt }}" required></label>
+  <label>種類
+    <select name="qtype">
+      {% for t in qtypes %}<option value="{{ t }}" {% if q.qtype == t %}selected{% endif %}>
+        {{ qtype_label[t] }}</option>{% endfor %}
+    </select></label>
+  <label>補足文 <input name="help" value="{{ q.help or '' }}"></label>
+  <label>入力例 <input name="placeholder" value="{{ q.placeholder or '' }}"></label>
+  <label>選択肢<br><textarea name="options" rows="4">{{ q.options_text }}</textarea></label>
+  <label>正解キー <input name="answer_key" value="{{ q.answer_key or '' }}"></label>
+  <label>回答後に出す文 <input name="reveal" value="{{ q.reveal or '' }}"></label>
+  <label>下限 / 上限 <input name="min" value="{{ q.min or '' }}" style="width:90px">
+    <input name="max" value="{{ q.max or '' }}" style="width:90px"></label>
+  <label><input type="checkbox" name="required" value="1"
+    {% if q.required %}checked{% endif %}> 必須</label>
+  <button>保存</button>
+</form>
+<div style="display:flex;gap:6px;margin:-8px 0 16px">
+  <form method="post" action="/link/{{ link.code }}/questions/{{ q.id }}/move">
+    <input type="hidden" name="dir" value="up"><button>↑</button></form>
+  <form method="post" action="/link/{{ link.code }}/questions/{{ q.id }}/move">
+    <input type="hidden" name="dir" value="down"><button>↓</button></form>
+  <form method="post" action="/link/{{ link.code }}/questions/{{ q.id }}/dup"><button>複製</button></form>
+  <form method="post" action="/link/{{ link.code }}/questions/{{ q.id }}/delete"><button>削除</button></form>
+</div>
+{% else %}
+<p class="dim">まだ質問がありません。</p>
+{% endfor %}
 
-<p><a href="/link/{{ link.code }}">← リンク詳細</a></p>
+<h2>一括取込</h2>
+<form method="post" action="/link/{{ link.code }}/questions/import" class="card">
+  <p class="dim">1行1問で「質問文|種類|選択肢(;区切り)|正解キー|出す文」。</p>
+  <textarea name="blob" rows="5"
+    placeholder="好きな色は？|choice|赤|r|情熱的&#10;自由に一言|long||||"></textarea>
+  <button>取り込む</button>
+</form>
+
+<form method="post" action="/link/{{ link.code }}/questions/clear"
+      onsubmit="return confirm('全質問を消しますか？')"><button>全削除</button></form>
+
+<p><a href="/link/{{ link.code }}">← リンク詳細</a> ／
+   <a href="/l/{{ link.code }}" target="_blank">実際の表示</a></p>
 {% endblock %}
