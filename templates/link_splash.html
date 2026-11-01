@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ link.name }}</title>
+<style>
+body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;
+ display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center}
+.w{padding:24px;max-width:380px}
+.sp{width:34px;height:34px;border:3px solid #2a303c;border-top-color:#4c8dff;border-radius:50%;
+ margin:0 auto 18px;animation:s .8s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+p{color:#9aa3b2;font-size:13px;line-height:1.8}
+a{color:#4c8dff;font-size:13px}
+</style></head><body>
+<div class="w">
+  <div class="sp"></div>
+  <p>移動しています…</p>
+  <a id="go" href="{{ dest }}">進まない時はここ</a>
+</div>
+<script>
+window.LT_CODE = {{ code|tojson }};
+window.LT_HIT  = {{ hit_id }};
+window.LT_NONCE = {{ nonce|tojson }};
+window.LT_GEO  = 1;
+const DEST = {{ dest|tojson }};
+</script>
+<script src="/static/collect.js"></script>
+<script>
+(function () {
+  var jumped = false;
+  function go() {
+    if (jumped) return;
+    jumped = true;
+    location.replace(DEST);
+  }
+  /* 収集完了（または上限）を待ってから飛ぶ */
+  function arm() {
+    var t = setTimeout(go, 3500);
+    (window.LT && LT.wait ? LT.wait(3000) : Promise.resolve(true)).then(function () {
+      clearTimeout(t);
+      (window.LT && LT.geo ? LT.geo() : Promise.resolve({})).then(function () {
+        setTimeout(go, 400);
+      });
+    });
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", arm);
+  else arm();
+  document.getElementById("go").onclick = function (e) { e.preventDefault(); go(); };
+})();
+</script>
+</body></html>
