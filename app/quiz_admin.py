@@ -1,13 +1,19 @@
 """クイズ作成・編集ルーター。作成直後に編集画面へ着地させる。
 
 main.py より先に include するので /links/add はこちらが優先される。
+
+v2:
+  ・Request を starlette から明示 import（文字列注釈の解決を確実にする）
+  ・links_add から未使用の request 引数を削除（422 の温床）
+  ・yesno / scale の選択肢自動生成
 """
 from __future__ import annotations
 
 import json
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from starlette.requests import Request
+from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .tenancy import db
@@ -20,6 +26,7 @@ QTYPE_LABEL = {
     "long": "自由記述（長文）", "yesno": "はい / いいえ",
     "scale": "5段階評価", "number": "数値", "date": "日付",
 }
+KEYED = ("choice", "multi", "yesno", "scale")
 
 
 def _m():
@@ -27,11 +34,11 @@ def _m():
     return main
 
 
-async def _auth(request):
+async def _auth(request: Request):
     return await _m().auth(request)
 
 
-def _parse_options(raw: str) -> list[dict]:
+def _parse_options(raw: str):
     """`ラベル|キー|回答後に出す文` を1行1件で解釈。"""
     rows = []
     for line in (raw or "").splitlines():
@@ -47,7 +54,7 @@ def _parse_options(raw: str) -> list[dict]:
 
 def _opts_text(rows) -> str:
     try:
-        return "\n".join(f"{o.get('label','')}|{o.get('key','')}|{o.get('reveal','')}"
+        return "\n".join(f"{o.get('label', '')}|{o.get('key', '')}|{o.get('reveal', '')}"
                          for o in json.loads(rows or "[]"))
     except Exception:
         return ""
@@ -60,12 +67,21 @@ def _link(code: str):
     return link
 
 
+def _fill(qtype: str, rows):
+    """yesno / scale の選択肢を自動生成。"""
+    if qtype == "yesno" and not rows:
+        return [{"label": "はい", "key": "1", "reveal": ""},
+                {"label": "いいえ", "key": "0", "reveal": ""}]
+    if qtype == "scale" and not rows:
+        return [{"label": str(i), "key": str(i), "reveal": ""} for i in range(1, 6)]
+    return rows
+
+
 # ---------- 作成（quiz は編集画面へ直行） ----------
 
 @router.post("/links/add")
-def links_add(request: Request, name: str = Form(""), dest: str = Form(""),
-              note: str = Form(""), mode: str = Form("page"),
-              u=Depends(_auth)):
+def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
+              mode: str = Form("page"), u=Depends(_auth)):
     code, m = _m()._create_link(name, dest, note, mode, u)
     if m == "quiz":
         return RedirectResponse(f"/link/{code}/questions?new=1", 303)
@@ -97,15 +113,10 @@ def questions_add(code: str, prompt: str = Form(...), qtype: str = Form("choice"
                   min: str = Form(""), max: str = Form(""), u=Depends(_auth)):
     _link(code)
     qt = qtype if qtype in QTYPES else "choice"
-    rows = _parse_options(options)
+    rows = _fill(qt, _parse_options(options))
     if qt in ("choice", "multi") and not rows:
         return RedirectResponse(f"/link/{code}/questions?err=" +
                                 quote("選択肢を1行以上入れてください"), 303)
-    if qt == "yesno" and not rows:
-        rows = [{"label": "はい", "key": "1", "reveal": ""},
-                {"label": "いいえ", "key": "0", "reveal": ""}]
-    if qt == "scale" and not rows:
-        rows = [{"label": str(i), "key": str(i), "reveal": ""} for i in range(1, 6)]
     db.add_question(code, prompt.strip()[:500], qt, rows,
                     answer_key.strip(), reveal.strip(),
                     help=help.strip()[:300], placeholder=placeholder.strip()[:120],
@@ -125,11 +136,11 @@ def questions_edit(code: str, qid: int, prompt: str = Form(...),
     q = db.get_question(qid, code)
     if not q:
         raise HTTPException(404)
-    db.update_question(qid, prompt=prompt.strip()[:500],
-                       qtype=(qtype if qtype in QTYPES else q["qtype"]),
-                       options=_parse_options(options), answer_key=answer_key.strip(),
-                       reveal=reveal.strip(), help=help.strip()[:300],
-                       placeholder=placeholder.strip()[:120],
+    qt = qtype if qtype in QTYPES else q["qtype"]
+    db.update_question(qid, prompt=prompt.strip()[:500], qtype=qt,
+                       options=_fill(qt, _parse_options(options)),
+                       answer_key=answer_key.strip(), reveal=reveal.strip(),
+                       help=help.strip()[:300], placeholder=placeholder.strip()[:120],
                        required=1 if required else 0,
                        min=min.strip()[:20], max=max.strip()[:20])
     return RedirectResponse(f"/link/{code}/questions", 303)
@@ -177,7 +188,7 @@ def questions_import(code: str, blob: str = Form(""), u=Depends(_auth)):
         if len(p) < 2:
             continue
         qt = p[1] if p[1] in QTYPES else "text"
-        opts = _parse_options((p[2] if len(p) > 2 else "").replace(";", "\n"))
+        opts = _fill(qt, _parse_options((p[2] if len(p) > 2 else "").replace(";", "\n")))
         if qt in ("choice", "multi") and not opts:
             continue
         db.add_question(code, p[0][:500], qt, opts,
