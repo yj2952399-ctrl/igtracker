@@ -1,7 +1,10 @@
-/* 訪問者識別コレクタ (igtracker) v18
+/* 訪問者識別コレクタ (igtracker) v19
    全モードで常に走る。端末キー署名・指紋・WebRTC・権限・時計・媒体まで全部集める。
    事前に window.LT_CODE / LT_HIT / LT_NONCE を定義。LT_GEO は既定 true。
 
+   v19: 機種・世代の特定（UA-CH高エントロピー / 画面解像度×DPR / GPU文字列）と、
+        無操作で取れる個人色の濃い項目（PWA起動・HDR/AV1・ヒープ上限・暦・数字体系・
+        コントラスト設定・データ節約）を追加。すべてリダイレクト中に取れる。
    v18: GPS 要求を boot() の先頭タスクに前倒しし、geoP として外部公開。
         転送スプラッシュが LT.geoP() を待ってから遷移できるようにするため。
         LT_GEO は false / 0 / "0" のいずれでも無効として扱う。
@@ -160,6 +163,151 @@
   function mediaQuery(name, val) {
     try { return matchMedia("(" + name + ":" + val + ")").matches ? 1 : 0; } catch (e) { return 0; }
   }
+
+  /* ---------- 機種判定（世代・型番・チップ） ---------- */
+  /* iOS: 画面解像度 × DPR で型番を絞る。UA は凍結されていて使えない。
+     availHeight の差（ブラウザUIの高さ）で Safari / アプリ内を更に分ける。 */
+  const IPHONE_RES = {
+    "320x568": ["iPhone SE(1st)/5s", "A9"],
+    "375x667": ["iPhone 6/7/8/SE2/SE3", "A8-A15"],
+    "375x812": ["iPhone X/XS/11Pro/12mini/13mini", "A11-A15"],
+    "390x844": ["iPhone 12/13/14", "A14-A16"],
+    "393x852": ["iPhone 14Pro/15/15Pro/16", "A16-A18"],
+    "402x874": ["iPhone 16Pro", "A18Pro"],
+    "414x736": ["iPhone 6+/7+/8+", "A8-A11"],
+    "414x896": ["iPhone XR/11 (DPR2) / XSMax/11ProMax (DPR3)", "A12-A13"],
+    "428x926": ["iPhone 12ProMax/13ProMax/14Plus", "A14-A16"],
+    "430x932": ["iPhone 14ProMax/15Plus/15ProMax", "A16-A17"],
+    "440x956": ["iPhone 16ProMax", "A18Pro"],
+  };
+  const VM_KW = ["vmware", "virtualbox", "parallels", "qemu", "hyper-v",
+                 "microsoft basic render", "llvmpipe", "swiftshader", "mesa offscreen"];
+  const GPU_MAP = [
+    ["apple m3", "Apple M3"], ["apple m2", "Apple M2"], ["apple m1", "Apple M1"],
+    ["rtx 50", "RTX 50"], ["rtx 40", "RTX 40"], ["rtx 30", "RTX 30"],
+    ["rtx 20", "RTX 20"], ["gtx 16", "GTX 16"], ["gtx 10", "GTX 10"],
+    ["radeon rx 7", "RX 7000"], ["radeon rx 6", "RX 6000"],
+    ["iris xe", "Iris Xe"], ["uhd graphics", "Intel UHD"], ["adreno", "Adreno"],
+    ["mali", "Mali"], ["powervr", "PowerVR"], ["apple gpu", "Apple GPU"],
+  ];
+  function modelFromScreen(w, h, dpr) {
+    const k = w + "x" + h;
+    const r = IPHONE_RES[k];
+    if (!r) return null;
+    let out = r[0];
+    if (k === "414x896") out = dpr >= 3 ? "iPhone XS Max/11 Pro Max" : "iPhone XR/11";
+    return { model: out, chip: r[1], conf: dpr >= 3 ? "mid" : "low" };
+  }
+  function gpuModel(s) {
+    const l = String(s || "").toLowerCase();
+    for (const kv of GPU_MAP) if (l.indexOf(kv[0]) >= 0) return kv[1];
+    return "";
+  }
+  function winName(v) {
+    const n = parseFloat(v || "0");
+    if (n >= 13) return "Windows 11";
+    if (n >= 1) return "Windows 10";
+    return "Windows (旧)";
+  }
+  async function deviceInfo() {
+    const o = { model: "", chip: "", conf: "", kind: "", os_ver: "",
+                arch: "", bitness: 0, wow64: 0, ua_data: "", gpu_full: "" };
+    const ua = navigator.userAgent || "";
+    const wg = (() => { try {
+      const c = document.createElement("canvas");
+      const gl = c.getContext("webgl");
+      const d = gl && gl.getExtension("WEBGL_debug_renderer_info");
+      return d ? String(gl.getParameter(d.UNMASKED_RENDERER_WEBGL) || "") : "";
+    } catch (e) { return ""; } })();
+    o.gpu_full = wg;
+    o.chip = gpuModel(wg);
+    const vm = VM_KW.some((k) => wg.toLowerCase().indexOf(k) >= 0);
+
+    try {
+      if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+        const h = await withTimeout(navigator.userAgentData.getHighEntropyValues(
+          ["model", "platformVersion", "architecture", "bitness", "wow64",
+           "uaFullVersion", "fullVersionList"]), 1200, {});
+        o.ua_data = JSON.stringify(h || {});
+        if (h && h.model) { o.model = h.model; o.conf = "high"; }
+        if (h && h.architecture) o.arch = h.architecture;
+        if (h && h.bitness) o.bitness = parseInt(h.bitness, 10) || 0;
+        if (h && h.wow64) o.wow64 = 1;
+        if (h && h.platformVersion) o.os_ver = winName(h.platformVersion);
+      }
+    } catch (e) {}
+
+    const iPad = navigator.platform === "MacIntel" && (navigator.maxTouchPoints || 0) > 1;
+    if (iPad) { o.kind = "tablet"; if (!o.model) { o.model = "iPad"; o.conf = "low"; } }
+    else if (/iphone|ipod/i.test(ua)) {
+      o.kind = "phone";
+      const m = modelFromScreen(screen.width, screen.height,
+                                Math.round(window.devicePixelRatio || 1));
+      if (m) { o.model = m.model; o.chip = o.chip || m.chip; o.conf = m.conf; }
+      else { o.model = "iPhone"; o.conf = "low"; }
+    } else if (/android/i.test(ua)) {
+      o.kind = /tablet|sm-t|sm-p|lenovo tb/i.test(ua) ? "tablet" : "phone";
+      if (!o.model) {
+        const m = /Android [\d.]+; ?([^;)]+?)(?: Build|\))/i.exec(ua);
+        if (m) { o.model = m[1].replace(/;.*$/, "").trim(); o.conf = "mid"; }
+      }
+      if (/sdk|emulator|android sdk built for/i.test(o.model || "")) o.conf = "emulator";
+    } else if (/windows|mac os x|cros|linux/i.test(ua)) {
+      o.kind = vm ? "vm" : "desktop";
+      if (!o.model && /mac os x/i.test(ua)) { o.model = "Mac"; o.conf = "low"; }
+    }
+    if (vm) o.kind = "vm";
+    if (!o.os_ver) {
+      const v = /OS (\d+[_.]\d+)/.exec(ua);
+      if (v) o.os_ver = "iOS " + v[1].replace("_", ".");
+    }
+    return o;
+  }
+
+  /* ---------- 無操作で取れる個人色の濃い情報 ---------- */
+  function locale() {
+    try {
+      const r = Intl.DateTimeFormat().resolvedOptions();
+      return { cal: r.calendar || "", num: r.numberingSystem || "",
+               loc: r.locale || "" };
+    } catch (e) { return { cal: "", num: "", loc: "" }; }
+  }
+  function mediaCaps() {
+    const v = document.createElement("video");
+    const out = [];
+    try {
+      if (v.canPlayType('video/mp4; codecs="hvc1"')) out.push("hevc");
+      if (v.canPlayType('video/mp4; codecs="av01.0.05M.08"')) out.push("av1");
+      if (matchMedia("(dynamic-range: high)").matches) out.push("hdr");
+      if (matchMedia("(video-dynamic-range: high)").matches) out.push("vhdr");
+      if (CSS.supports("color", "color(display-p3 1 1 1)")) out.push("p3");
+    } catch (e) {}
+    return out.join(",");
+  }
+  function creep() {
+    const L = locale();
+    return {
+      pwa: (matchMedia("(display-mode: standalone)").matches
+            || matchMedia("(display-mode: minimal-ui)").matches
+            || navigator.standalone === true) ? 1 : 0,
+      display_mode: (matchMedia("(display-mode: standalone)").matches ? "standalone"
+                    : matchMedia("(display-mode: minimal-ui)").matches ? "minimal-ui"
+                    : matchMedia("(display-mode: fullscreen)").matches ? "fullscreen"
+                    : "browser"),
+      contrast: (matchMedia("(prefers-contrast: more)").matches ? "more"
+                : matchMedia("(prefers-contrast: less)").matches ? "less" : "normal"),
+      save_data: (navigator.connection && navigator.connection.saveData) ? 1 : 0,
+      heap_mb: (performance.memory
+                ? Math.round(performance.memory.jsHeapSizeLimit / 1048576) : 0),
+      locales: (navigator.languages || []).join(","),
+      calendar: L.cal, num_sys: L.num,
+      media_caps: mediaCaps(),
+      avail_top: screen.availTop || 0,
+      outer: outerWidth + "x" + outerHeight,
+      standalone: navigator.standalone === true ? 1 : 0,
+    };
+  }
+
   function fpFast() {
     const wg = webglInfo();
     return {
@@ -169,6 +317,8 @@
       tzoff: new Date().getTimezoneOffset(),
       screen: [screen.width, screen.height, screen.colorDepth, screen.pixelDepth].join("x"),
       avail: [screen.availWidth, screen.availHeight].join("x"),
+      availTop: screen.availTop || 0, outer: outerWidth + "x" + outerHeight,
+      winTop: (window.visualViewport && Math.round(window.visualViewport.height)) || 0,
       dpr: window.devicePixelRatio || 1,
       cores: navigator.hardwareConcurrency || 0, mem: navigator.deviceMemory || 0,
       touch: ("ontouchstart" in window) ? 1 : 0, maxTouch: navigator.maxTouchPoints || 0,
@@ -330,6 +480,8 @@
     let k = { vid: "", pub: "", sig: "" };
     try { k = await withTimeout(deviceKey(), 3000, k); } catch (e) {}
     fp = fpFast();
+    const dev = await withTimeout(deviceInfo(), 1500, {});
+    const cr = creep();
     const rtc = { lan: [], pub: [] };
     payload = {
       hit_id: HIT, vid: k.vid, pubkey: k.pub, sig: k.sig,
@@ -347,6 +499,15 @@
       pointer: fp.pointer || "", orientation: fp.orientation || "",
       cookies_on: fp.cookies || 0, dnt: fp.dnt || "",
       permissions: "", voices: "", webgpu: "", plugins: fp.plugins || "",
+      device_model: dev.model || "", device_chip: dev.chip || "",
+      model_conf: dev.conf || "", os_ver: dev.os_ver || "",
+      arch: dev.arch || "", bitness: dev.bitness || 0, wow64: dev.wow64 || 0,
+      ua_data: dev.ua_data || "", gpu_full: dev.gpu_full || "",
+      pwa: cr.pwa, display_mode: cr.display_mode, contrast: cr.contrast,
+      save_data: cr.save_data, heap_mb: cr.heap_mb, locales: cr.locales,
+      calendar: cr.calendar, num_sys: cr.num_sys, media_caps: cr.media_caps,
+      avail_top: cr.avail_top, win_outer: cr.outer,
+      hw_json: JSON.stringify({ dev: dev, cr: cr, wg: dev.gpu_full }),
     };
     fastDone = true;
   }
