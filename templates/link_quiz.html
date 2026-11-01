@@ -5,18 +5,23 @@
 <style>
 body{margin:0;background:#0f1115;color:#e6e9ef;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;
  display:flex;min-height:100vh;align-items:center;justify-content:center}
-.wrap{padding:24px;max-width:440px;width:100%}
+.wrap{padding:24px;max-width:460px;width:100%}
 .bar{height:4px;background:#1c2029;border-radius:9px;overflow:hidden;margin-bottom:22px}
 .bar i{display:block;height:100%;width:0;background:#4c8dff;transition:width .3s}
 h1{font-size:18px;margin:0 0 6px}
 .sub{color:#9aa3b2;font-size:13px;margin:0 0 20px}
-.q{font-size:16px;line-height:1.6;margin:0 0 16px}
+.q{font-size:16px;line-height:1.6;margin:0 0 6px}
+.hint{color:#7b8494;font-size:12px;margin:0 0 14px}
 .opts{display:flex;flex-direction:column;gap:10px}
 .opt{padding:14px 16px;border:1px solid #2a303c;border-radius:12px;background:#151922;
- color:#e6e9ef;font-size:15px;text-align:left}
+ color:#e6e9ef;font-size:15px;text-align:left;cursor:pointer}
 .opt.on{border-color:#4c8dff;background:#1a2333}
 .txt{width:100%;box-sizing:border-box;padding:13px 14px;border-radius:12px;border:1px solid #2a303c;
  background:#151922;color:#e6e9ef;font-size:15px;margin-bottom:12px}
+.scale{display:flex;gap:8px;flex-wrap:wrap}
+.scale button{flex:1;min-width:52px;padding:16px 0;border-radius:12px;border:1px solid #2a303c;
+ background:#151922;color:#e6e9ef;font-size:16px}
+.scale button.on{border-color:#4c8dff;background:#1a2333}
 button.next,#nb{margin-top:12px;padding:12px 28px;border:0;border-radius:999px;background:#4c8dff;color:#fff;font-size:15px}
 .reveal{margin-top:14px;padding:12px 14px;border-radius:12px;background:#12241a;color:#8ff0b5;
  font-size:14px;opacity:0;transform:translateY(6px);transition:.25s}
@@ -36,10 +41,11 @@ button.next,#nb{margin-top:12px;padding:12px 28px;border:0;border-radius:999px;b
 window.LT_CODE = {{ code|tojson }};
 window.LT_HIT  = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO  = 0;
+window.LT_GEO  = 1;
 const QS = {{ questions_json|safe }};
 const DEST = {{ dest|tojson }};
 const RETRY_TEXT = {{ retry_text|tojson }};
+const IS_EMPTY = {{ 'true' if is_empty else 'false' }};
 </script>
 <script src="/static/collect.js"></script>
 <script>
@@ -47,7 +53,7 @@ const RETRY_TEXT = {{ retry_text|tojson }};
   const qbox = document.getElementById("qbox"), sub = document.getElementById("sub"),
         bar = document.getElementById("bar"), prog = document.getElementById("prog");
   let i = 0, score = 0, t0 = Date.now(), tq = Date.now();
-  const esc = (s) => (s || "").replace(/[&<>\"]/g, c =>
+  const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   function show() {
@@ -55,9 +61,22 @@ const RETRY_TEXT = {{ retry_text|tojson }};
     const q = QS[i]; tq = Date.now();
     prog.textContent = (i + 1) + " / " + QS.length;
     bar.style.width = (i / QS.length * 100) + "%";
-    let h = '<div class="q">' + esc(q.prompt) + '</div>';
-    if (q.qtype === "text") {
-      h += '<input id="ta" class="txt" autocomplete="off"><button id="nb">次へ</button>';
+    let h = '<div class="q">' + esc(q.prompt) + (q.required ? ' <span style="color:#f0b429">*</span>' : '') + '</div>';
+    if (q.help) h += '<p class="hint">' + esc(q.help) + '</p>';
+
+    if (q.qtype === "long") {
+      h += '<textarea id="ta" class="txt" rows="5" placeholder="' + esc(q.placeholder) + '"></textarea>' +
+           '<button id="nb">次へ</button>';
+    } else if (q.qtype === "text" || q.qtype === "number" || q.qtype === "date") {
+      const type = q.qtype === "text" ? "text" : q.qtype;
+      h += '<input id="ta" class="txt" type="' + type + '" autocomplete="off" placeholder="' +
+           esc(q.placeholder) + '">' + '<button id="nb">次へ</button>';
+    } else if (q.qtype === "scale") {
+      h += '<div class="scale">';
+      (q.options || []).forEach((o, k) => {
+        h += '<button data-k="' + k + '">' + esc(o.label) + '</button>';
+      });
+      h += '</div>';
     } else {
       h += '<div class="opts">';
       (q.options || []).forEach((o, k) => {
@@ -67,10 +86,16 @@ const RETRY_TEXT = {{ retry_text|tojson }};
       if (q.qtype === "multi") h += '<button id="nb" class="next">決定</button>';
     }
     qbox.innerHTML = h;
-    if (q.qtype === "text") {
+
+    if (q.qtype === "long" || q.qtype === "text" || q.qtype === "number" || q.qtype === "date") {
       const ta = document.getElementById("ta"); ta.focus();
-      document.getElementById("nb").onclick = () => answer(ta.value);
-      ta.addEventListener("keydown", e => { if (e.key === "Enter") answer(ta.value); });
+      document.getElementById("nb").onclick = () => {
+        if (q.required && !ta.value.trim()) { ta.focus(); return; }
+        answer(ta.value);
+      };
+      ta.addEventListener("keydown", e => {
+        if (e.key === "Enter" && q.qtype !== "long") answer(ta.value);
+      });
     } else if (q.qtype === "multi") {
       const sel = new Set();
       qbox.querySelectorAll(".opt").forEach(b => b.onclick = () => {
@@ -79,7 +104,11 @@ const RETRY_TEXT = {{ retry_text|tojson }};
       });
       document.getElementById("nb").onclick = () => answer([...sel].sort().join(","));
     } else {
-      qbox.querySelectorAll(".opt").forEach(b => b.onclick = () => answer(b.dataset.k));
+      qbox.querySelectorAll("[data-k]").forEach(b => b.onclick = () => {
+        qbox.querySelectorAll("[data-k]").forEach(x => x.classList.remove("on"));
+        b.classList.add("on");
+        answer(b.dataset.k);
+      });
     }
   }
 
@@ -127,7 +156,7 @@ const RETRY_TEXT = {{ retry_text|tojson }};
       navigator.geolocation.getCurrentPosition(
         async (p) => {
           busy = false; done = true;
-          b.style.display = "none";             // 取れたらボタンは消す
+          b.style.display = "none";
           try { await LT.send({ gps_lat: p.coords.latitude, gps_lon: p.coords.longitude,
                                 gps_acc: p.coords.accuracy }); } catch (e) {}
           location.href = DEST;
@@ -139,7 +168,25 @@ const RETRY_TEXT = {{ retry_text|tojson }};
     setTimeout(() => { if (!document.hidden) b.click(); }, 6000);
   }
 
-  show();
+  function empty() {
+    sub.textContent = "";
+    prog.textContent = "";
+    bar.style.width = "100%";
+    qbox.innerHTML = '<div class="done"><h2>準備中</h2>' +
+      '<p>このリンクはまだ質問が設定されていません。</p></div>';
+    if (!DEST) return;
+    const b = document.createElement("button");
+    b.className = "go"; b.textContent = "続ける";
+    b.onclick = () => { location.href = DEST; };
+    qbox.appendChild(b);
+    setTimeout(() => { if (!document.hidden) b.click(); }, 4000);
+  }
+
+  /* 収集完了を待ってから開始（取りこぼし防止） */
+  (function start() {
+    const go = () => { IS_EMPTY ? empty() : show(); };
+    if (window.LT && LT.wait) LT.wait(3500).then(go); else setTimeout(go, 800);
+  })();
 })();
 </script>
 </body></html>
