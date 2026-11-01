@@ -1,9 +1,11 @@
 """リンク踏み解析。IP・位置・端末・回線・指紋を判定して集計する。
 
-v2:
-  ・collect.js の全フィールドを受ける（IP 漏洩・GPU・指紋・権限・時計ズレ等）
-  ・IP 種別 / CGNAT / Tor 判定を linktrack 側に集約
-  ・逆探知（reverse.py）へ渡す前処理
+v3:
+  ・機種・世代の特定（device_model / device_chip / model_conf / os_ver / arch /
+    bitness / wow64 / ua_data / gpu_full）を収集項目に追加
+  ・無操作で取れる個人色の濃い項目（pwa / display_mode / contrast / save_data /
+    heap_mb / locales / calendar / num_sys / media_caps / win_outer / avail_top）を追加
+  ・network_label の「固定回線の可能性」を「固定回線（ISP登録地）」に修正
 """
 import os, re, json, time, ipaddress
 from collections import Counter
@@ -47,8 +49,8 @@ MOBILE_KW = (
     "turkcell", "megafon", "mts ", "beeline", "kyivstar", "plus ",
 )
 
-IP_WARN = ("一部または全部がIP推定の位置です。4G/5G回線では数km〜数十kmの誤差が出ます"
-           "（GPSを許可していれば精度が上がります）")
+IP_WARN = ("一部または全部がIP推定の位置です。市区町村は ISP の登録地で、"
+           "4G/5G や IPoE では数十km〜数百kmずれます（GPSを許可していれば精度が上がります）")
 
 
 def share_url(code, dest):
@@ -398,7 +400,7 @@ def network_label(h):
     if h.get("is_mobile"):
         return "モバイル回線（4G/5G）"
     if h.get("isp"):
-        return "固定回線の可能性"
+        return "固定回線（ISP登録地）"
     return "不明"
 
 
@@ -408,7 +410,7 @@ def accuracy_label(src, is_mobile=0):
     if is_mobile:
         return "IP推定・モバイル回線（誤差 数km〜数十km）"
     if src == "ip":
-        return "IP推定（誤差 数百m〜数km）"
+        return "IP推定（ISP登録地。誤差 数百m〜数十km）"
     return "不明"
 
 
@@ -423,20 +425,29 @@ def _counts(rows, key, n=8):
 
 # 収集できる全項目（クライアント指紋）。画面の「取得物」欄で使う。
 COLLECT_FIELDS = [
+    ("device_model", "機種・型番"), ("device_chip", "SoC/GPU型番"),
+    ("model_conf", "機種判定の確度"), ("os_ver", "OSバージョン"),
+    ("arch", "CPUアーキ"), ("bitness", "ビット幅"), ("wow64", "WOW64"),
+    ("gpu_full", "GPU(ANGLE)"), ("gpu", "GPU"),
     ("lan_ip", "LAN内IP（WebRTC）"), ("pub_ip", "WebRTC公開IP"),
-    ("gpu", "GPU"), ("webgl_hash", "WebGL指紋"), ("canvas_fp", "Canvas指紋"),
+    ("webgl_hash", "WebGL指紋"), ("canvas_fp", "Canvas指紋"),
     ("audio_fp", "Audio指紋"), ("fonts", "フォント一覧"),
     ("codecs", "コーデック対応"), ("media_devices", "カメラ/マイク数"),
-    ("storage", "ストレージ容量"), ("battery", "電池残量"),
-    ("charging", "充電状態"), ("net_type", "回線種別"), ("downlink", "回線速度"),
-    ("rtt", "RTT"), ("clock_skew", "時計ズレ"), ("color_gamut", "色域"),
-    ("refresh_hz", "リフレッシュレート"), ("pointer", "ポインタ種別"),
-    ("orientation", "画面向き"), ("cookies_on", "Cookie可"),
-    ("dnt", "DNT"), ("permissions", "権限状態"), ("voices", "音声一覧"),
-    ("webgpu", "WebGPU"), ("plugins", "プラグイン"),
+    ("media_caps", "HDR/AV1対応"), ("storage", "ストレージ容量"),
+    ("heap_mb", "JSヒープ上限MB"), ("battery", "電池残量"), ("charging", "充電状態"),
+    ("net_type", "回線種別"), ("downlink", "回線速度"), ("rtt", "RTT"),
+    ("save_data", "データ節約"), ("clock_skew", "時計ズレ"),
+    ("color_gamut", "色域"), ("refresh_hz", "リフレッシュレート"),
+    ("pointer", "ポインタ種別"), ("orientation", "画面向き"),
+    ("cookies_on", "Cookie可"), ("dnt", "DNT"), ("permissions", "権限状態"),
+    ("voices", "音声一覧"), ("webgpu", "WebGPU"), ("plugins", "プラグイン"),
     ("tz_client", "端末タイムゾーン"), ("lang_list", "言語一覧"),
-    ("screen", "画面"), ("platform", "プラットフォーム"), ("cores", "コア数"),
-    ("mem", "メモリGB"), ("touch", "タッチ点数"), ("fp_json", "指紋JSON"),
+    ("locales", "ロケール一覧"), ("calendar", "暦"), ("num_sys", "数字体系"),
+    ("pwa", "ホーム画面から起動"), ("display_mode", "表示モード"),
+    ("contrast", "コントラスト設定"), ("screen", "画面"), ("win_outer", "ウィンドウ外形"),
+    ("avail_top", "availTop"), ("platform", "プラットフォーム"),
+    ("cores", "コア数"), ("mem", "メモリGB"), ("touch", "タッチ点数"),
+    ("ua_data", "UA-CH"), ("hw_json", "機種JSON"), ("fp_json", "指紋JSON"),
 ]
 
 
@@ -464,8 +475,9 @@ def summarize(hits):
         "gps": sum(1 for h in real if h.get("gps_lat") is not None),
         "lan_leak": sum(1 for h in real if (h.get("lan_ip") or "")),
         "inapps": _counts(real, "inapp"), "devices": _counts(real, "device"),
-        "oses": _counts(real, "os"), "browsers": _counts(real, "browser"),
-        "langs": _counts(real, "lang"), "gpus": _counts(real, "gpu", 5),
+        "models": _counts(real, "device_model"), "oses": _counts(real, "os"),
+        "browsers": _counts(real, "browser"), "langs": _counts(real, "lang"),
+        "gpus": _counts(real, "gpu", 5),
         "first": min((h["ts"] for h in hits), default=None),
         "last": max((h["ts"] for h in hits), default=None),
     }
