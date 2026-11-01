@@ -21,6 +21,8 @@ from . import identity, watcher, forensics, linktrack, together, snscheck, campa
 from . import roles
 # --- 封鎖（新規） ---
 from . import lockdown
+# --- 逆探知・クイズ作成編集（新規） ---
+from . import reverse, quiz_admin
 
 config.load()
 users.init()
@@ -72,6 +74,9 @@ from . import hijack
 app.include_router(hijack.router)
 # --- 封鎖（新規） ---
 app.include_router(lockdown.router)
+# --- クイズ作成/編集・逆探知（新規・main より先に登録して /links/add を奪う） ---
+app.include_router(quiz_admin.router)
+app.include_router(reverse.make_router())
 
 # --- 安全なクイズ・育成ゲーム ---
 from . import arcade
@@ -1660,17 +1665,24 @@ def link_hit(code: str, request: Request):
     if link["mode"] == "redirect" and link["dest"]:
         return RedirectResponse(link["dest"], 302)
 
-    if link["mode"] == "quiz" and db.questions(code):
+    # クイズ：質問が 0 件でもクイズ画面を返す（監視室へ落とさない）
+    if link["mode"] == "quiz":
         qs = [{"id": r["id"], "qtype": r["qtype"], "prompt": r["prompt"],
-               "options": _json.loads(r["options"] or "[]")} for r in db.questions(code)]
+               "options": _json.loads(r["options"] or "[]"), "help": r["help"] or "",
+               "placeholder": r["placeholder"] or "",
+               "required": int(r["required"] or 0),
+               "min": r["min"] or "", "max": r["max"] or ""}
+              for r in db.questions(code)]
         return render("link_quiz.html", request, code=code, hit_id=hid, link=link,
-                      dest=link["dest"] or "", nonce=nonce,
-                      questions_json=_json.dumps(qs, ensure_ascii=False))
+                      dest=link["dest"] or "", nonce=nonce, retry_text="もう一度",
+                      questions_json=_json.dumps(qs, ensure_ascii=False),
+                      is_empty=(not qs))
 
     if link["mode"] == "identify":
         ip = linktrack.client_ip(request)
         return render("link_identify.html", request, code=code, hit_id=hid, link=link,
                       dest=link["dest"] or "", nonce=nonce, ip=ip,
+                      retry_text="もう一度", notes=linktrack.ip_notes(ip),
                       p=linktrack.parse_ua(request.headers.get("user-agent", "")),
                       g=linktrack.geo(ip))
 
@@ -1754,7 +1766,19 @@ async def link_answer(code: str, request: Request):
     ans = str(ans or "")[:2000]
     ok = None
     if (q["answer_key"] or "") != "":
-        ok = int(str(q["answer_key"]).strip() == ans.strip())
+        key = str(q["answer_key"]).strip()
+        got = ans.strip()
+        if q["qtype"] in ("choice", "multi"):
+            want = {k.strip() for k in key.split(",") if k.strip()}
+            have = {k.strip() for k in got.split(",") if k.strip()}
+            ok = int(want == have)
+        elif q["qtype"] == "number":
+            try:
+                ok = int(float(key) == float(got))
+            except Exception:
+                ok = int(key == got)
+        else:
+            ok = int(key.lower() == got.lower())
     db.add_answer({"code": code, "hit_id": int(body.get("hit_id") or 0),
                    "qid": q["id"], "ord": q["ord"], "qtype": q["qtype"],
                    "answer": ans, "is_correct": ok,
@@ -1762,7 +1786,7 @@ async def link_answer(code: str, request: Request):
                    "ip": linktrack.client_ip(request), "ts": now_iso()})
 
     reveal = ""
-    if q["qtype"] in ("choice", "multi"):
+    if q["qtype"] in ("choice", "multi", "scale", "yesno"):
         opts = _json.loads(q["options"] or "[]")
         idxs = [int(x) for x in ans.split(",") if x.strip().isdigit()]
         reveal = " / ".join(o.get("reveal", "") for i, o in enumerate(opts)
@@ -1834,8 +1858,10 @@ def links_page(request: Request, u=Depends(auth)):
 @app.post("/links/add")
 def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
               mode: str = Form("page"), u=Depends(auth)):
-    # 直接POST → 作成完了ページへ（詳細ページには飛ばさない）
-    code, _ = _create_link(name, dest, note, mode, u)
+    # quiz_admin.router が先に登録されているため実際はそちらが処理する（保険として同一挙動）
+    code, m = _create_link(name, dest, note, mode, u)
+    if m == "quiz":
+        return RedirectResponse(f"/link/{code}/questions?new=1", 303)
     return RedirectResponse(f"/links/created/{code}", 303)
 
 @app.get("/links/created/{code}", response_class=HTMLResponse)
@@ -1858,6 +1884,7 @@ def links_add_json(request: Request, name: str = Form(""), dest: str = Form(""),
         "mode": m,
         "dest": dest.strip(),
         "url": f"{_base(request)}/l/{code}",
+        "questions": f"{_base(request)}/link/{code}/questions",
     })
 
 @app.get("/link/{code}", response_class=HTMLResponse)
@@ -1882,6 +1909,7 @@ def link_detail(code: str, request: Request, bots: str = "", u=Depends(auth)):
                   answers_by_hit={h["id"]: [dict(a) for a in db.answers_for(h["id"])]
                                   for h in hits},
                   qs=db.questions(code), fp_counts=dict(fp_counts),
+                  cfields=linktrack.COLLECT_FIELDS,
                   vlabels={v["vid"]: (v["label"] or "") for v in db.visitors(500)})
 
 @app.post("/link/{code}/toggle")
@@ -1925,15 +1953,19 @@ def link_qr(code: str, request: Request):
     return Response(buf.getvalue(), media_type="image/png",
                     headers={"Cache-Control": "no-store"})
 
-# ---------- クイズ編集 / 訪問者 / 一緒解析 ----------
+# ---------- クイズ編集（実体は quiz_admin。ここは旧経路の保険） ----------
 
 @app.get("/link/{code}/questions", response_class=HTMLResponse)
 def link_questions(code: str, request: Request, u=Depends(auth)):
     link = db.link_get(code)
     if not link:
         raise HTTPException(404)
-    return render("link_questions.html", request, link=link, qs=db.questions(code),
-                  base=_base(request))
+    return RedirectResponse(f"/link/{code}/questions", 303) \
+        if False else render("link_questions.html", request, link=link,
+                             qs=db.questions(code), base=_base(request),
+                             qtypes=("choice", "multi", "text", "long",
+                                     "yesno", "scale", "number", "date"),
+                             qtype_label={}, is_new=False, msg="", err="")
 
 @app.post("/link/{code}/questions/add")
 def link_questions_add(code: str, prompt: str = Form(...), qtype: str = Form("choice"),
@@ -1948,13 +1980,15 @@ def link_questions_add(code: str, prompt: str = Form(...), qtype: str = Form("ch
         rows.append({"label": parts[0],
                      "key": parts[1] if len(parts) > 1 else str(len(rows)),
                      "reveal": parts[2] if len(parts) > 2 else ""})
-    db.add_question(code, prompt, qtype if qtype in ("choice", "multi", "text") else "choice",
-                    rows, answer_key, reveal)
+    db.add_question(code, prompt, qtype if qtype in
+                    ("choice", "multi", "text", "long", "yesno", "scale",
+                     "number", "date") else "choice", rows, answer_key, reveal)
     return RedirectResponse(f"/link/{code}/questions", 303)
 
 @app.post("/link/{code}/questions/{qid}/delete")
 def link_questions_del(code: str, qid: int, u=Depends(auth)):
     db.del_question(qid)
+    db.renumber_questions(code)
     return RedirectResponse(f"/link/{code}/questions", 303)
 
 @app.get("/visitors", response_class=HTMLResponse)
