@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}逆探知{% endblock %}
+{% block head %}
+<style>
+table{font-size:12px}
+.mono{font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.k{color:#8b93a7;white-space:nowrap;vertical-align:top}
+.iss{font-size:11px;padding:4px 8px;border-radius:6px;display:block;margin:2px 0}
+.iss.warn{background:#2a2113;color:#f0b429}
+.iss.info{background:#16212e;color:#7fb2e5}
+.card{margin:12px 0}
+.bar{height:6px;background:#1c2029;border-radius:9px;overflow:hidden;margin:6px 0 14px}
+.bar i{display:block;height:100%;background:#7ee08a}
+.bad i{background:#e5484d}
+</style>
+{% endblock %}
+{% block content %}
+<h1>逆探知 {% if link %}— {{ link.name }}{% endif %}</h1>
+<p class="dim">IPから機械的に取れる情報を全部出します。位置は回線の出口であり、端末の居場所ではありません。</p>
+
+<form method="get" class="card">
+  <label>IPを直接引く <input name="ip" value="{{ ip }}" placeholder="203.0.113.1"></label>
+  <button>逆探知</button>
+</form>
+
+{% macro row(label, val) %}
+{% if val not in (None, "", [], 0) %}
+<tr><th class="k">{{ label }}</th><td class="mono">{{ val }}</td></tr>
+{% endif %}
+{% endmacro %}
+
+{% macro block(d) %}
+{% set conf = d.confidence or 0 %}
+<div class="bar {{ 'bad' if conf < 40 else '' }}"><i style="width:{{ conf }}%"></i></div>
+<div class="dim">信頼度 {{ conf }}% — {{ d.verdict or '' }}
+  {% if d.provider_count is defined %}／一致情報源 {{ d.provider_count }}件{% endif %}</div>
+{% for i in d.issues or [] %}
+<span class="iss {{ i.level }}">{{ i.text }}</span>
+{% endfor %}
+<table>
+{{ row("IP", d.ip) }}{{ row("種別", d.ip_type) }}{{ row("逆引き", d.reverse_dns) }}
+{{ row("国", d.country) }}{{ row("国コード", d.country_code) }}{{ row("地域", d.region) }}
+{{ row("市区町村", d.city) }}{{ row("地区", d.district) }}{{ row("郵便番号", d.postal) }}
+{{ row("緯度経度", (d.lat ~ ", " ~ d.lon) if d.lat is not none else "") }}
+{{ row("推定半径km", d.accuracy_km) }}{{ row("タイムゾーン", d.timezone) }}
+{{ row("通貨", d.currency) }}{{ row("国際電話", d.calling_code) }}{{ row("言語", d.languages) }}
+{{ row("ISP", d.isp) }}{{ row("組織", d.org) }}{{ row("ASN", d.asn) }}{{ row("AS名", d.as_name) }}
+{{ row("CIDR", d.cidr) }}{{ row("ネットワーク名", d.netname) }}{{ row("RIR", d.registry) }}
+{{ row("割当", d.allocated) }}{{ row("abuse", d.abuse_mail) }}
+{{ row("開放ポート", d.open_ports|join(", ") if d.open_ports else "") }}
+{{ row("TLS CN", d.tls_cn) }}{{ row("TLS発行者", d.tls_issuer) }}{{ row("TLS期限", d.tls_not_after) }}
+{{ row("HTTP Server", d.http_server) }}
+{{ row("モバイル", "はい" if d.is_mobile else "") }}{{ row("VPN", "はい" if d.is_vpn else "") }}
+{{ row("プロキシ", "はい" if d.is_proxy else "") }}{{ row("Tor", "はい" if d.is_tor else "") }}
+{{ row("DC/クラウド", "はい" if d.is_hosting else "") }}{{ row("Anycast", "はい" if d.is_anycast else "") }}
+{{ row("取得時刻", d.fetched_at) }}
+</table>
+{% endmacro %}
+
+{% if single %}
+<h2>指定IP</h2>
+<div class="card">{{ block(single) }}</div>
+{% endif %}
+
+{% if link %}
+<h2>このリンクを踏んだIP（{{ rows|length }}件）</h2>
+{% for d in rows %}
+<div class="card"><h3 class="mono">{{ d.ip }}</h3>{{ block(d) }}</div>
+{% else %}
+<p class="dim">まだ実ヒットがありません。</p>
+{% endfor %}
+<p><a href="/link/{{ link.code }}">← リンク詳細</a></p>
+{% endif %}
+
+<h2>IPから取れる項目（全{{ fields|length }}種）</h2>
+<table>
+{% for k, label in fields %}<tr><th class="k">{{ label }}</th><td class="mono">{{ k }}</td></tr>
+{% endfor %}
+</table>
+{% endblock %}
