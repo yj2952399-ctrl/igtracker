@@ -1768,7 +1768,7 @@ async def link_answer(code: str, request: Request):
     if (q["answer_key"] or "") != "":
         key = str(q["answer_key"]).strip()
         got = ans.strip()
-        if q["qtype"] in ("choice", "multi"):
+        if q["qtype"] in ("choice", "multi", "yesno", "scale"):
             want = {k.strip() for k in key.split(",") if k.strip()}
             have = {k.strip() for k in got.split(",") if k.strip()}
             ok = int(want == have)
@@ -1953,42 +1953,12 @@ def link_qr(code: str, request: Request):
     return Response(buf.getvalue(), media_type="image/png",
                     headers={"Cache-Control": "no-store"})
 
-# ---------- クイズ編集（実体は quiz_admin。ここは旧経路の保険） ----------
+# ---------- クイズ編集（実体は quiz_admin。ここは保険の転送のみ） ----------
 
 @app.get("/link/{code}/questions", response_class=HTMLResponse)
 def link_questions(code: str, request: Request, u=Depends(auth)):
-    link = db.link_get(code)
-    if not link:
+    if not db.link_get(code):
         raise HTTPException(404)
-    return RedirectResponse(f"/link/{code}/questions", 303) \
-        if False else render("link_questions.html", request, link=link,
-                             qs=db.questions(code), base=_base(request),
-                             qtypes=("choice", "multi", "text", "long",
-                                     "yesno", "scale", "number", "date"),
-                             qtype_label={}, is_new=False, msg="", err="")
-
-@app.post("/link/{code}/questions/add")
-def link_questions_add(code: str, prompt: str = Form(...), qtype: str = Form("choice"),
-                       options: str = Form(""), answer_key: str = Form(""),
-                       reveal: str = Form(""), u=Depends(auth)):
-    rows = []
-    for line in (options or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = [p.strip() for p in line.split("|")]
-        rows.append({"label": parts[0],
-                     "key": parts[1] if len(parts) > 1 else str(len(rows)),
-                     "reveal": parts[2] if len(parts) > 2 else ""})
-    db.add_question(code, prompt, qtype if qtype in
-                    ("choice", "multi", "text", "long", "yesno", "scale",
-                     "number", "date") else "choice", rows, answer_key, reveal)
-    return RedirectResponse(f"/link/{code}/questions", 303)
-
-@app.post("/link/{code}/questions/{qid}/delete")
-def link_questions_del(code: str, qid: int, u=Depends(auth)):
-    db.del_question(qid)
-    db.renumber_questions(code)
     return RedirectResponse(f"/link/{code}/questions", 303)
 
 @app.get("/visitors", response_class=HTMLResponse)
