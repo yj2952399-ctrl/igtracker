@@ -23,7 +23,6 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 .bot{color:#8b93a7;font-size:10.5px;line-height:1.4}
 .gps{color:#7ee08a}.ip{color:#f0b429}
 .model{color:#7ee08a;font-weight:600}
-.cred{color:#7ee08a;font-weight:700}
 .btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2b3346;
   color:#e6e9ef;text-decoration:none;font-size:12px;border:0;cursor:pointer}
 .btn.p{background:#4c8dff;color:#fff}
@@ -73,11 +72,6 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
 
 {% if link.note %}<div class="q" style="white-space:pre-wrap">要件メモ：{{ link.note }}</div>{% endif %}
 
-{% if link.mode == 'login' %}
-<div class="q">ログイン中継：飛び先 <code class="c">{{ link.dest }}</code><br>
-  <span class="bot">踏ませると公式ログイン画面を中継し、入力されたID/パスを下の一覧に残します。</span></div>
-{% endif %}
-
 <div class="grid">
   <div class="card"><div class="k">実訪問</div><div class="v">{{ stats.real }}</div></div>
   <div class="card"><div class="k">ボット</div><div class="v">{{ stats.bots }}</div></div>
@@ -104,25 +98,6 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
   {% for name, n in stats.browsers %}<span class="bot">{{ name }}:{{ n }}</span>{% endfor %}
   {% for name, n in stats.inapps %}<span class="bot">{{ name }}:{{ n }}</span>{% endfor %}
 </div>
-
-<h3>抜き取り（{{ creds|length }}件）</h3>
-{% if creds %}
-<table>
-  <tr><th>時刻</th><th>サイト</th><th>ID</th><th>パスワード</th><th>結果</th><th>hit</th></tr>
-  {% for c in creds %}
-  <tr>
-    <td class="bot">{{ (c.ts or '')[:19] }}</td>
-    <td class="bot">{{ c.site }}</td>
-    <td><span class="cred">{{ c.user_val or c.user_mask or '-' }}</span></td>
-    <td><code class="c">{{ c.pass_val or c.pass_mask or '-' }}</code></td>
-    <td>{% if c.ok %}<span class="gps">成功</span>{% elif c.ok == 0 %}<span class="ip">不一致</span>{% else %}<span class="bot">不明</span>{% endif %}</td>
-    <td class="bot">{{ c.hit_id }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% else %}
-<div class="bot">まだありません</div>
-{% endif %}
 
 <h3>踏み履歴（{{ hits|length }}件）</h3>
 <table>
@@ -216,11 +191,6 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
       {% if h.quiz_done %}<br><span class="bot">クイズ {{ h.quiz_score }}/{{ h.quiz_total }}</span>{% endif %}
     </td>
     <td>
-      {% for c in creds if c.hit_id == h.id %}
-      <div class="q"><span class="cred">{{ c.user_val or c.user_mask }}</span>
-        / <code class="c">{{ c.pass_val or c.pass_mask }}</code>
-        {% if c.ok %}<b>○</b>{% elif c.ok == 0 %}✕{% endif %}</div>
-      {% endfor %}
       {% for a in answers_by_hit.get(h.id, []) %}
       <div class="q">{{ a.answer }} {% if a.is_correct %}<b>○</b>{% elif a.is_correct == 0 %}✕{% endif %}</div>
       {% endfor %}
@@ -238,7 +208,7 @@ code.c{background:#232734;padding:2px 6px;border-radius:5px;font-size:12px}
   <form method="post" action="{{ base }}/link/{{ link.code }}/toggle">
     <button class="btn" type="submit">{{ '停止する' if link.active else '有効にする' }}</button></form>
   <form method="post" action="{{ base }}/link/{{ link.code }}/hits/clear"
-        onsubmit="return confirm('履歴と抜き取りを消しますか？')">
+        onsubmit="return confirm('履歴を消しますか？')">
     <button class="btn" type="submit">履歴を消す</button></form>
   <form method="post" action="{{ base }}/link/{{ link.code }}/delete"
         onsubmit="return confirm('リンクを削除しますか？')">
