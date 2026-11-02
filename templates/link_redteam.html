@@ -6,8 +6,7 @@
 <div class="card">
   状態: {{ '有効' if on else '停止中' }}
   <form method="post" action="/link/{{ link.code }}/redteam/toggle" style="display:inline"><button type="submit">{{ '停止' if on else '有効化' }}</button></form>
-  <a href="/link/{{ link.code }}">詳細</a> <a href="/l/{{ link.code }}" target="_blank">開く</a>
-  <a href="/siege?url=">攻城へ</a>
+  <a href="/link/{{ link.code }}">詳細</a> <a href="/l/{{ link.code }}" target="_blank">開く</a> <a href="/siege">攻城</a>
 </div>
 {% for r in rows %}
 <div class="card">
