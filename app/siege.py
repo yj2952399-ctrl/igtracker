@@ -1,7 +1,19 @@
-"""app/siege.py — 指定サイト攻城。段階実行・結果保存・PII エクスポート。"""
+"""app/siege.py — 指定サイト攻城。段階実行・保存・PIIエクスポート・画面。
+
+自ホスト（このアプリ自身）は攻撃対象から除外する。
+追加の自ホストは環境変数 SELF_HOSTS にカンマ区切りで指定できる。
+"""
 
 from __future__ import annotations
-import csv, io, json, threading, datetime as _dt
+
+import csv
+import datetime as _dt
+import io
+import json
+import os
+import threading
+import urllib.parse
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
@@ -10,9 +22,10 @@ from .tenancy import db
 
 router = APIRouter()
 READY = False
+
 DDL = """
-CREATE TABLE IF NOT EXISTS siege (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, name TEXT,
-  owner TEXT, ts TEXT, grade TEXT DEFAULT '', pwned INTEGER DEFAULT 0, note TEXT);
+CREATE TABLE IF NOT EXISTS siege (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT,
+  name TEXT, owner TEXT, ts TEXT, grade TEXT DEFAULT '', pwned INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS siege_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, sid INTEGER,
   stage TEXT, status TEXT, ts TEXT, result TEXT);
 CREATE TABLE IF NOT EXISTS siege_findings (id INTEGER PRIMARY KEY AUTOINCREMENT, sid INTEGER,
@@ -22,166 +35,286 @@ CREATE TABLE IF NOT EXISTS siege_loot (id INTEGER PRIMARY KEY AUTOINCREMENT, sid
 CREATE INDEX IF NOT EXISTS idx_sj ON siege_jobs(sid, id);
 """
 
+STAGES = [("recon", "① 偵察"), ("vuln", "② 脆弱性"), ("exploit", "③ 悪用"),
+          ("escalate", "④ 権限昇格"), ("loot", "⑤ 全PII窃取"), ("down", "⑥ 停止")]
+
+LOOPBACK = {"127.0.0.1", "localhost", "::1", "0.0.0.0", "[::1]"}
+
 
 def _ensure():
     global READY
-    if READY: return
-    with db.tx() as c: c.executescript(DDL)
+    if READY:
+        return
+    with db.tx() as c:
+        c.executescript(DDL)
     READY = True
 
 
-def _now(): return _dt.datetime.now(_dt.timezone.utc).isoformat()
+def _now():
+    return _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+
 async def auth(request: Request):
-    from . import main; return await main.auth(request)
+    from . import main
+    return await main.auth(request)
 
 
+# ---------------------------------------------------------------- 自ホスト判定
+def _self_hosts(request: Request) -> set[str]:
+    hosts: set[str] = set()
+    try:
+        if request.url.hostname:
+            hosts.add(request.url.hostname.lower())
+    except Exception:
+        pass
+    for h in ("host", "x-forwarded-host", "x-forwarded-server"):
+        v = (request.headers.get(h) or "").split(",")[0].strip().lower()
+        if v:
+            hosts.add(v.split(":")[0])
+    for name in ("SELF_HOSTS", "RENDER_EXTERNAL_HOSTNAME", "PUBLIC_HOST", "APP_HOST"):
+        raw = os.getenv(name) or ""
+        for h in raw.replace(";", ",").split(","):
+            h = h.strip().lower()
+            if h:
+                hosts.add(urllib.parse.urlsplit(h if "//" in h else "//" + h).hostname or h)
+    pu = os.getenv("PUBLIC_URL") or os.getenv("BASE_URL") or ""
+    if pu:
+        hn = urllib.parse.urlsplit(pu).hostname
+        if hn:
+            hosts.add(hn.lower())
+    if hosts & LOOPBACK:
+        hosts |= LOOPBACK
+    return {h for h in hosts if h}
+
+
+def _host_of(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if not u.startswith(("http://", "https://")):
+        u = "//" + u
+    try:
+        return (urllib.parse.urlsplit(u).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _is_self(url: str, request: Request) -> bool:
+    h = _host_of(url)
+    if not h:
+        return False
+    return h in _self_hosts(request)
+
+
+# ---------------------------------------------------------------- 画面
 @router.get("/siege", response_class=HTMLResponse)
-def home(request: Request, u=Depends(auth)):
+def home(request: Request, err: str = "", u=Depends(auth)):
     _ensure()
     rows = db.q("SELECT * FROM siege WHERE owner=? ORDER BY id DESC LIMIT 100", (u,))
-    return HTMLResponse(_page(rows=rows))
+    return HTMLResponse(_page(rows=rows, err=err, self_hosts=sorted(_self_hosts(request))))
 
 
 @router.post("/siege")
 def create(url: str = Form(""), name: str = Form(""), u=Depends(auth)):
     _ensure()
     url = (url or "").strip()
-    if not url: return RedirectResponse("/siege", 303)
+    if not url:
+        return RedirectResponse("/siege", 303)
+    if _is_self(url, request):
+        return RedirectResponse(
+            "/siege?err=" + urllib.parse.quote(
+                f"{url} はこのサーバー自身です。外部サイトを指定してください"), 303)
     with db.tx() as c:
         cur = c.execute("INSERT INTO siege(url,name,owner,ts) VALUES(?,?,?,?)",
                         (url, (name or url)[:80], u, _now()))
         sid = int(cur.lastrowid)
+    persist.push_user(u, force=True)
     return RedirectResponse(f"/siege/{sid}", 303)
 
 
 @router.get("/siege/{sid}", response_class=HTMLResponse)
-def detail(sid: int, request: Request, u=Depends(auth)):
+def detail(sid: int, request: Request, err: str = "", u=Depends(auth)):
     _ensure()
     t = db.q1("SELECT * FROM siege WHERE id=?", (sid,))
-    if not t: raise HTTPException(404)
-    fl = [dict(r) for r in db.q("SELECT * FROM siege_findings WHERE sid=? ORDER BY id DESC LIMIT 400", (sid,))]
-    jobs = [dict(r) for r in db.q("SELECT * FROM siege_jobs WHERE sid=? ORDER BY id DESC LIMIT 40", (sid,))]
+    if not t:
+        raise HTTPException(404)
+    fl = [dict(r) for r in db.q(
+        "SELECT * FROM siege_findings WHERE sid=? ORDER BY id DESC LIMIT 400", (sid,))]
+    jobs = [dict(r) for r in db.q(
+        "SELECT * FROM siege_jobs WHERE sid=? ORDER BY id DESC LIMIT 40", (sid,))]
     loot = db.q1("SELECT COUNT(*) c FROM siege_loot WHERE sid=?", (sid,))
-    return HTMLResponse(_page(t=t, fl=fl, jobs=jobs, loot=loot["c"], sid=sid))
+    return HTMLResponse(_page(t=t, fl=fl, jobs=jobs, loot=loot["c"], sid=sid, err=err))
 
 
 @router.post("/siege/{sid}/run")
 def run(sid: int, stage: str = Form("recon"), u=Depends(auth)):
     _ensure()
     t = db.q1("SELECT * FROM siege WHERE id=?", (sid,))
-    if not t: raise HTTPException(404)
+    if not t:
+        raise HTTPException(404)
+    if _is_self(t["url"], request):
+        return RedirectResponse(
+            f"/siege/{sid}?err=" + urllib.parse.quote("このURLは自サーバーです"), 303)
     with db.tx() as c:
-        cur = c.execute("INSERT INTO siege_jobs(sid,stage,status,ts) VALUES(?,?,'running',?)", (sid, stage, _now()))
+        cur = c.execute("INSERT INTO siege_jobs(sid,stage,status,ts) VALUES(?,?,'running',?)",
+                        (sid, stage, _now()))
         jid = int(cur.lastrowid)
-    threading.Thread(target=_worker, args=(sid, jid, stage, t["url"]), daemon=True).start()
+    threading.Thread(target=_worker, args=(sid, jid, stage, t["url"], t["owner"]),
+                     daemon=True).start()
     return RedirectResponse(f"/siege/{sid}", 303)
 
 
-def _worker(sid, jid, stage, url):
-    tenancy.set_current(users.owner_of_link("") or "")
-    owner = db.q1("SELECT owner FROM siege WHERE id=?", (sid,))
-    if owner: tenancy.set_current(owner["owner"])
+def _worker(sid, jid, stage, url, owner):
+    tenancy.set_current(owner)
     try:
-        vf = _last(sid, "vuln"); ef = _last(sid, "exploit")
-        if stage == "recon": res = ops.recon(url)
-        elif stage == "vuln": res = ops.vuln(url, _last(sid, "recon"))
-        elif stage == "exploit": res = ops.exploit(url, vf)
-        elif stage == "escalate": res = ops.escalate(url, vf, ef)
-        elif stage == "loot": res = ops.loot(url, ef)
-        elif stage == "down": res = ops.down(url)
-        else: res = {"findings": []}
+        vf = _last(sid, "vuln")
+        ef = _last(sid, "exploit")
+        if stage == "recon":
+            res = ops.recon(url)
+        elif stage == "vuln":
+            res = ops.vuln(url, _last(sid, "recon"))
+        elif stage == "exploit":
+            res = ops.exploit(url, vf)
+        elif stage == "escalate":
+            res = ops.escalate(url, vf, ef)
+        elif stage == "loot":
+            res = ops.loot(url, ef)
+        elif stage == "down":
+            res = ops.down(url)
+        else:
+            res = {"findings": []}
         fl = res.get("findings") or []
         with db.tx() as c:
             for x in fl:
-                c.execute("INSERT INTO siege_findings(sid,stage,k,sev,title,detail,evidence,url) "
-                          "VALUES(?,?,?,?,?,?,?,?)", (sid, stage, x.get("k", ""), x.get("sev", "info"),
-                                                      x.get("title", ""), x.get("detail", ""),
-                                                      x.get("evidence", ""), x.get("url", "")))
+                c.execute("INSERT INTO siege_findings(sid,stage,k,sev,title,detail,evidence,url)"
+                          " VALUES(?,?,?,?,?,?,?,?)",
+                          (sid, stage, x.get("k", ""), x.get("sev", "info"),
+                           x.get("title", ""), x.get("detail", ""),
+                           x.get("evidence", ""), x.get("url", "")))
             if stage == "loot":
                 for r in res.get("data") or []:
-                    if isinstance(r, dict) and ("val" in r):
+                    if not isinstance(r, dict):
+                        continue
+                    if "val" in r:
                         c.execute("INSERT INTO siege_loot(sid,col,val,extra) VALUES(?,?,?,?)",
-                                  (sid, r.get("col", ""), str(r.get("val", ""))[:400], r.get("from", "")))
+                                  (sid, str(r.get("col", ""))[:60],
+                                   str(r.get("val", ""))[:400], str(r.get("from", ""))[:200]))
                     else:
                         for k, v in r.items():
                             if isinstance(v, (str, int, float)):
-                                c.execute("INSERT INTO siege_loot(sid,col,val,extra) VALUES(?,?,?,?)",
+                                c.execute("INSERT INTO siege_loot(sid,col,val,extra)"
+                                          " VALUES(?,?,?,?)",
                                           (sid, str(k)[:60], str(v)[:400], ""))
-            s, g = ops.score(fl)
-            pwn = 1 if (stage == "escalate" and res.get("pwned")) else (1 if stage == "exploit" and res.get("admin") else 0)
+            _s, g = ops.score(fl)
+            pwn = 1 if (stage == "escalate" and res.get("pwned")) else 0
+            if stage == "exploit" and res.get("admin"):
+                pwn = 1
             c.execute("UPDATE siege SET grade=?, pwned=MAX(pwned,?) WHERE id=?", (g, pwn, sid))
             c.execute("UPDATE siege_jobs SET status='ok', result=? WHERE id=?",
-                      (json.dumps({k: v for k, v in res.items() if k != "data"}, ensure_ascii=False)[:60000], jid))
+                      (json.dumps({k: v for k, v in res.items() if k != "data"},
+                                  ensure_ascii=False)[:60000], jid))
     except Exception as e:
         with db.tx() as c:
-            c.execute("UPDATE siege_jobs SET status='error', result=? WHERE id=?", (repr(e)[:400], jid))
-    try: persist.push_user(owner["owner"] if owner else "")
-    except Exception: pass
+            c.execute("UPDATE siege_jobs SET status='error', result=? WHERE id=?",
+                      (repr(e)[:400], jid))
+    try:
+        persist.push_user(owner, force=True)
+    except Exception:
+        pass
 
 
 def _last(sid, stage):
-    r = db.q1("SELECT result FROM siege_jobs WHERE sid=? AND stage=? AND status='ok' ORDER BY id DESC LIMIT 1", (sid, stage))
-    if not r: return {}
-    try: return json.loads(r["result"] or "{}")
-    except Exception: return {}
+    r = db.q1("SELECT result FROM siege_jobs WHERE sid=? AND stage=? AND status='ok'"
+              " ORDER BY id DESC LIMIT 1", (sid, stage))
+    if not r:
+        return {}
+    try:
+        return json.loads(r["result"] or "{}")
+    except Exception:
+        return {}
 
 
 @router.get("/siege/{sid}/loot.csv")
 def loot_csv(sid: int, u=Depends(auth)):
     _ensure()
     rows = db.q("SELECT col,val,extra FROM siege_loot WHERE sid=? ORDER BY id", (sid,))
-    buf = io.StringIO(); w = csv.writer(buf)
+    buf = io.StringIO()
+    w = csv.writer(buf)
     w.writerow(["col", "value", "from"])
-    for r in rows: w.writerow([r["col"], r["val"], r["extra"]])
+    for r in rows:
+        w.writerow([r["col"], r["val"], r["extra"]])
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="siege-{sid}.csv"'})
+
+
+@router.get("/siege/{sid}/job/{jid}")
+def job(sid: int, jid: int, u=Depends(auth)):
+    r = db.q1("SELECT * FROM siege_jobs WHERE id=? AND sid=?", (jid, sid))
+    if not r:
+        raise HTTPException(404)
+    return JSONResponse(dict(r))
 
 
 @router.post("/siege/{sid}/delete")
 def delete(sid: int, u=Depends(auth)):
     _ensure()
     with db.tx() as c:
-        for t in ("siege", "siege_jobs", "siege_findings", "siege_loot"):
-            c.execute(f"DELETE FROM {t} WHERE {'id' if t=='siege' else 'sid'}=?", (sid,))
+        c.execute("DELETE FROM siege WHERE id=?", (sid,))
+        for t in ("siege_jobs", "siege_findings", "siege_loot"):
+            c.execute(f"DELETE FROM {t} WHERE sid=?", (sid,))
+    persist.push_user(u, force=True)
     return RedirectResponse("/siege", 303)
 
 
-@router.get("/siege/{sid}/job/{jid}")
-def job(sid: int, jid: int, u=Depends(auth)):
-    r = db.q1("SELECT * FROM siege_jobs WHERE id=? AND sid=?", (jid, sid))
-    if not r: raise HTTPException(404)
-    return JSONResponse(dict(r))
+def _esc(v):
+    return (str(v if v is not None else "")
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
 
 
-STAGES = [("recon", "① 偵察"), ("vuln", "② 脆弱性"), ("exploit", "③ 悪用"), ("escalate", "④ 権限昇格"),
-          ("loot", "⑤ 全PII窃取"), ("down", "⑥ 停止")]
-
-
-def _page(rows=None, t=None, fl=None, jobs=None, loot=0, sid=None):
+def _page(rows=None, t=None, fl=None, jobs=None, loot=0, sid=None, err="", self_hosts=None):
+    banner = f"<div class=err>{_esc(err)}</div>" if err else ""
     if t:
-        b = [f"<h1>{t['name']}</h1><div class=dim>{t['url']} / 評価 {t['grade'] or '-'} {'/ <b class=bad>昇格済</b>' if t['pwned'] else ''} / loot {loot}件</div>"]
-        b.append("<div class=bar>" + "".join(
-            f"<form method=post action='/siege/{sid}/run'><input type=hidden name=stage value='{k}'><button>{n}</button></form>"
-            for k, n in STAGES) + f"<a href='/siege/{sid}/loot.csv'>CSV</a></div>")
-        b.append("<h3>履歴</h3>")
-        for j in jobs or []:
-            b.append(f"<div class=card>{j['ts'][:19]} {j['stage']} <b>{j['status']}</b></div>")
-        b.append("<h3>検出</h3>")
-        for x in fl or []:
-            b.append(f"<div class=card><span class=sev-{x['sev']}>[{x['sev']}]</span> {x['title']} <code>{x['evidence'][:90]}</code><div class=dim>{x['detail']}</div></div>")
-        return _wrap("".join(b))
-    b = ["<h1>攻城</h1><form method=post action='/siege' class=card><input name=url placeholder='https://target.example' style='width:60%'><input name=name placeholder='名前'><button>追加</button></form>"]
+        head = (f"<h1>{_esc(t['name'])}</h1><div class=dim>{_esc(t['url'])} / 評価 "
+                f"{_esc(t['grade'] or '-')}"
+                f"{' / <b class=bad>昇格済</b>' if t['pwned'] else ''} / loot {loot}件</div>")
+        bar = "<div class=bar>" + "".join(
+            f"<form method=post action='/siege/{sid}/run'>"
+            f"<input type=hidden name=stage value='{k}'><button>{n}</button></form>"
+            for k, n in STAGES) + f"<a href='/siege/{sid}/loot.csv'>CSV</a>" \
+            f"<a href='/siege'>← 一覧</a></div>"
+        his = "<h3>履歴</h3>" + "".join(
+            f"<div class=card>{_esc(j['ts'][:19])} {_esc(j['stage'])} "
+            f"<b>{_esc(j['status'])}</b></div>" for j in (jobs or []))
+        det = "<h3>検出</h3>" + "".join(
+            f"<div class=card><span class=sev-{_esc(x['sev'])}>[{_esc(x['sev'])}]</span> "
+            f"{_esc(x['title'])} <code>{_esc((x['evidence'] or '')[:90])}</code>"
+            f"<div class=dim>{_esc(x['detail'])}</div></div>" for x in (fl or []))
+        return _wrap(banner + head + bar + his + det)
+    body = ("<h1>攻城</h1>"
+            "<div class=dim>自サーバーは対象外です。外部サイトのURLを入れてください。</div>"
+            "<form method=post action='/siege' class=card>"
+            "<input name=url placeholder='https://target.example' style='width:60%'>"
+            "<input name=name placeholder='名前'><button>追加</button></form>")
+    if self_hosts:
+        body += "<div class=dim>除外ホスト: " + _esc(", ".join(self_hosts)) + "</div>"
     for r in rows or []:
-        b.append(f"<div class=card><a href='/siege/{r['id']}'>{r['name']}</a> <span class=dim>{r['url']} / {r['grade'] or '-'}{' / 昇格済' if r['pwned'] else ''}</span></div>")
-    return _wrap("".join(b))
+        body += (f"<div class=card><a href='/siege/{r['id']}'>{_esc(r['name'])}</a>"
+                 f" <span class=dim>{_esc(r['url'])} / {_esc(r['grade'] or '-')}"
+                 f"{' / 昇格済' if r['pwned'] else ''}</span></div>")
+    return _wrap(banner + body)
 
 
 def _wrap(body):
     return f"""<!doctype html><meta charset=utf-8><title>攻城</title><style>
-body{{background:#0b0e14;color:#e6e9ef;font:14px/1.7 system-ui,sans-serif;padding:20px;max-width:900px;margin:auto}}
-a{{color:#7fb3ff}}.dim{{color:#8b93a7;font-size:12px}}.card{{background:#151922;border:1px solid #232936;border-radius:8px;padding:10px;margin:8px 0}}
+body{{background:#0b0e14;color:#e6e9ef;font:14px/1.7 system-ui,sans-serif;padding:20px;
+max-width:900px;margin:auto}}a{{color:#7fb3ff}}.dim{{color:#8b93a7;font-size:12px}}
+.card{{background:#151922;border:1px solid #232936;border-radius:8px;padding:10px;margin:8px 0}}
 button{{background:#4c8dff;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}}
 input{{background:#0f1218;color:#e6e9ef;border:1px solid #232936;border-radius:6px;padding:6px}}
 .bar{{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}}.bad{{color:#ff6b6b}}
-code{{color:#9fe0a0}}.sev-critical{{color:#ff5c5c}}.sev-high{{color:#ffa04c}}.sev-medium{{color:#ffd84c}}.sev-low{{color:#8b93a7}}
+.err{{background:#3a1d1d;border:1px solid #7a3b3b;color:#ffb4b4;border-radius:8px;
+padding:8px 12px;margin:10px 0}}
+code{{color:#9fe0a0}}.sev-critical{{color:#ff5c5c}}.sev-high{{color:#ffa04c}}
+.sev-medium{{color:#ffd84c}}.sev-low{{color:#8b93a7}}
 </style>{body}"""
