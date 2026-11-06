@@ -259,9 +259,9 @@ def can_act(actor_role: str, target_role: str, actor_is_root: bool = False,
 
 
 def assignable(actor_role: str, actor_is_root: bool = False) -> List[str]:
-    """新規作成は原則として直下の1役職だけ。ルートは管理者を作成可能。"""
+    """新規作成は原則として直下の1役職だけ。ルートは全役職を付与可能。"""
     if actor_is_root:
-        return ["admin"]
+        return list(ROLES)
     if actor_role not in LEVEL:
         return []
     return [r for r in ROLES if LEVEL[r] == LEVEL[actor_role] - 10]

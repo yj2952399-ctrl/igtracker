@@ -13,6 +13,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import persist
 persist.pull()
 
+
+def _backup_account(username: str) -> None:
+    """Persist account hashes and shared account DB after credential/role changes.
+
+    Backup failures must not roll back a successful local account operation;
+    they are logged and the scheduled backup will retry later.
+    """
+    try:
+        if persist.enabled():
+            persist.push_user(username, force=True)
+            persist.push(force=True)
+    except Exception as exc:
+        print(f"[backup] アカウント退避失敗 ({username}): {exc!r}")
+
 from . import config, tenancy, users
 from .config import get as get_cfg
 from . import instagram as ig
@@ -789,7 +803,7 @@ def account_password(request: Request, cur: str = Form(""), new: str = Form(""),
         return RedirectResponse("/account?err=" + quote(str(e)), 303)
     tok = users.new_session(real, "user", _ip(request), _ua(request))
     users.audit(real, "password_changed", {})
-    persist.push_user(real, force=True)
+    _backup_account(real)
     r = RedirectResponse("/account?msg=" + quote(
         "パスワードを変更し、他の全端末からログアウトしました"), 303)
     _set_cookie(r, COOKIE_USER, tok)
@@ -1065,6 +1079,7 @@ def admin_create(request: Request, username: str = Form(...), password: str = Fo
     try:
         users.create(username, password, role=role, note=note,
                      must_change=bool(must_change))
+        _backup_account(username)
         users.audit(me, "admin_create", {"username": username, "role": role})
         return RedirectResponse(ADMIN_PATH + "/?msg=" + quote(f"{username} を作成しました"), 303)
     except ValueError as e:
@@ -1076,6 +1091,7 @@ def admin_setpw(request: Request, target: str, password: str = Form(...),
     me = _guard(request, target, "users.setpw")
     try:
         users.set_password(target, password, must_change=1)
+        _backup_account(target)
         users.audit(me, "admin_setpw", {"username": target})
         return RedirectResponse(ADMIN_PATH + "/?msg=" +
                                 quote(f"{target} のパスワードを再設定しました"), 303)
@@ -1088,6 +1104,7 @@ def admin_set_adminpw(request: Request, target: str, password: str = Form(...),
     me = _guard(request, target, "users.setadminpw")
     try:
         users.set_admin_password(target, password)
+        _backup_account(target)
         users.audit(me, "admin_set_adminpw", {"username": target})
         return RedirectResponse(ADMIN_PATH + "/?msg=" +
                                 quote(f"{target} のコンソールPWを設定しました"), 303)
@@ -1106,6 +1123,7 @@ def admin_role(request: Request, target: str, role: str = Form(...),
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote("対象の役職または変更先の役職が許可されていません"), 303)
     try:
         users.set_role(target, role)
+        _backup_account(target)
         users.audit(me, "admin_role", {"username": target, "role": role})
         return RedirectResponse(ADMIN_PATH + "/?msg=" +
                                 quote(f"{target} を {roles.label(role)} にしました"), 303)
@@ -1119,6 +1137,7 @@ def admin_toggle(request: Request, target: str, u=Depends(admin_auth)):
         row = users.get(target)
         if row:
             users.set_disabled(target, not row["disabled"])
+            _backup_account(target)
         return RedirectResponse(ADMIN_PATH + "/", 303)
     except ValueError as e:
         return RedirectResponse(ADMIN_PATH + "/?err=" + quote(str(e)), 303)
@@ -1140,6 +1159,11 @@ def admin_delete(request: Request, target: str, purge: str = Form(""),
                       ignore_errors=True)
         tenancy.close(target)
     users.audit(me, "admin_delete", {"username": target, "purge": bool(purge)})
+    try:
+        if persist.enabled():
+            persist.push(force=True)  # includes deletion tombstone + root.db
+    except Exception as exc:
+        print(f"[backup] 削除情報の退避失敗 ({target}): {exc!r}")
     try:
         persist.push(force=True)
     except Exception as e:

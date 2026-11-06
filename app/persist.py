@@ -515,7 +515,11 @@ def push_user(user, force=True):
     meta = {"ts": time.time(), "user": user, "files": files,
             "account": account, "links": links, "audit": audit}
     old_ts = float(old.get("ts") or 0)
-    need_meta = (sent > 0 or not meta_obj
+    # Account credentials are salted hashes, not plaintext. Compare the full
+    # account row so password/role/disabled changes are backed up immediately
+    # even when no tenant data file changed.
+    account_changed = old.get("account") != account
+    need_meta = (sent > 0 or not meta_obj or account_changed
                  or time.time() - old_ts > max(900, cfg()["every"] * 2)
                  or old.get("account") is None)
     if need_meta:
